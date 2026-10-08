@@ -44,7 +44,12 @@ trap 'rm -rf "$work"' EXIT
 fresh_copy() {
   rm -rf "$work/repo"
   mkdir -p "$work/repo"
-  (cd "$REPO_ROOT" && cp -R .claude-plugin skills shelf agents commands scripts LICENSE ACKNOWLEDGEMENTS.md portability.json "$work/repo/")
+  # Only what exists: git keeps no empty folder, so commands/ is absent once it holds nothing.
+  local item
+  for item in .claude-plugin skills shelf agents commands scripts LICENSE ACKNOWLEDGEMENTS.md portability.json; do
+    [ -e "$REPO_ROOT/$item" ] && cp -R "$REPO_ROOT/$item" "$work/repo/"
+  done
+  return 0
 }
 
 expect_failure() { # description check-script expected-text

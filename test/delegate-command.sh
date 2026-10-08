@@ -10,7 +10,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-COMMAND="$REPO_ROOT/commands/delegate.md"
+COMMAND="$REPO_ROOT/skills/delivery/delegate/SKILL.md"
 FAILURES=0
 
 RED='\033[0;31m'
@@ -46,7 +46,9 @@ reject_regex() {
   fi
 }
 
-if [ -f "$REPO_ROOT/commands/delegate.md" ]; then pass "the plugin ships /delegate"; else fail "the plugin ships /delegate"; fi
+if [ -f "$COMMAND" ] && grep -q '"./skills/delivery/delegate"' "$REPO_ROOT/.claude-plugin/plugin.json"; then pass "the plugin ships /delegate as a skill"; else fail "the plugin ships /delegate as a skill"; fi
+require_text "$COMMAND" 'disable-model-invocation: true' "/delegate runs only when the user invokes it"
+require_text "$COMMAND" 'arrive unfilled: run the commands yourself' "another harness gets the context the injections give Claude Code"
 reject_regex "$COMMAND" 'fast-flow-board|conjurer-rich|flow-canvas|apps/web|ux-evidence|agent-ready' "the command names no project or its settings"
 render_settings_line() {
   local dir="$1" line
@@ -94,7 +96,7 @@ require_text "$COMMAND" 'because Claude Code on the web blocks GitHub GraphQL' "
 require_text "$COMMAND" '## Model' "the command has model guidance"
 require_text "$COMMAND" '`sync #<n>` or `sync <n>` → **Sync** PR `n`' "the command can sync a conflicted PR by hand"
 require_text "$COMMAND" 'can run on a cheaper model' "the loop session may run on a cheaper model"
-require_text "$COMMAND" 'keep `model: opus`' "Land's reviewer and Sync's check stay on the strongest model"
+require_text "$COMMAND" 'run on `review_model` (default `opus`)' "Land's reviewer and Sync's check stay on the strongest model by default"
 require_text "$COMMAND" '`implementer_model_small` `sonnet`, `implementer_model_large` `opus`' "the command lists the implementer model defaults"
 if sed -n '1,/^---$/{/^---$/!p}' "$COMMAND" | tail -n +2 | grep -q '^model:'; then
   fail "the command does not pin a model for the loop session"
@@ -107,8 +109,8 @@ require_text "$SKILL_DIR/references/work.md" 'any doubt predicts **not S**' "dou
 require_text "$SKILL_DIR/references/work.md" 'Escalate at most once per run, never from `<implementer_model_large>` to `<implementer_model_small>`' "escalation is once and only upward"
 require_text "$SKILL_DIR/SKILL.md" '| `implementer_model_small` | `sonnet` |' "the small implementer model defaults to sonnet"
 require_text "$SKILL_DIR/SKILL.md" '| `implementer_model_large` | `opus` |' "the large implementer model defaults to opus"
-require_text "$SKILL_DIR/references/sync.md" '`model: opus`, `run_in_background: true`' "Sync's resolution check is dispatched on opus"
-require_text "$SKILL_DIR/references/land.md" '`model: opus`, `run_in_background: true`' "Land's reviewer is dispatched on opus"
+require_text "$SKILL_DIR/references/sync.md" '`model: <review_model>`, `run_in_background: true`' "Sync's resolution check is dispatched on the review model"
+require_text "$SKILL_DIR/references/land.md" '`model: <review_model>`, `run_in_background: true`' "Land's reviewer is dispatched on the review model"
 require_text "$COMMAND" 'Bash(*/delegating-github-issues/scripts/delegate-status:*)' "the bookkeeping script needs no permission prompt"
 require_text "$COMMAND" '`tier_small_max_lines` 150, `tier_small_max_packages` 1, no `risk_paths`' "the command lists the size-tier defaults"
 

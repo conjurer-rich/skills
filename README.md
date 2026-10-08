@@ -17,8 +17,9 @@ claude plugin install craft@conjurer
 ```
 
 Skills load as `craft:<name>` (for example `craft:tdd`), agents as
-`craft:<name>` in the agent list, and the command as `/delegate`. The plugin
-also installs a Stop hook that warns about uncommitted or unpushed work.
+`craft:<name>` in the agent list. User-invoked skills such as `/delegate`,
+`/plan` and `/continue` run as slash commands. The plugin also installs a Stop
+hook that warns about uncommitted or unpushed work.
 
 ### Codex
 
@@ -76,7 +77,6 @@ load every skill twice. The names are unchanged.
 | `skills/delivery/` | getting work shipped: `delegating-github-issues`, `planning`, `specification`, `story-splitting`, `acceptance-review`, … |
 | `skills/writing/` | knowledge and prose: `technical-writing`, `diagrams`, `ubiquitous-language`, `expectations`, … |
 | `agents/` | `twelve-factor-audit`, `adr`, `learn` (Claude Code only) |
-| `commands/` | `/delegate` (Claude Code only); `plan` and `continue` are user-invoked skills |
 | `shelf/` | skills, agents and commands kept in the repository but **not installed** |
 | `skills/deprecated/` | aliases kept for one release, then deleted |
 | `global/` | the global `CLAUDE.md` (and `AGENTS.md`, a link to it) that `scripts/install-global` puts in place |
