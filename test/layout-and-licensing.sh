@@ -71,6 +71,30 @@ fresh_copy
 printf '\n[gone](does-not-exist.md)\n' >> "$work/repo/skills/engineering/tdd/SKILL.md"
 expect_failure "a broken relative link is caught" check-layout.py "broken link does-not-exist.md"
 
+# craft:ask is the router: every shipped item must appear in it, and it is the
+# one shipped file allowed to name a shelved item (to offer a promotion).
+fresh_copy
+if [ -f "$work/repo/skills/delivery/ask/SKILL.md" ]; then
+  printf '\nThere is a shelved `panel-review`; promote it if needed.\n' >> "$work/repo/skills/delivery/ask/SKILL.md"
+  if python3 "$work/repo/scripts/check-layout.py" > /dev/null 2>&1; then
+    pass "craft:ask may name a shelved item"
+  else
+    fail "craft:ask may name a shelved item"
+  fi
+else
+  fail "craft:ask exists at skills/delivery/ask"
+fi
+
+fresh_copy
+python3 - "$work/repo" <<'PY'
+import re, sys
+from pathlib import Path
+ask = Path(sys.argv[1]) / "skills/delivery/ask/SKILL.md"
+text = ask.read_text(encoding="utf-8")
+ask.write_text(re.sub(r"`(?:craft:)?mutation-testing`", "`something-else`", text), encoding="utf-8")
+PY
+expect_failure "a shipped skill missing from craft:ask is caught" check-layout.py "mutation-testing: not listed in craft:ask"
+
 fresh_copy
 sed -i.bak '/skills\/writing\/wtf\/LICENSE/d' "$work/repo/ACKNOWLEDGEMENTS.md"
 expect_failure "a nested LICENSE without an acknowledgement row is caught" check-licensing.py "skills/writing/wtf/LICENSE: no row in ACKNOWLEDGEMENTS.md"

@@ -18,6 +18,8 @@ For CI failure diagnosis, load the `ci-debugging` skill.
 For local or runtime failure diagnosis — an error message, permission denial, crash, or wrong output outside CI — load `debugging` to preserve evidence, localize one causal hypothesis at a time, and fix the earliest shared owning boundary when a fix is requested.
 For a read-only decision on whether finished implementation satisfies an authoritative requirement, load `acceptance-review` and report every criterion plus its evidence and exact verdict.
 For a rigorous second opinion on finished work, load `double-check`. It selects an available reviewer dynamically, prefers a different provider when possible, labels a same-provider fresh-context fallback honestly, and bounds unresolved disagreement rather than requiring artificial consensus.
+When the user is unsure which skill or flow fits, point them at `/ask` (the `ask` skill); it maps every craft skill, including shelved ones.
+At the end of a session, especially one that went sideways, suggest `/retro` (the `retro` skill) to turn what went wrong into changes to the environment.
 For delegating a labelled GitHub issue end to end, or watching and landing delegated pull requests, use `/delegate` (the `delegating-github-issues` skill).
 
 ## Discovery, specification and planning

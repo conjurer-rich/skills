@@ -12,7 +12,11 @@ References, from shipped files only (skills/<bucket>/..., agents/, commands/)
   - every relative Markdown link resolves to a file or folder;
   - nothing names a shelved or deprecated item (`craft:<name>`, `<name>` in
     backticks, or a `/<name>` command). Shelved items are not installed, so a
-    shipped skill that routes to one sends the agent nowhere.
+    shipped skill that routes to one sends the agent nowhere. The one
+    exception is the router, `ask`, which lists shelved items so it can offer
+    to promote them;
+  - the router names every shipped skill, agent and command, so nothing ships
+    that `craft:ask` cannot point you at.
 
 Exit status 1 lists every problem found.
 """
@@ -25,6 +29,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 LINK = re.compile(r"\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
 NOT_SHIPPED_BUCKETS = {"deprecated", "in-progress"}
+ROUTER = "ask"
 
 
 def frontmatter_name(skill_md):
@@ -83,8 +88,20 @@ def main():
     gone_pattern = re.compile(
         r"(?:craft:(%s)\b|`(%s)`|(?<![\w/.-])/(%s)\b)" % (("|".join(map(re.escape, gone)),) * 3)
     ) if gone else None
+    router = next(iter(shipped.get(ROUTER, [])), None)
+    if router is None or not router.is_dir():
+        problems.append(f"no shipped `{ROUTER}` skill: craft:{ROUTER} is the router every shipped item must appear in")
+    else:
+        router_text = "\n".join(p.read_text(encoding="utf-8") for p in sorted(router.rglob("*.md")))
+        for name in sorted(shipped):
+            if name == ROUTER:
+                continue
+            if not re.search(r"(?:`(?:craft:)?%s`|craft:%s\b|(?<![\w/.-])/%s\b)" % ((re.escape(name),) * 3), router_text):
+                problems.append(f"{name}: not listed in craft:{ROUTER} ({rel(router)}/SKILL.md)")
+
     for md in shipped_files():
         text = md.read_text(encoding="utf-8")
+        in_router = router is not None and router in md.parents
         for lineno, line in enumerate(text.splitlines(), 1):
             for target in LINK.findall(line):
                 if re.match(r"^(?:[a-z]+:|#|<)", target) or "${" in target:
@@ -92,7 +109,7 @@ def main():
                 path = target.split("#", 1)[0]
                 if path and not (md.parent / path).exists():
                     problems.append(f"{rel(md)}:{lineno}: broken link {target}")
-            if gone_pattern:
+            if gone_pattern and not in_router:
                 for match in gone_pattern.finditer(line):
                     name = next(g for g in match.groups() if g)
                     problems.append(f"{rel(md)}:{lineno}: names `{name}`, which is not shipped")
