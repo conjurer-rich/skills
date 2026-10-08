@@ -122,7 +122,10 @@ require_text '<!-- delegator reply-to: <comment id> -->' "a top-level answer nam
 require_script 'list_of "repos/$REPO/pulls/$number/reviews?per_page=100"' "a review summary body is read as a comment"
 require_text 'review body (`review`)' "Review answers review bodies too"
 require_text 'Never go to **Blocked** from **Watch** or **Land**.' "an unattended run never waits on approval"
-require_text 'delegate-status checks <PR> --wait 2400` as a background task' "the CI wait runs in the background"
+require_text 'delegate-status checks <PR> --head <verified SHA> --wait 2400 --table` as a background task' "the CI wait runs in the background, pinned to the verified head"
+# A bare checks wait returned before any check had started and read as green.
+require_text 'never a CI wait that is not pinned to the head SHA' "Land never waits on an unpinned checks call"
+require_text '`none`, no checks reported: never green' "no checks yet is never green"
 reject_regex 'timeout 540' "no foreground CI wait sized to one tool call"
 require_text 'If `merge` exits non-zero or prints `refused`, go to **Bail-out**' "a refused merge hands the PR back"
 require_text 'which squash-merges only while the head is still that SHA' "Land merges only the head it verified"
@@ -184,10 +187,14 @@ require_text 'a Run pass never waits on the human' "Run never blocks on a human 
 # assignees and labels cannot tell them apart. A claim comment names the
 # session; the lowest live comment id settles a race; a lease lets a crashed
 # session's claim lapse instead of locking the issue for good.
-require_text '| `claim_ttl` | 4 hours |' "claims lapse after a default lease"
+require_text '| `claim_ttl` | 45 minutes |' "claims lapse 45 minutes after their last heartbeat"
+# Duplicate sessions claimed the same issue or PR and fought over it.
+require_text 'When another session holds a live claim, it posts nothing, prints `lost` with the `holder` and exits 4' "a claim held by another session is refused with exit 4"
+require_text 'On exit 4, stop work on the item, never retry or take over' "a refused claim stops the run"
+require_text '- **Heartbeat.** After a won claim, run `heartbeat <n> <id>` as a background task until you release.' "a won claim keeps a heartbeat"
 require_text '<!-- delegator claim: <session> -->' "a claim names the session holding it"
 require_text 'live claim with the lowest comment id wins' "a race between two sessions has one winner"
-require_text 'The loser deletes its own claim comment' "the losing session withdraws its claim"
+require_text 'the loser deletes its own claim comment and exits 4' "the losing session withdraws its claim"
 require_text 'Every stop releases the claim' "a session releases its claim on every exit"
 require_text '<!-- delegator claim-released: <session> -->' "a released claim stays readable on the issue"
 require_text 'Skip an issue that has an open PR from a `<branch_prefix><n>-` branch' "Pick never re-picks an issue that already has a PR"
@@ -195,10 +202,11 @@ require_text 'skip an issue another session holds a live claim on' "Pick skips i
 require_text 'otherwise say this PR was not opened by a delegated run and stop. Then claim the PR (**Claims**)' "Review claims the PR before touching it"
 require_text 'say so and stop. Then claim the PR (**Claims**); if another session holds it, stop. The PR must be **Ready**' "Land claims the PR before it can bail out"
 require_text 'Confirm before any push, PR creation or merge.' "a session that lost its claim writes nothing more"
-require_text 'Confirm the claim is still yours (**Claims**) before dispatching. The ship subagent then runs `git push -u origin <branch>`' "Work confirms its claim before the ship subagent pushes"
-require_text 'Confirm the claim is still yours, then dispatch the ship subagent (**Work** step 10'"'"'s brief without PR creation: it commits from the message file and pushes with no force flag' "Review confirms its claim before the ship subagent pushes"
-require_text 'then `git push`, with no force flag; it returns the new head SHA' "Land's ship subagent pushes with no force flag"
-require_text 'Confirm the claim is still yours, then dispatch the ship subagent (**Work** step 10'"'"'s brief without PR creation): step 4'"'"'s merge' "Land confirms its claim before the ship subagent pushes"
+require_text '12. **PR.** Renew the claim (**Claims**) before pushing, then `git -C <worktree> push -q -u origin <branch>` (never with a force flag)' "Work renews its claim before it pushes"
+require_text 'Renew the claim, then ship inline as **Work** steps 10 and 12 do, without PR creation: it commits from the message file and pushes with no force flag' "Review renews its claim before it pushes"
+require_text 'then `git -C <worktree> push -q`, with no force flag' "Land pushes inline with no force flag"
+require_text 'then `git push`, with no force flag; it returns the new head SHA' "Land's merge-commit ship subagent pushes with no force flag"
+require_text '6. **Commit and push.** Commit without asking. Renew the claim. Step 4'"'"'s merge' "Land renews its claim before it pushes"
 require_text 'Otherwise confirm the claim is still yours and run `delegate-status merge <PR>' "Land confirms its claim before merging"
 # Review of the first draft: a lapsed claim keeps its low id, so renewing it
 # blindly steals the item back; and a session that released on opening its PR
@@ -239,7 +247,7 @@ require_text 'Put `<progress_label>` on an item without holding a live claim on 
 reject_regex 'EnterWorktree' "the skill no longer uses EnterWorktree"
 require_text 'git worktree add <path> -b <branch_prefix>N-<slug> origin/<default branch>' "the worktree is created from the main checkout"
 require_text 'Stay in the main checkout: the delegator never enters the worktree' "the delegator stays in the main checkout"
-require_text 'It runs no `git` command inside a worktree other than `git worktree add`, `git worktree list`, `git worktree remove`, `git worktree prune` and `git -C <path> status --porcelain` for Reclaim.' "the delegator's in-worktree git commands are the five Reclaim ones"
+require_text 'It runs no `git` command inside a worktree other than `git worktree add`, `git worktree list`, `git worktree remove`, `git worktree prune`, `git -C <path> status --porcelain` for Reclaim, and the three shipping commands above (`git -C <path> commit -q -F`, `git -C <path> push -q`, `git -C <path> rev-parse HEAD`).' "the delegator's in-worktree git commands are Reclaim's and the three shipping ones"
 require_text 'then dispatch the bootstrap subagent as **Work** step 5 does. Never enter it' "Review never enters the worktree either"
 require_text 'work only inside `<path>`' "subagents are briefed with the worktree path"
 # B. Mechanical steps run in subagents under one hand-back contract.
@@ -253,18 +261,27 @@ require_text '     - **Process.** The project'"'"'s `tdd-guardian` agent, or els
 require_text 'dispatch one walkthrough subagent' "the walkthrough runs in a subagent"
 require_text 'The delegator never runs `agent-browser`' "the delegator never drives the browser"
 require_text 'The re-walk never runs in the main session.' "the repair-round re-walk runs in a subagent"
-require_text 'Then dispatch one ship subagent' "commit, evidence, push, PR and comment run in a ship subagent"
-require_text 'The ship subagent runs `git commit -F <commit message file>`; the delegator commits nothing.' "the delegator commits nothing"
-require_text '11. **Evidence.** The ship subagent, in the same dispatch' "evidence is pushed by the ship subagent"
-require_text 'returns at most ten lines: the PR URL, the head SHA, the evidence commit SHA or `none`' "the ship subagent returns the PR URL and evidence SHA"
-require_text 'with the proposed message shown, **before** the ship subagent is dispatched' "a hand-started Work asks for commit approval before shipping"
-require_text 'Push whatever is staged as a draft PR, through the ship subagent under the Hand-back contract' "Blocked ships through the subagent too"
+# Every commit-and-push subagent started at about 60k tokens of inherited
+# context, for three fixed commands. Commit, push, PR creation and the CI wait
+# now run inline, with their output in a log file, and a subagent gets a
+# self-contained brief on the cheapest model that can do its step.
+require_text '**Shipping inline.** Commit, push, PR creation and the CI wait are fixed commands, so the delegator runs them itself' "commit, push, PR and CI wait run inline"
+require_text 'each with its output appended to `<scratch>/<N>/ship.log`' "shipping output goes to a log, not the context"
+require_text 'with no `echo`, loop or pipe' "the inline commands need no extra permission"
+require_text 'If the environment refuses `git -C` (an isolation guard), do not rephrase it: dispatch one ship subagent on `model: haiku` instead' "a refused git -C falls back to a haiku ship subagent"
+require_text '**Self-contained briefs.** A subagent starts from its brief alone. Never fork the conversation into it' "subagents never inherit the conversation"
+require_text 'Fork the conversation into a subagent; every brief is self-contained.' "the Never list forbids forking the conversation"
+require_text '**Cheapest model that can do the step.** Mechanical steps, where the brief names every command, run on `model: haiku`' "mechanical steps run on the cheapest model"
+require_text 'The delegator commits only from the message file and runs nothing else in the worktree.' "the delegator commits only from the message file"
+require_text '11. **Evidence.** If there are screenshots under `<scratch>/<N>/`, dispatch one evidence subagent on `model: haiku`' "evidence is pushed by a haiku subagent"
+require_text 'with the proposed message shown, **before** you ship' "a hand-started Work asks for commit approval before shipping"
+require_text 'Push whatever is staged as a draft PR, inline as the **Hand-back contract** ships' "Blocked ships inline too"
 # C. Claims bookkeeping goes to one subagent, renewed less often.
 require_text '`scripts/delegate-status`, in this skill'"'"'s directory, runs the claims and every fixed query' "claims bookkeeping runs in the script, not the main context"
 reject_regex 'Bookkeeping subagent' "the claims subagent is gone"
 require_text '`claim <n>` prints `won` with the `id`' "a claim prints won or lost"
 require_text 'Keep claim ids in `claims.json`' "claim ids live in claims.json"
-require_text 'Renew only right before a long step, Work steps 6, 7, 8 and 9, Review step 5, Land steps 5 and 7' "renewal happens only before the long steps"
+require_text 'Renew in place of Confirm before every push and before a hand-off; without a heartbeat, also before each long step (Work steps 6–9, Review step 5, Land steps 5 and 7, Sync steps 3 and 4).' "renewal happens at every push and hand-off"
 require_text 'Only when it returns `tier: not S`, dispatch **Process** and **Acceptance**' "tier S adds the other checks only when the reviewer re-tiers the diff"
 require_text 'Renew the claim (**Claims**), then dispatch one subagent' "Work renews before the handoff"
 require_text 'renew the claim and dispatch one walkthrough subagent' "Work renews before the walkthrough"
@@ -283,7 +300,19 @@ require_text 'Parallelism comes from running several `/loop /delegate` sessions,
 require_text 'One Run pass works at most one issue through to its PR before the loop reschedules' "a Run pass works one issue"
 # F. A run-level stop rule.
 require_text '## Stop rule' "the skill has a Stop rule section"
-require_text 'context use above 80 %, the run has made more than 150 tool calls in the main session, or the same isolation-guard refusal has occurred three times' "the stop rule names its three triggers"
+# About 70% of spend came from long-lived sessions re-reading 110–175k
+# tokens on every turn. Sessions hand off at about half that, and work one issue.
+require_text '- **Hand-off threshold**: context use above 50 %, more than 80 tool calls in the main session, or a finished Work.' "the hand-off threshold is half the old stop"
+require_text '- **Hard stop**: context use above 80 %, more than 150 tool calls, or the same isolation-guard refusal three times.' "the hard stop keeps the old triggers"
+require_text 'a session works **one issue**: once it has worked one, it never picks another' "a session works one issue"
+require_text 'unless `worked_issue` is set in `run-state.json`' "Run never picks a second issue in a session"
+require_text '<!-- delegator:handoff -->' "the hand-off is a structured PR comment"
+require_text '- **Done:**' "the hand-off names what is done"
+require_text '- **Next:**' "the hand-off names the next step"
+require_text '- **Verified:**' "the hand-off names verified commands and results"
+require_text '- **Open threads:**' "the hand-off names open review threads"
+require_text '- **Traps:**' "the hand-off names traps hit"
+require_text 'reads it before its first step and does not re-derive what it says' "the next session reads the hand-off instead of re-deriving"
 require_text '`run-state.json`' "the stop counters live in run-state.json"
 require_text 'The new session starts a fresh Run, not the stopped Work.' "a stopped run's successor starts fresh"
 # A /loop wakeup is a new turn in the same session, so a run that stopped at
@@ -293,17 +322,21 @@ require_text '## Hand-off' "the skill has a Hand-off section"
 require_text 'A skill cannot run `/clear` or `/compact`' "hand-off says why the session cannot clear itself"
 require_text 'the `create_session` tool of the `claude-code-remote` MCP server' "hand-off starts the next session through create_session"
 require_text 'set to the exact `/loop` command this session was started with' "the next session runs the same loop"
-require_text 'and trips the rule before finishing one pass' "a hand-off chain cannot loop forever"
+require_text 'and trips the context or tool-call rule before finishing one pass' "a hand-off chain cannot loop forever"
 require_text 'call `ScheduleWakeup` with `stop: true`' "the stopped session ends its own loop"
 require_text 'unsubscribe every PR in `subscribed.json`' "the stopped session stops taking PR events"
 require_text 'Do not archive this session' "the stopped session keeps its staged worktree"
 require_text 'A stop on isolation-guard refusals never hands off' "a guard-refusal stop ends the loop"
+# Only a /loop run handed off, so a /delegate #<n> that hit the context or
+# tool-call limit stopped and waited for the human to start a new session.
+require_text 'It then follows **Hand-off**, under `/loop` or not' "every stopped run hands off, not only a loop"
+require_text 'or, for a run started by hand, the exact `/delegate` command with its arguments' "a hand-started run's successor runs the same command"
 # A ScheduleWakeup timer lives in the container, which is reclaimed while the
 # session idles, so the loop stalled for hours until a PR event or the human
 # woke it. On the web the next pass is a server-side send_later reminder.
-require_text 'call it once with `delay_minutes` 20–30, `message` set to the exact `/loop` command this session was started with' "the web loop schedules its next pass with send_later"
+require_text 'call it once with `delay_minutes` set to `next_interval_minutes`, `message` set to the exact `/loop` command this session was started with' "the web loop schedules its next pass with send_later"
 require_text 'Do not also call `ScheduleWakeup`: two schedulers would fire two passes.' "the web loop never double-schedules"
-require_text 'Otherwise (the CLI), call `ScheduleWakeup`.' "the CLI loop still uses ScheduleWakeup"
+require_text 'Otherwise (the CLI), call `ScheduleWakeup`' "the CLI loop still uses ScheduleWakeup"
 require_text 'that reminder has not fired: cancel it with `delete_trigger`' "every pass cancels the pending reminder first"
 require_text 'Cancel a pending `next_pass_trigger` reminder as **Watch** step 1 does' "a hand-off leaves no pending reminder"
 require_text 'That is why the loop schedules its next pass with `send_later`' "the cloud advice says why the loop uses send_later"
@@ -316,6 +349,9 @@ require_text 'write its first outcome branch to `ccr-outcome-branch`' "the outco
 require_text '| **Hand-off** step 3, once the next session starts | `[handed off → <id>] <title>` |' "a handed-off session says so in its title"
 require_text '| **Hand-off** ends the loop without a next session | `[loop ended] <title>` |' "an ended loop says so in its title"
 require_text 'the last 8 characters of the new session'"'"'s id' "the title names the session it handed off to"
+# The report named the new session only by id, so the human had to find it in
+# the sidebar; it now links to the session.
+require_text 'plus the new session as a clickable link, `[<id>](https://claude.ai/code/<session id>)`' "the hand-off report links to the new session"
 # G. Cloud container guidance.
 require_text '## Running in a cloud container' "the skill has cloud container guidance"
 require_text 'only the GitHub connector attached' "the guidance names the connector cost"
@@ -372,13 +408,59 @@ require_text 'The tier is a claim too' "the tier S reviewer re-measures the tier
 require_text '**Tier M or L.** Dispatch these three read-only checks in parallel' "tier M and L keep the three checks"
 require_text 'The RED-before-GREEN evidence goes in the PR body at every tier.' "tier S keeps TDD evidence in the PR"
 
+# Token-cost review of fast-flow-board delegated sessions. Each guard pins
+# one fix; every new key degrades to the old behaviour when a project leaves
+# it out.
+# Tiers and verification scope come from the project's delegation file.
+require_text '| `full_suite_paths` | none |' "full_suite_paths defaults to none"
+require_text '| `preflight` | none |' "preflight defaults to none"
+require_text 'defaults apply when it does not, and keep the behaviour from before a parameter existed' "unset parameters keep the old behaviour"
+require_text 'it replaces the `pre_pr_gate`'"'"'s complete-suite rule' "a Verification scope section replaces the complete-suite rule"
+require_text 'Copy the section verbatim into every implementer, repair-round and Land brief' "the project's scope reaches the implementer verbatim"
+require_text '`Verification scope: project` or `Verification scope: default`' "the PR body records what was verified"
+require_text 'An expected tier S brief tells the implementer: no separate plan document' "tier S writes no plan document"
+require_text 'one self-contained reviewer that also checks the criteria' "tier S gets one self-review"
+# Preflight is read from the project, never hard-coded.
+require_text 'A `preflight:` line in the project'"'"'s delegation file names the project'"'"'s own drift fixers' "preflight comes from the project's file"
+require_text 'The skill hard-codes no fixer.' "no fixer is hard-coded"
+require_text 'Before a PR'"'"'s first push, the implementer runs each preflight command in order' "preflight runs before the first push"
+reject_regex 'mutate:follow' "the skill names no project's fixer"
+# Idle /loop passes cost almost as much as working passes.
+require_text 'ends an unchanged pass without reading any reference file' "an unchanged pass reads no reference file"
+require_text 'so they are never news' "the delegator's own writes never wake a full pass"
+require_text '`next_interval_minutes` is 10 after a full pass and doubles with each idle pass in a row: 20, 40, then 60 at most.' "idle passes back off to 60 minutes"
+require_text 'a full pass runs at least that often' "a full pass still runs once per claim_ttl"
+require_text 'Record the digest baseline (`watch-digest --state <scratch>/delegator/watch-digest.json --record`' "a full pass records the digest baseline first"
+require_script 'cmd_watch_digest()' "the script computes the Watch digest"
+# One PR stayed blocked on findings it did not cause.
+require_text '## Not this PR'"'"'s' "Review has a rule for findings the PR did not cause"
+require_text 'when the same thing fails on the default branch' "a finding counts as not this PR's only when the default branch fails too"
+require_text 'the PR is never widened to fix it' "a PR is never widened for a finding it did not cause"
+require_text 'delegate-status issue-create --title' "the follow-up issue is filed once through the script"
+require_text '<!-- delegator not-this-pr: <key> -->' "the PR says so once"
+require_text 'Widen a PR to fix a finding or a failing check it did not cause' "the Never list forbids widening"
+# An untracked AGENTS.md blocked worktree reclaim.
+require_text 'agent scratch is not stray work: an untracked `AGENTS.md`' "agent scratch does not block reclaim"
+require_text 'A modified tracked file, anywhere, still keeps the worktree.' "real changes still keep a worktree"
+require_script 'SCRATCH_RE=' "the script knows agent scratch"
+# Walkthroughs graded both themes and ran for non-rendering diffs.
+require_text 'where the stack skill has a *Themes* rule, that rule picks the themes; both themes only without one' "the project's Themes rule picks the themes"
+require_text '`Walkthrough: n/a — no rendered change`' "a non-rendering diff skips the walkthrough explicitly"
+require_text '`rendered change: yes`' "the implementer reports whether the diff renders"
+# Measure it.
+require_text 'delegate-status cost-note <PR> --tool-calls' "every session writes its cost note"
+require_text '`delegate-status cost-note` then appends the cost line as the body'"'"'s last line; a later body edit keeps it.' "the PR body ends with the cost line"
+require_text 'Write the cost note (`references/handoff.md`) last, after steps 11 and 13 have finished editing the body.' "Work writes the cost note after every other body edit"
+require_script 'cmd_cost()' "the script sums cost notes"
+
 # Local suites duplicated CI: the implementer, the repair round and Land each
 # ran the complete suite, and CI ran it twice more. CI is the full-suite gate;
 # a project can still ask for a local run.
 require_text '| `local_full_suite` | off |' "the local full suite is off by default"
 require_text 'run lint, typecheck, build and the tests of the packages the diff touches, plus the mutation gate on the diff' "the implementer runs the affected scope"
 require_text 'Do not run the complete test suite: CI runs it on the PR.' "the implementer leaves the full suite to CI"
-require_text 'When `local_full_suite` is on, the brief adds:' "a project can ask for the local full suite"
+require_text 'When the complete suite runs locally, the brief adds:' "a project can ask for the local full suite"
+require_text '`local_full_suite` is on, or a changed file matches a `full_suite_paths` glob' "full_suite_paths turns the local full suite on for its paths"
 require_text 'the same checks as step 6, limited to the files its fix touched' "the repair round checks only what the fix touched"
 require_text 'If you changed no files, run nothing: step 7'"'"'s CI wait is the gate.' "Land reruns checks only when its review changed files"
 reject_regex 'Where the self-check or gate requires the complete test suite, run it once' "the implementer no longer runs the full suite by default"
@@ -426,7 +508,7 @@ require_text 'is briefed with `delegate-status`'"'"'s absolute path and `--repo`
 # Efficiency. A Run pass read work.md (the largest reference) even when Watch
 # found nothing and the budget was at its limit; Reclaim, which every pass
 # needs, now lives on its own.
-if grep -Fq '| **Run** | `references/run.md`, `references/watch.md`, `references/reclaim.md` and `references/pick.md`; `references/work.md` once Pick finds one |' "$CORE"; then
+if grep -Fq '| **Run** | `references/run.md`, `references/watch-digest.md`, `references/watch.md`, `references/reclaim.md` and `references/pick.md`; `references/work.md` once Pick finds one |' "$CORE"; then
   pass "a Run pass reads work.md only once Pick finds a candidate"
 else
   fail "a Run pass reads work.md only once Pick finds a candidate"
@@ -477,7 +559,7 @@ if [ -x "$SKILL_DIR/scripts/delegate-status" ]; then
 else
   fail "the bookkeeping script ships executable"
 fi
-for ref in pick work review watch run land sync blocked-and-oracle hand-back session reclaim; do
+for ref in pick work review watch run land sync blocked-and-oracle hand-back session reclaim tiers watch-digest handoff; do
   if [ -f "$SKILL_DIR/references/$ref.md" ] && grep -Fq -- "\`references/$ref.md\`" "$CORE"; then
     pass "references/$ref.md exists and the core's index names it"
   else
@@ -516,6 +598,7 @@ require_walkthrough 'Both themes only when the scope is **Style or token**' "bot
 require_walkthrough 'Sections skipped:' "the output names the skipped sections"
 require_walkthrough 'test files (`*.test.*`, `*.spec.*`, `__tests__/**`) are not UI files' "test files never trigger a walkthrough"
 require_walkthrough 'Stop the stack once' "the stack is stopped once"
+require_walkthrough 'If the stack skill has a *Themes* rule' "the stack skill's Themes rule picks the themes"
 require_walkthrough 're-walks the affected surfaces on the running stack' "a no-code caller re-walks without a second boot"
 
 echo ""

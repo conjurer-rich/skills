@@ -102,7 +102,7 @@ else
   pass "the command does not pin a model for the loop session"
 fi
 SKILL_DIR="$REPO_ROOT/skills/delivery/delegating-github-issues"
-require_text "$SKILL_DIR/references/work.md" '`model: <implementer_model_small>` when step 4 predicted S and `model: <implementer_model_large>` otherwise' "the implementer's model follows the predicted tier"
+require_text "$SKILL_DIR/references/work.md" '`model: <implementer_model_small>` when step 4 expected S and `model: <implementer_model_large>` otherwise' "the implementer's model follows the expected tier"
 require_text "$SKILL_DIR/references/work.md" 'any doubt predicts **not S**' "doubt predicts the large tier"
 require_text "$SKILL_DIR/references/work.md" 'Escalate at most once per run, never from `<implementer_model_large>` to `<implementer_model_small>`' "escalation is once and only upward"
 require_text "$SKILL_DIR/SKILL.md" '| `implementer_model_small` | `sonnet` |' "the small implementer model defaults to sonnet"
@@ -111,6 +111,30 @@ require_text "$SKILL_DIR/references/sync.md" '`model: opus`, `run_in_background:
 require_text "$SKILL_DIR/references/land.md" '`model: opus`, `run_in_background: true`' "Land's reviewer is dispatched on opus"
 require_text "$COMMAND" 'Bash(*/delegating-github-issues/scripts/delegate-status:*)' "the bookkeeping script needs no permission prompt"
 require_text "$COMMAND" '`tier_small_max_lines` 150, `tier_small_max_packages` 1, no `risk_paths`' "the command lists the size-tier defaults"
+
+# Idle passes cost almost as much as working ones: the digest runs before the
+# skill loads, and an unchanged pass ends there.
+require_text "$COMMAND" '## Idle pass' "the command has an idle-pass check"
+require_text "$COMMAND" 'watch-digest --repo <owner>/<repo> --state <scratchpad>/delegator/watch-digest.json' "the idle check runs the digest"
+require_text "$COMMAND" 'end the pass without loading the skill' "an unchanged pass never loads the skill"
+require_text "$COMMAND" 'Skip this section when the **Bookkeeping script** line reads `none`' "without the script the pass runs in full"
+require_text "$COMMAND" 'Bash(tail:*)' "reading a ship log's tail needs no permission prompt"
+require_text "$COMMAND" 'A `preflight:` line in the settings file sets `preflight`' "the command reads preflight from the settings"
+require_text "$COMMAND" '`claim_ttl` 45 minutes' "the command lists the heartbeat claim TTL"
+require_text "$REPO_ROOT/README.md" '"Bash(git worktree prune:*)"' "the README documents the git worktree allow rules"
+script_line="$(grep -A1 -F 'Bookkeeping script:' "$COMMAND" | sed -n '2s/^!`\(.*\)`$/\1/p')"
+mkdir -p "$SANDBOX/home/.claude/plugins/cache/m/craft/1/skills/delegating-github-issues/scripts"
+touch "$SANDBOX/home/.claude/plugins/cache/m/craft/1/skills/delegating-github-issues/scripts/delegate-status"
+if [ "$(HOME="$SANDBOX/home" bash -c "$script_line")" = "$SANDBOX/home/.claude/plugins/cache/m/craft/1/skills/delegating-github-issues/scripts/delegate-status" ]; then
+  pass "the command finds the bookkeeping script in a plugin install"
+else
+  fail "the command finds the bookkeeping script in a plugin install"
+fi
+if [ "$(HOME="$SANDBOX/nowhere" bash -c "$script_line")" = "none" ]; then
+  pass "without the script the line reads none"
+else
+  fail "without the script the line reads none"
+fi
 
 if grep -E '^!`[^`]*\bgh ' "$COMMAND" | grep -vq '||'; then
   fail "every gh line before the skill loads tolerates a missing gh"

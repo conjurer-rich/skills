@@ -147,6 +147,10 @@ if [ "${args[0]:-}" = api ]; then
       serve "pull-$n.json"; exit 0 ;;
     PATCH\ repos/*/pulls/*)
       n="${path##*/}"
+      if [ -f "$state/pull-$n.json" ] && [ -n "$(field body)" ]; then
+        jq --arg b "$(field body)" '.body = $b' "$state/pull-$n.json" > "$state/pull-$n.tmp"
+        mv "$state/pull-$n.tmp" "$state/pull-$n.json"
+      fi
       jq -n --argjson n "$n" '{number: $n, html_url: "https://github.com/acme/widgets/pull/\($n)"}'; exit 0 ;;
     GET\ repos/*/commits/*/check-runs)
       sha="${path%/check-runs}"; sha="${sha##*/}"
@@ -154,6 +158,15 @@ if [ "${args[0]:-}" = api ]; then
     GET\ repos/*/commits/*/status)
       sha="${path%/status}"; sha="${sha##*/}"
       serve "commit-status-$sha.json" '{"state": "pending", "statuses": []}'; exit 0 ;;
+    GET\ repos/*/commits/*)
+      ref="${path##*/}"
+      serve "commit-$ref.json" "{\"sha\": \"$ref\"}"; exit 0 ;;
+    GET\ repos/*/actions/jobs/*/logs)
+      id="${path%/logs}"; id="${id##*/}"
+      [ -f "$state/job-log-$id.txt" ] || { echo "gh: blob host unreachable (HTTP 403)" >&2; exit 1; }
+      cat "$state/job-log-$id.txt"; exit 0 ;;
+    POST\ repos/*/issues)
+      jq -n --arg t "$(field title)" '{number: 77, title: $t, html_url: "https://github.com/acme/widgets/issues/77"}'; exit 0 ;;
     GET\ repos/*/check-runs/*/annotations)
       id="${path%/annotations}"; id="${id##*/}"
       serve "annotations-$id.json"; exit 0 ;;
