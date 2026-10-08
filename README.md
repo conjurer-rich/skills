@@ -134,6 +134,50 @@ body ends with a `Delegation cost:` line, and
 `delegate-status cost --repo <owner>/<repo> --limit 10` sums it across recent
 merged delegated PRs.
 
+### Delegating without Claude Code: `delegate-loop`
+
+`/loop /delegate` keeps one Claude Code session alive between passes. The
+skill also ships a harness-neutral runner, a shell loop that starts a fresh
+agent process for each pass and spends no tokens while there is nothing to do:
+
+```sh
+# from the project's main checkout, on an always-on machine
+<craft>/skills/delivery/delegating-github-issues/scripts/delegate-loop --agent codex   # or claude, opencode
+```
+
+Each iteration runs `delegate-status next-action`, which is plain `gh` and
+`jq`. It answers `watch`, `land`, `pick` or `idle`:
+
+- **`idle`:** the loop sleeps (`--idle`, 15 minutes by default).
+- **Anything else:** the loop starts the CLI once with
+  [`prompts/delegate-run.md`](skills/delivery/delegating-github-issues/prompts/delegate-run.md),
+  in an empty context, and then pauses.
+
+It reads the same `.claude/delegation.md` as `/delegate`, and claims with a
+stable session name (`loop-<host>`), so a restarted runner resumes its own
+claims.
+
+Safety:
+
+- **Stopping:** `touch .delegate-loop/STOP`, or Ctrl-C.
+- **Limits:** it stops after `--max-failures` failed passes in a row (3 by
+  default), and it runs at most `--max-passes` agent passes per UTC day (20 by
+  default).
+- **Logs:** each pass's output is kept under `.delegate-loop/passes/`, and its
+  token use (and cost, where the CLI reports it) is appended to
+  `.delegate-loop/usage.jsonl`.
+
+The CLIs run with unattended flags:
+
+| CLI | Default flags | Replace with |
+| --- | --- | --- |
+| Claude Code | `claude -p --output-format json --permission-mode acceptEdits --allowedTools …` (the `/delegate` tool list plus Edit and Write) | `DELEGATE_LOOP_CLAUDE_ARGS` |
+| Codex | `codex exec --json --sandbox workspace-write`, network on, never ask, the worktrees folder writable | `DELEGATE_LOOP_CODEX_ARGS` |
+| OpenCode | `opencode run` (permissions come from `opencode.json`) | `DELEGATE_LOOP_OPENCODE_ARGS` |
+
+Headless runs may bill by API usage rather than a subscription, depending on
+the CLI and plan.
+
 ### The shelf
 
 A shelved item costs nothing at runtime: it is not listed in
