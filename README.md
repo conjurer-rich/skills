@@ -68,6 +68,50 @@ Start with `craft:engineering-practice`: it carries the engineering guidelines,
 and its `references/routing.md` says which skill to load for which kind of
 work.
 
+### Unattended `/delegate` runs
+
+`/delegate` pre-approves its own tools, but a `/loop /delegate` session still
+stops at a permission prompt when a project's settings ask before
+`git worktree` commands, and nobody is there to answer. The delegator creates,
+lists, removes and prunes worktrees from the main checkout, so allow those four
+in the project's `.claude/settings.json`:
+
+```json
+{
+  "permissions": {
+    "allow": [
+      "Bash(git worktree list:*)",
+      "Bash(git worktree add:*)",
+      "Bash(git worktree remove:*)",
+      "Bash(git worktree prune:*)"
+    ]
+  }
+}
+```
+
+`git worktree remove` takes `--force` only for a merged worktree whose sole
+leftovers are agent scratch (`AGENTS.md`, untracked files under `.claude/`),
+which `delegate-status` checks first. The delegator also commits and pushes
+from the main checkout with `git -C <worktree> commit` and
+`git -C <worktree> push`; a project that narrows `Bash(git:*)` allows those two
+as well.
+
+Settings a project can add to `.claude/delegation.md` to keep delegated runs
+cheap, each optional:
+
+| Setting | Effect |
+|---|---|
+| `tier_small_max_lines`, `tier_small_max_packages`, `risk_paths` | A diff under the limits that touches no risk path is tier S: no plan document, one self-review instead of a review panel, and the implementer starts on `implementer_model_small` |
+| `implementer_model_small`, `implementer_model_large` | The implementer's model for an expected tier S (default `sonnet`) and otherwise (default `opus`) |
+| `full_suite_paths` | Paths whose change makes the implementer run the complete suite locally |
+| **Verification scope** section | Replaces the `/pr` gate's complete-suite rule with the project's own scope |
+| `preflight:` line | Drift fixers run before a PR's first push, in order |
+
+A project that sets none of them keeps the skill's defaults. Every delegated PR
+body ends with a `Delegation cost:` line, and
+`delegate-status cost --repo <owner>/<repo> --limit 10` sums it across recent
+merged delegated PRs.
+
 ### The shelf
 
 A shelved item costs nothing at runtime: it is not listed in

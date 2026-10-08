@@ -10,11 +10,14 @@
 # review threads and draft state; these tests pin that, and the GraphQL
 # fallback the CLI takes when a /ccr/ route answers 404.
 #
-# Covers the races the Claims protocol exists for (two claims at once, a
-# lapsed claim with the lower id, renewing a lapsed claim, a stale progress
-# label), squash-merged worktree reclaim, the needs-an-answer rules (marker,
-# Claude Code footer, [bot] and Bot authors, preview stickies, reply-to), PR
-# classification, Land markers and the Pick skip cache.
+# Covers the races the Claims protocol exists for (a live claim refused with
+# exit 4, two claims at once, a lapsed claim with the lower id, renewing a
+# lapsed claim, the heartbeat, a stale progress label), squash-merged worktree
+# reclaim with agent scratch, the needs-an-answer rules (marker, Claude Code
+# footer, [bot] and Bot authors, preview stickies, reply-to), PR
+# classification, Land markers, hand-off comments, CI checks pinned to a head
+# SHA, the Watch digest and its backoff, follow-up issues, cost notes and the
+# Pick skip cache.
 #
 
 set -e
@@ -103,15 +106,32 @@ fi
 
 # ---------------------------------------------------------------- claim
 
-# Two sessions claimed issue 7 at once: theirs has the lower id, so they win
-# and we withdraw ours.
+# Another session holds a live claim on issue 7: the claim is refused before
+# anything is posted, names the holder and exits 4, so the caller stops.
 use claims
-out="$(run claim 7)"
-check "a claim that loses the race reports lost and the holder" "$out" \
+status=0
+out="$(run claim 7 2> "$FAKE_STATE/stderr")" || status=$?
+check "a claim refused by a live claim reports lost and the holder" "$out" \
   '.result == "lost" and .item == 7 and .holder == "'"$OTHER"'"'
+if [ "$status" -eq 4 ]; then pass "a refused claim exits 4"; else fail "a refused claim exits 4 (got $status)"; fi
+if grep -Fq "claimed by delegator session $OTHER" "$FAKE_STATE/stderr"; then pass "a refused claim names the holder on stderr"; else fail "a refused claim names the holder on stderr"; fi
+check_not_called "-X POST repos/acme/widgets/issues/7/comments" "a refused claim posts nothing"
+check_not_called "-X DELETE repos/acme/widgets/issues/comments/100" "a refused claim leaves the holder's claim alone"
+check_not_called "issues/7/labels" "a refused claim adds no label"
+
+# Two sessions claimed issue 13 at once: both saw no claim, both posted,
+# theirs has the lower id, so we withdraw ours and exit 4.
+use claims
+jq '[.[] | select(.id == 99)]' "$FAKE_STATE/comments-7.json" > "$FAKE_STATE/comments-13.json"
+cp "$FAKE_STATE/comments-7.json" "$FAKE_STATE/comments-13.json.next"
+status=0
+out="$(run claim 13 2> /dev/null)" || status=$?
+check "a claim that loses the race reports lost and the holder" "$out" \
+  '.result == "lost" and .item == 13 and .holder == "'"$OTHER"'"'
+if [ "$status" -eq 4 ]; then pass "a claim that loses the race exits 4"; else fail "a claim that loses the race exits 4 (got $status)"; fi
 check_called "-X DELETE repos/acme/widgets/issues/comments/900" "the losing session deletes its own claim"
 check_not_called "-X DELETE repos/acme/widgets/issues/comments/100" "the losing session leaves the winner's claim alone"
-check_not_called "issues/7/labels" "the losing session adds no label"
+check_not_called "issues/13/labels" "the losing session adds no label"
 
 # A lapsed claim keeps its lower id but no longer counts.
 use claims
@@ -160,6 +180,31 @@ run renew 9 300 > /dev/null
 body="$(jq -r '.[] | select(.id == 300) | .body' "$FAKE_STATE/comments-9.json")"
 check "a second renewal replaces the first timestamp" "$(jq -n --arg b "$body" '$b')" \
   '(split("\n")[0] | [scan("renewed")] | length) == 1'
+
+# A heartbeat renews the claim at once and on every beat, and exits 4 the
+# moment the claim is lost.
+use claims
+out="$(DELEGATE_STATUS_BEATS=2 DELEGATE_STATUS_POLL=0 run heartbeat 9 300 --every 600 || true)"
+check "heartbeat renews the claim on each beat" "$out" '.result == "renewed"'
+if [ "$(grep -c -- "-X PATCH repos/acme/widgets/issues/comments/300" "$FAKE_STATE/calls.log")" -eq 2 ]; then
+  pass "heartbeat renews once per beat"
+else
+  fail "heartbeat renews once per beat"
+fi
+use claims
+status=0
+out="$(DELEGATE_STATUS_BEATS=3 DELEGATE_STATUS_POLL=0 run heartbeat 10 400 2> /dev/null)" || status=$?
+if [ "$status" -eq 4 ]; then pass "heartbeat exits 4 when the claim is lost"; else fail "heartbeat exits 4 when the claim is lost (got $status)"; fi
+check_not_called "-X PATCH" "a lost heartbeat writes nothing"
+if run heartbeat 9 300 --every 20000 > /dev/null 2>&1; then
+  fail "a heartbeat slower than claim_ttl is a usage error"
+else
+  pass "a heartbeat slower than claim_ttl is a usage error"
+fi
+use claims
+out="$(PATH="$FIXTURES/bin:$PATH" DELEGATE_STATUS_NOW="$NOW" "$STATUS" claim 8 --repo acme/widgets --session "$OURS" || true)"
+check "the default claim_ttl is 45 minutes" "$(jq -n --arg b "$(jq -r '.[] | select(.id == 900) | .body' "$FAKE_STATE/comments-8.json")" '$b')" \
+  'startswith("Claimed by delegator session `'"$OURS"'` until released, or 45 minutes without a heartbeat.")'
 
 # ---------------------------------------------------------------- release
 
@@ -228,6 +273,24 @@ check "worktrees that must stay are reported with a reason" "$out" \
 check "the main worktree is ignored" "$out" 'all(.worktrees.keep[]; .branch != "main")'
 check "budget counts worktrees after reclaim and all open PRs" "$out" \
   '.budget == {"worktrees": 4, "max_worktrees": 5, "open_prs": 6, "max_open_prs": 6, "at_limit": true}'
+
+# Untracked agent scratch does not keep a merged worktree; Reclaim deletes it.
+use status
+printf '%s\n' '?? AGENTS.md' '?? .claude/notes.md' > "$FAKE_STATE/status-2-merged.txt"
+out="$(run status --max-worktrees 5 || true)"
+check "agent scratch does not block reclaim, and is named for deletion" "$out" \
+  '.worktrees.reclaim == [{"path": "/wt/2-merged", "branch": "delegated/2-merged", "pr": 30, "scratch": ["AGENTS.md", ".claude/notes.md"]}]'
+printf '%s\n' '?? AGENTS.md' '?? src/new.ts' > "$FAKE_STATE/status-2-merged.txt"
+out="$(run status --max-worktrees 5 || true)"
+check "an untracked source file still keeps a merged worktree" "$out" \
+  'any(.worktrees.keep[]; .branch == "delegated/2-merged" and .reason == "uncommitted")'
+printf '%s\n' ' M .claude/settings.json' > "$FAKE_STATE/status-2-merged.txt"
+out="$(run status --max-worktrees 5 || true)"
+check "a modified tracked file under .claude/ still keeps a merged worktree" "$out" \
+  'any(.worktrees.keep[]; .branch == "delegated/2-merged" and .reason == "uncommitted")'
+
+use status
+out="$(run status --max-worktrees 5 --max-open-prs 6 --land on)"
 
 # Issues, in the skill's sort order
 check "issues come in rank order, oldest first within a rank" "$out" \
@@ -494,6 +557,145 @@ if [ $(($(date +%s) - start)) -lt 5 ] && [ "$(printf '%s' "$out" | jq -r .state)
 else
   fail "checks --wait stops at the first failure"
 fi
+
+# A bare `gh pr checks --wait` returned before any check had started, and
+# read as green. checks pins the exact head SHA, waits through "no checks
+# yet", and names every failing job with its log tail.
+use status
+out="$(run checks 20 --head h20old || true)"
+check "checks on a head the PR has moved past is superseded" "$out" \
+  '.state == "superseded" and .head == "h20old" and .current_head == "h20" and (.complete | not)'
+out="$(DELEGATE_STATUS_POLL=0 run checks 20 --head h20 --wait 60 || true)"
+check "checks --head waits until the exact head's checks complete" "$out" '.state == "pass" and .complete and .head == "h20"'
+out="$(run checks 22 --head h22 || true)"
+check "no checks yet is none and not complete, never pass" "$out" '.state == "none" and (.complete | not)'
+cp "$FIXTURES/status/check-runs-h20.json.next" "$FAKE_STATE/check-runs-h22.json.next"
+: > "$FAKE_STATE/calls.log"
+out="$(DELEGATE_STATUS_POLL=0 run checks 22 --head h22 --wait 60 || true)"
+check "checks --wait keeps waiting while no check has reported" "$out" '.state == "pass" and .complete'
+if [ "$(grep -c 'commits/h22/check-runs' "$FAKE_STATE/calls.log")" -ge 2 ]; then
+  pass "checks --wait polled again after none"
+else
+  fail "checks --wait polled again after none"
+fi
+printf 'line %s\n' $(seq 1 100) > "$FAKE_STATE/job-log-811.txt"
+out="$(run checks 21 --head h21 --table || true)"
+first="$(printf '%s\n' "$out" | head -n 1)"
+if [ "$first" = "PR #21 head h21: fail (1 pass, 2 fail, 0 pending)" ]; then pass "the table opens with the head and the tally"; else fail "the table opens with the head and the tally (got: $first)"; fi
+if printf '%s\n' "$out" | grep -Fxq 'fail     test  2 tests failed  https://github.com/acme/widgets/actions/runs/9100/job/7'; then
+  pass "the table names each failing check"
+else
+  fail "the table names each failing check"
+fi
+if printf '%s\n' "$out" | grep -Fxq 'src/import.test.ts:12 expected [] to equal [1]'; then pass "the table carries failure annotations"; else fail "the table carries failure annotations"; fi
+tail_lines="$(printf '%s\n' "$out" | sed -n '/^--- test: last 60 log lines$/,$p' | tail -n +2)"
+if [ "$(printf '%s\n' "$tail_lines" | wc -l | tr -d ' ')" -eq 60 ] && [ "$(printf '%s\n' "$tail_lines" | head -n 1)" = "line 41" ]; then
+  pass "a failing Actions job's log is cut to its last 60 lines"
+else
+  fail "a failing Actions job's log is cut to its last 60 lines"
+fi
+rm "$FAKE_STATE/job-log-811.txt"
+out="$(run checks 21 --head h21 --table || true)"
+if printf '%s\n' "$out" | grep -Fq '(log unavailable: gh: blob host unreachable (HTTP 403))'; then
+  pass "an unreachable log is reported in one line, not retried"
+else
+  fail "an unreachable log is reported in one line, not retried"
+fi
+out="$(run checks --ref h21 || true)"
+check "checks --ref reads a branch or commit without a PR" "$out" '.item == null and .head == "h21" and .state == "fail"'
+
+# Watch digest. Idle /loop passes cost almost as much as working ones; the
+# digest tells a pass whether anything changed since the last full pass.
+use status
+DIGEST="$FAKE_STATE/digest.json"
+out="$(run watch-digest --state "$DIGEST" || true)"
+check "with no baseline the digest says changed" "$out" '.changed and .reasons == ["no baseline yet"] and .next_interval_minutes == 10'
+out="$(run watch-digest --state "$DIGEST" --record || true)"
+check "--record makes the current state the baseline" "$out" '.result == "recorded" and .next_interval_minutes == 10'
+check "the baseline holds every delegated PR and eligible issue" "$(cat "$DIGEST")" \
+  '(.digest.prs | keys) == ["20", "21", "22", "23", "24"] and (.digest.issues | has("31")) and .digest.prs["20"].comment == 505'
+out="$(run watch-digest --state "$DIGEST" || true)"
+check "an unchanged repository is idle, and the next pass backs off" "$out" '.changed == false and .idle_passes == 1 and .next_interval_minutes == 20'
+out="$(run watch-digest --state "$DIGEST" || true)"
+check "a second idle pass doubles the interval" "$out" '.idle_passes == 2 and .next_interval_minutes == 40'
+out="$(run watch-digest --state "$DIGEST" || true)"
+check "the interval is capped at 60 minutes" "$out" '.idle_passes == 3 and .next_interval_minutes == 60'
+if grep -E -- '-X (POST|PATCH|DELETE)' "$FAKE_STATE/calls.log" > /dev/null; then fail "watch-digest writes nothing to GitHub"; else pass "watch-digest writes nothing to GitHub"; fi
+
+jq '. + [{"id": 590, "body": "Claimed by delegator session `e5f6a7b8`.\n<!-- delegator claim: e5f6a7b8 -->", "created_at": "2026-10-02T11:00:00Z", "updated_at": "2026-10-02T11:00:00Z", "user": {"login": "rich"}},
+         {"id": 591, "body": "Renamed in abc. <!-- delegator -->", "created_at": "2026-10-02T11:00:00Z", "updated_at": "2026-10-02T11:00:00Z", "user": {"login": "rich"}}]' \
+  "$FAKE_STATE/comments-20.json" > "$FAKE_STATE/comments-20.tmp" && mv "$FAKE_STATE/comments-20.tmp" "$FAKE_STATE/comments-20.json"
+out="$(run watch-digest --state "$DIGEST" || true)"
+check "the delegator's own comments and claims are not news" "$out" '.changed == false'
+jq '. + [{"id": 592, "body": "One more thing", "created_at": "2026-10-02T11:00:00Z", "updated_at": "2026-10-02T11:00:00Z", "user": {"login": "rich"}}]' \
+  "$FAKE_STATE/comments-20.json" > "$FAKE_STATE/comments-20.tmp" && mv "$FAKE_STATE/comments-20.tmp" "$FAKE_STATE/comments-20.json"
+jq '.draft = false' "$FAKE_STATE/pull-23.json" > "$FAKE_STATE/pull-23.tmp" && mv "$FAKE_STATE/pull-23.tmp" "$FAKE_STATE/pull-23.json"
+out="$(run watch-digest --state "$DIGEST" || true)"
+check "a human comment and a Ready click are news" "$out" \
+  '.changed and (.reasons | index("PR #20: new comment or review")) and (.reasons | index("PR #23: marked ready")) and .next_interval_minutes == 10'
+check "a change leaves the baseline for the full pass to record" "$(cat "$DIGEST")" '.idle_passes == 4'
+run watch-digest --state "$DIGEST" --record > /dev/null
+out="$(RUN_NOW=$((NOW + 14400)) run watch-digest --state "$DIGEST" || true)"
+check "a full pass is due once claim_ttl has passed since the last one" "$out" \
+  '.changed and .reasons == ["full pass due: claim_ttl since the last one"]'
+jq 'map(if .number == 31 then .comments = 3 else . end)' "$FAKE_STATE/issues.json" > "$FAKE_STATE/issues.tmp" && mv "$FAKE_STATE/issues.tmp" "$FAKE_STATE/issues.json"
+out="$(run watch-digest --state "$DIGEST" || true)"
+check "a new comment on an eligible issue is news to a Run pass" "$out" '.reasons == ["issue #31 changed"]'
+run watch-digest --state "$DIGEST" --record --prs-only > /dev/null
+check "a --prs-only baseline carries no issues" "$(cat "$DIGEST")" '.digest.issues == {}'
+check "a --prs-only pass after a --prs-only baseline is idle" "$(run watch-digest --state "$DIGEST" --prs-only || true)" '.changed == false'
+
+# Hand-off and findings the PR did not cause, read with the PR.
+use status
+jq '. + [{"id": 595, "body": "<!-- delegator:handoff -->\n**Done:** tests green.\n<!-- delegator -->", "created_at": "2026-10-02T11:00:00Z", "updated_at": "2026-10-02T11:00:00Z", "user": {"login": "rich"}},
+         {"id": 596, "body": "`e2e` fails on main too.\n<!-- delegator not-this-pr: check:e2e -->\n<!-- delegator -->", "created_at": "2026-10-02T11:00:00Z", "updated_at": "2026-10-02T11:00:00Z", "user": {"login": "rich"}}]' \
+  "$FAKE_STATE/comments-20.json" > "$FAKE_STATE/comments-20.tmp" && mv "$FAKE_STATE/comments-20.tmp" "$FAKE_STATE/comments-20.json"
+out="$(run pr 20 --land on || true)"
+check "pr carries the latest hand-off comment" "$out" '.handoff.id == 595 and (.handoff.body | contains("**Done:** tests green."))'
+check "pr lists the findings already reported as not this PR's" "$out" '.not_this_pr == ["check:e2e"]'
+check "a hand-off comment needs no answer" "$out" 'all(.items[]; .id != 595 and .id != 596)'
+check "status leaves hand-off bodies out" "$(run status --land on || true)" 'all(.prs[]; has("handoff") | not)'
+
+# Follow-up issues are filed once.
+use status
+BODY="$FAKE_STATE/body.md"
+echo 'Fails on main too.' > "$BODY"
+out="$(run issue-create --title 'e2e fails on main' --body-file "$BODY" || true)"
+check "issue-create files a follow-up issue" "$out" '.result == "created" and .item == 77'
+check_called "-X POST repos/acme/widgets/issues -f title=e2e fails on main -F body=@$BODY -f labels[]=follow-up" "a follow-up issue carries the follow-up label"
+jq '. + [{number: 70, title: "e2e fails on main", state: "open", labels: [{name: "follow-up"}], created_at: "2026-09-01T09:00:00Z", updated_at: "2026-09-01T09:00:00Z", body: "", html_url: "https://github.com/acme/widgets/issues/70"}]' \
+  "$FAKE_STATE/issues.json" > "$FAKE_STATE/issues.tmp" && mv "$FAKE_STATE/issues.tmp" "$FAKE_STATE/issues.json"
+: > "$FAKE_STATE/calls.log"
+out="$(run issue-create --title 'e2e fails on main' --body-file "$BODY" || true)"
+check "an open follow-up with the same title is reused" "$out" '.result == "exists" and .item == 70'
+check_not_called "-X POST repos/acme/widgets/issues " "no duplicate follow-up is filed"
+
+# Cost notes: one entry per session, summed into one line at the end.
+use status
+jq '.body = "## Summary\nCloses #14\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)"' "$FAKE_STATE/pull-20.json" > "$FAKE_STATE/pull-20.tmp" && mv "$FAKE_STATE/pull-20.tmp" "$FAKE_STATE/pull-20.json"
+out="$(run cost-note 20 --tool-calls 57 || true)"
+check "cost-note reports the PR's totals" "$out" '.result == "noted" and .sessions == 1 and .tool_calls == 57 and .handoffs == 0'
+last="$(jq -r '.body | split("\n") | last' "$FAKE_STATE/pull-20.json")"
+if [ "$last" = "Delegation cost: 1 session, 57 tool calls, 0 hand-offs. <!-- delegator:cost $OURS=57/0 -->" ]; then
+  pass "the cost note is the body's last line"
+else
+  fail "the cost note is the body's last line (got: $last)"
+fi
+run cost-note 20 --tool-calls 64 --handoff > /dev/null
+out="$(PATH="$FIXTURES/bin:$PATH" DELEGATE_STATUS_NOW="$NOW" "$STATUS" cost-note 20 --tool-calls 40 --repo acme/widgets --session "$OTHER" || true)"
+check "a second session adds its entry; a session's own note is replaced, not added" "$out" '.sessions == 2 and .tool_calls == 104 and .handoffs == 1'
+check "the body keeps one cost line" "$(jq '.body' "$FAKE_STATE/pull-20.json")" \
+  '([split("\n")[] | select(contains("<!-- delegator:cost "))] | length) == 1 and endswith("Delegation cost: 2 sessions, 104 tool calls, 1 hand-off. <!-- delegator:cost '"$OURS"'=64/1 '"$OTHER"'=40/0 -->") and contains("Closes #14")'
+if run cost-note 20 > /dev/null 2>&1; then fail "cost-note without --tool-calls is a usage error"; else pass "cost-note without --tool-calls is a usage error"; fi
+
+printf '%s' '[{"number": 19, "merged_at": "2026-09-30T09:00:00Z", "head": {"ref": "delegated/9-a"}, "body": "x\n\nDelegation cost: 2 sessions, 100 tool calls, 1 hand-off. <!-- delegator:cost a=60/1 b=40/0 -->"},
+  {"number": 18, "merged_at": null, "head": {"ref": "delegated/8-b"}, "body": "Delegation cost: 1 session, 9 tool calls, 0 hand-offs. <!-- delegator:cost a=9/0 -->"},
+  {"number": 17, "merged_at": "2026-09-29T09:00:00Z", "head": {"ref": "feature/human"}, "body": "Delegation cost: 1 session, 9 tool calls, 0 hand-offs. <!-- delegator:cost a=9/0 -->"},
+  {"number": 16, "merged_at": "2026-09-28T09:00:00Z", "head": {"ref": "delegated/6-c"}, "body": "Delegation cost: 1 session, 50 tool calls, 0 hand-offs. <!-- delegator:cost c=50/0 -->"},
+  {"number": 15, "merged_at": "2026-09-27T09:00:00Z", "head": {"ref": "delegated/5-d"}, "body": "Older, before cost notes."}]' > "$FAKE_STATE/closed-prs.json"
+out="$(run cost --limit 3 || true)"
+check "cost sums the newest merged delegated PRs' notes" "$out" \
+  '[.prs[].number] == [19, 16] and .measured == 2 and .unmeasured == [15] and .totals == {"sessions": 3, "tool_calls": 150, "handoffs": 1} and .mean.tool_calls == 75'
 
 check "merged-sizes reads the newest merged PRs' sizes" "$(run merged-sizes || true)" \
   '.prs == [{"number": 19, "additions": 190, "deletions": 19, "changedFiles": 3}, {"number": 17, "additions": 170, "deletions": 17, "changedFiles": 3}]'

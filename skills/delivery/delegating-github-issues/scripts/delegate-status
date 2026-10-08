@@ -24,40 +24,48 @@
 #   delegate-status claim       <n>            [options]
 #   delegate-status confirm     <n> <id>       [options]
 #   delegate-status renew       <n> <id>       [options]
+#   delegate-status heartbeat   <n> <id> [--every 900]                 [options]
 #   delegate-status release     <n> <id> (--reason <text> | --delete) [options]
 #   delegate-status clear-label <n>            [options]
 #   delegate-status comment     <n> --body-file <f>                    [options]
 #   delegate-status reply       <pr> <comment id> --body-file <f>      [options]
+#   delegate-status issue-create --title <t> --body-file <f> [--labels follow-up]
 #   delegate-status pr-create   --head <branch> --title <t> --body-file <f> [--draft] [--base <b>]
 #   delegate-status pr-edit     <pr> [--title <t>] [--body-file <f>]   [options]
 #   delegate-status to-draft    <pr>                                   [options]
 #   delegate-status merge       <pr> --sha <verified head>             [options]
-#   delegate-status checks      <pr> [--wait <seconds>]                [options]
+#   delegate-status checks      <pr> [--head <sha>] [--wait <s>] [--fail-fast] [--table]
+#   delegate-status checks      --ref <branch or sha> [--table]        [options]
+#   delegate-status watch-digest --state <file> [--record] [--prs-only] [--interval 10] [--max-interval 60]
+#   delegate-status cost-note   <pr> --tool-calls <n> [--handoff]      [options]
+#   delegate-status cost        [--limit 10]                           [options]
 #   delegate-status merged-sizes [--limit 2]                           [options]
 #
 # Options (defaults are the skill's):
 #   --repo <owner/repo>      required
-#   --session <name>         this session's claim name; required for claim, confirm, renew, release
+#   --session <name>         this session's claim name; required for claim, confirm,
+#                            renew, heartbeat, release and cost-note
 #   --label agent-ready      --rank-labels p1,p2      --prefix delegated/
-#   --progress-label in-progress                       --claim-ttl 14400 (seconds)
+#   --progress-label in-progress                       --claim-ttl 2700 (seconds)
 #   --max-worktrees 1        --max-open-prs 6          --land off|on
 #   --cache <file>           status only: Pick's skip cache, read and rewritten
 #
-# Run it from the main checkout. status, budget, issue, pr, checks and
-# merged-sizes write nothing to GitHub. Exit status:
-# 0 done (a lost claim is an answer, not an error), 1 a gh or git call failed,
-# 2 usage, 3 refused (the comment is another session's, or a live claim backs
-# the label).
+# Run it from the main checkout. status, budget, issue, pr, checks,
+# watch-digest, cost and merged-sizes write nothing to GitHub. Exit status:
+# 0 done, 1 a gh or git call failed, 2 usage, 3 refused (the comment is
+# another session's, or a live claim backs the label), 4 another session
+# holds a live claim on the item (claim, heartbeat): stop, never retry.
 #
-# DELEGATE_STATUS_NOW (epoch seconds) overrides the clock, and
-# DELEGATE_STATUS_POLL (seconds, default 30) the checks --wait interval, for tests.
+# DELEGATE_STATUS_NOW (epoch seconds) overrides the clock, DELEGATE_STATUS_POLL
+# (seconds, default 30) the checks --wait interval and the heartbeat interval,
+# and DELEGATE_STATUS_BEATS stops a heartbeat after that many renewals, for tests.
 #
 
 set -euo pipefail
 shopt -s inherit_errexit 2> /dev/null || true
 
 usage() {
-  sed -n '19,44p' "$0" | sed 's/^# \{0,1\}//' >&2
+  sed -n '/^# Usage:/,/^# Run it from/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//' >&2
   exit 2
 }
 
@@ -72,7 +80,7 @@ LABEL="agent-ready"
 RANK_LABELS="p1,p2"
 PREFIX="delegated/"
 PROGRESS_LABEL="in-progress"
-CLAIM_TTL=14400
+CLAIM_TTL=2700
 MAX_WORKTREES=1
 MAX_OPEN_PRS=6
 LAND="off"
@@ -86,7 +94,19 @@ BASE=""
 DRAFT=0
 SHA=""
 WAIT=0
-LIMIT=2
+LIMIT=""
+LABELS=""
+EVERY=900
+REF=""
+STATE=""
+RECORD=0
+INTERVAL=10
+MAX_INTERVAL=60
+TOOL_CALLS=""
+HANDOFF=0
+FAIL_FAST=0
+TABLE=0
+PRS_ONLY=0
 POSITIONAL=()
 
 while [ $# -gt 0 ]; do
@@ -112,6 +132,18 @@ while [ $# -gt 0 ]; do
     --sha) SHA="${2:-}"; shift 2 ;;
     --wait) WAIT="${2:-}"; shift 2 ;;
     --limit) LIMIT="${2:-}"; shift 2 ;;
+    --labels) LABELS="${2:-}"; shift 2 ;;
+    --every) EVERY="${2:-}"; shift 2 ;;
+    --ref) REF="${2:-}"; shift 2 ;;
+    --state) STATE="${2:-}"; shift 2 ;;
+    --record) RECORD=1; shift ;;
+    --interval) INTERVAL="${2:-}"; shift 2 ;;
+    --max-interval) MAX_INTERVAL="${2:-}"; shift 2 ;;
+    --tool-calls) TOOL_CALLS="${2:-}"; shift 2 ;;
+    --handoff) HANDOFF=1; shift ;;
+    --fail-fast) FAIL_FAST=1; shift ;;
+    --table) TABLE=1; shift ;;
+    --prs-only) PRS_ONLY=1; shift ;;
     -h|--help) usage ;;
     --*) die "unknown option $1" 2 ;;
     *) POSITIONAL+=("$1"); shift ;;
@@ -121,8 +153,8 @@ done
 [ "${#POSITIONAL[@]}" -gt 0 ] || usage
 COMMAND="${POSITIONAL[0]}"
 [ -n "$REPO" ] || die "--repo <owner/repo> is required" 2
-case "$CLAIM_TTL$MAX_WORKTREES$MAX_OPEN_PRS$WAIT$LIMIT" in
-  *[!0-9]*) die "--claim-ttl, --max-worktrees, --max-open-prs, --wait and --limit take whole numbers" 2 ;;
+case "$CLAIM_TTL$MAX_WORKTREES$MAX_OPEN_PRS$WAIT$LIMIT$EVERY$INTERVAL$MAX_INTERVAL$TOOL_CALLS" in
+  *[!0-9]*) die "--claim-ttl, --max-worktrees, --max-open-prs, --wait, --limit, --every, --interval, --max-interval and --tool-calls take whole numbers" 2 ;;
 esac
 case "$LAND" in on|off) ;; *) die "--land takes on or off" 2 ;; esac
 
@@ -249,25 +281,39 @@ open_pr_for() {
 
 # ---------------------------------------------------------------- claims
 
+# A live claim of another session refuses the claim before anything is
+# posted; two sessions that post at once both re-read, and the lower id wins.
+# The loser deletes its own comment. Either way a lost claim exits 4, so a
+# caller cannot mistake it for a won one and carry on.
+lost_claim() {
+  jq -nc --argjson n "$1" --argjson w "$2" '{item: $n, result: "lost", holder: $w.session}'
+  printf 'delegate-status: #%s is claimed by delegator session %s; stop, do not retry\n' \
+    "$1" "$(printf '%s' "$2" | jq -r .session)" >&2
+  exit 4
+}
+
 cmd_claim() {
   need_session
   need_args 2
   local n="${POSITIONAL[1]}" comments mine winner body
-  ensure_label
   comments="$(comments_of "$n")"
   mine="$(printf '%s' "$comments" | jq --argjson now "$NOW" --argjson ttl "$CLAIM_TTL" --arg s "$SESSION" \
     "$JQ_DEFS"'[live_claims($now; $ttl)[] | select(.session == $s) | .id] | first // empty')"
+  winner="$(winner_of "$comments")"
+  if [ -z "$mine" ] && [ "$winner" != null ]; then
+    lost_claim "$n" "$winner"
+  fi
+  ensure_label
   if [ -z "$mine" ]; then
-    body="Claimed by delegator session \`$SESSION\` until released, or $(ttl_text) without renewal.
+    body="Claimed by delegator session \`$SESSION\` until released, or $(ttl_text) without a heartbeat.
 <!-- delegator claim: $SESSION -->"
     mine="$(gh_json api -X POST "repos/$REPO/issues/$n/comments" -f body="$body" | jq '.id')"
     comments="$(comments_of "$n")"
+    winner="$(winner_of "$comments")"
   fi
-  winner="$(winner_of "$comments")"
   if [ "$(printf '%s' "$winner" | jq '.id')" != "$mine" ]; then
     gh_json api -X DELETE "repos/$REPO/issues/comments/$mine" > /dev/null
-    jq -nc --argjson n "$n" --argjson w "$winner" '{item: $n, result: "lost", holder: $w.session}'
-    return
+    lost_claim "$n" "$winner"
   fi
   gh_json api -X POST "repos/$REPO/issues/$n/labels" -f "labels[]=$PROGRESS_LABEL" > /dev/null
   jq -nc --argjson n "$n" --argjson id "$mine" --argjson pr "$(open_pr_for "$n")" \
@@ -291,10 +337,8 @@ cmd_confirm() {
   confirm_json "${POSITIONAL[1]}" "${POSITIONAL[2]}"
 }
 
-cmd_renew() {
-  need_session
-  need_args 3
-  local n="${POSITIONAL[1]}" id="${POSITIONAL[2]}" state body
+renew_json() {
+  local n="$1" id="$2" state body
   state="$(confirm_json "$n" "$id")"
   if [ "$(printf '%s' "$state" | jq -r .result)" != live ]; then
     printf '%s\n' "$state"
@@ -306,6 +350,38 @@ cmd_renew() {
     | [.] + $lines[1:] | join("\n")')"
   gh_json api -X PATCH "repos/$REPO/issues/comments/$id" -f body="$body" > /dev/null
   jq -nc --argjson n "$n" --argjson id "$id" --arg at "$NOW_ISO" '{item: $n, result: "renewed", id: $id, at: $at}'
+}
+
+cmd_renew() {
+  need_session
+  need_args 3
+  renew_json "${POSITIONAL[1]}" "${POSITIONAL[2]}"
+}
+
+# Renews the claim now and then every --every seconds, as a background task
+# held for as long as the claim is: a claim lapses claim_ttl after its last
+# heartbeat, so a crashed session frees its item quickly while a long
+# implementer step keeps it. Exits 4 the moment the claim is lost.
+cmd_heartbeat() {
+  need_session
+  need_args 3
+  local n="${POSITIONAL[1]}" id="${POSITIONAL[2]}" state beats=0
+  [ "$EVERY" -lt "$CLAIM_TTL" ] || die "--every must be shorter than --claim-ttl" 2
+  while :; do
+    NOW="${DELEGATE_STATUS_NOW:-$(date +%s)}"
+    NOW_ISO="$(jq -nr --argjson n "$NOW" '$n | todate')"
+    state="$(renew_json "$n" "$id")"
+    printf '%s\n' "$state"
+    if [ "$(printf '%s' "$state" | jq -r .result)" != renewed ]; then
+      printf 'delegate-status: the claim on #%s is lost; stop work on it\n' "$n" >&2
+      exit 4
+    fi
+    beats=$((beats + 1))
+    if [ -n "${DELEGATE_STATUS_BEATS:-}" ] && [ "$beats" -ge "$DELEGATE_STATUS_BEATS" ]; then
+      return
+    fi
+    sleep "${DELEGATE_STATUS_POLL:-$EVERY}"
+  done
 }
 
 cmd_release() {
@@ -356,8 +432,11 @@ cmd_clear_label() {
 
 # ---------------------------------------------------------------- status
 
+# Untracked agent scratch in a worktree's `git status --porcelain`.
+SCRATCH_RE='^\?\? (AGENTS\.md|CLAUDE\.local\.md|\.claude/.*|\.delegator/.*)$'
+
 worktrees_json() {
-  local list entries reclaim="[]" keep="[]" entry path branch pr state head dirty rev reason
+  local list entries reclaim="[]" keep="[]" entry path branch pr state head dirty rev reason scratch
   list="$(git worktree list --porcelain)" || die "git worktree list failed"
   entries="$(printf '%s\n' "$list" | jq -Rs --arg p "$PREFIX" '
     split("\n\n") | map(split("\n") | map(select(length > 0)) | select(length > 0)
@@ -374,12 +453,18 @@ worktrees_json() {
     state="$(printf '%s' "$pr" | jq -r '.state // "NONE"')"
     head="$(printf '%s' "$pr" | jq -r '.headRefOid // ""')"
     reason=""
+    scratch="[]"
     case "$state" in
       NONE) reason="no-pr" ;;
       OPEN) reason="pr-open" ;;
       CLOSED) reason="pr-closed" ;;
       MERGED)
+        # Ignored files never show in --porcelain; untracked agent scratch
+        # (AGENTS.md, files under .claude/ or .delegator/) is not stray work,
+        # but it blocks `git worktree remove`, so Reclaim deletes it first.
         dirty="$(git -C "$path" status --porcelain 2> /dev/null || echo "unreadable")"
+        scratch="$(printf '%s\n' "$dirty" | jq -Rnc --arg re "$SCRATCH_RE" '[inputs | select(test($re)) | .[3:]]')"
+        dirty="$(printf '%s\n' "$dirty" | grep -Ev "$SCRATCH_RE" | grep -v '^$' || true)"
         rev="$(git rev-parse "$branch" 2> /dev/null || true)"
         if [ -n "$dirty" ]; then
           reason="uncommitted"
@@ -389,8 +474,8 @@ worktrees_json() {
       *) reason="pr-$(printf '%s' "$state" | tr '[:upper:]' '[:lower:]')" ;;
     esac
     if [ -z "$reason" ]; then
-      reclaim="$(jq -c --arg path "$path" --arg b "$branch" --argjson pr "$pr" \
-        '. + [{path: $path, branch: $b, pr: $pr.number}]' <<< "$reclaim")"
+      reclaim="$(jq -c --arg path "$path" --arg b "$branch" --argjson pr "$pr" --argjson sc "$scratch" \
+        '. + [{path: $path, branch: $b, pr: $pr.number} + (if $sc == [] then {} else {scratch: $sc} end)]' <<< "$reclaim")"
     else
       keep="$(jq -c --arg path "$path" --arg b "$branch" --argjson pr "$pr" --arg r "$reason" \
         '. + [{path: $path, branch: $b, pr: ($pr.number // null), reason: $r}]' <<< "$keep")"
@@ -500,6 +585,8 @@ pr_json() {
           land_marker: (if $marker == null then null else {sha: $marker, verified: ($marker == $p.headRefOid)} end),
           mergeable: $p.mergeable, conflicted: $conflicted,
           sync_marker: (if $sync == null then null else {sha: $sync, current: ($sync == $p.headRefOid)} end),
+          handoff: ([$c[] | select(.body // "" | contains("<!-- delegator:handoff -->")) | {id, body}] | last // null),
+          not_this_pr: ([$c[].body // "" | scan("<!-- delegator not-this-pr: ([^ ]+) -->") | .[0]] | unique),
           items: $items }
       | .class = (if .holder != null then "claimed"
                   elif $land == "on" and ($p.isDraft | not) and $ready > 0 then "ready"
@@ -601,7 +688,7 @@ cmd_status() {
   while IFS= read -r pr; do
     [ -n "$pr" ] || continue
     pr="$(gh_json api "repos/$REPO/pulls/$(printf '%s' "$pr" | jq '.number')" | jq -c "$JQ_DEFS"'pr_norm')"
-    result="$(pr_json "$pr" | jq -c 'del(.items)')"
+    result="$(pr_json "$pr" | jq -c 'del(.items, .handoff)')"
     pr_results="$(jq -c --argjson r "$result" '. + [$r]' <<< "$pr_results")"
   done < <(printf '%s' "$prs" | jq -c --arg p "$PREFIX" '[.[] | select(.headRefName | startswith($p))] | sort_by(.createdAt) | .[]')
 
@@ -683,9 +770,9 @@ cmd_merge() {
     | jq -c --argjson n "${POSITIONAL[1]}" '{item: $n, result: (if .merged then "merged" else "refused" end), sha, message}'
 }
 
-# The head commit's check runs and commit statuses, as pass, fail, pending or
-# none. --wait polls until nothing is pending, a check fails, or the wait runs
-# out; it stops at the first failure, as `gh pr checks --watch --fail-fast` did.
+# One commit's check runs and commit statuses, as pass, fail, pending or none.
+# `complete` is true once checks exist and none is pending: "none" means CI
+# has not reported yet, and is never green.
 checks_json() {
   local n="$1" sha="$2" runs statuses
   runs="$(gh_json api --paginate "repos/$REPO/commits/$sha/check-runs?per_page=100" | jq -s 'map(.check_runs) | add // []')"
@@ -704,19 +791,65 @@ checks_json() {
         state: (if any($all[]; .bucket == "fail") then "fail"
                 elif any($all[]; .bucket == "pending") then "pending"
                 elif ($all | length) == 0 then "none" else "pass" end),
+        complete: (($all | length) > 0 and all($all[]; .bucket != "pending")),
         total: ($all | length),
+        passing: [$all[] | select(.bucket == "pass") | .name],
         failing: [$all[] | select(.bucket == "fail") | del(.bucket)],
         pending: [$all[] | select(.bucket == "pending") | .name] }'
 }
 
+# The last 60 lines of a failing Actions job's log. The log is served from a
+# storage host a cloud session may not reach; then there is no tail, and the
+# annotations stand alone.
+log_tail_of() {
+  if gh_try api "repos/$REPO/actions/jobs/$1/logs"; then
+    printf '%s\n' "$GH_OUT" | tail -n 60
+  else
+    printf '(log unavailable: %s)\n' "$(printf '%s' "$GH_ERR" | head -n 1)"
+  fi
+}
+
+checks_table() {
+  local result="$1" check id
+  printf '%s' "$result" | jq -r '
+    "\(if .item then "PR #\(.item)" else "ref" end) head \(.head): \(.state)"
+      + " (\(.passing | length) pass, \(.failing | length) fail, \(.pending | length) pending)",
+    (.passing[] | "pass     \(.)"),
+    (.pending[] | "pending  \(.)"),
+    (.failing[] | "fail     \(.name)\(if .summary then "  \(.summary)" else "" end)\(if .url then "  \(.url)" else "" end)"),
+    (.failing[] | select((.annotations // []) != []) | "--- \(.name): annotations", (.annotations[] | "\(.path):\(.line // "?") \(.message)"))'
+  while IFS= read -r check; do
+    [ -n "$check" ] || continue
+    id="$(printf '%s' "$check" | jq -r '.job')"
+    printf -- '--- %s: last 60 log lines\n' "$(printf '%s' "$check" | jq -r '.name')"
+    log_tail_of "$id"
+  done < <(printf '%s' "$result" | jq -c '.failing[] | select(.job != null) | {name, job}')
+}
+
+# Waits for CI on one exact commit: the PR head named by --head (the head the
+# caller pushed), or --ref. A PR whose head has moved past --head reports
+# superseded. Without --fail-fast it waits until checks exist and none is
+# pending, so the table names every failing job at once.
 cmd_checks() {
-  need_args 2
-  local n="${POSITIONAL[1]}" sha result deadline failing annotated="[]" check
-  sha="$(gh_json api "repos/$REPO/pulls/$n" | jq -r '.head.sha')"
+  local n=null sha current result deadline failing annotated="[]" check
+  if [ -n "$REF" ]; then
+    sha="$(gh_json api "repos/$REPO/commits/$(jq -nr --arg r "$REF" '$r | @uri')" | jq -r '.sha')"
+  else
+    need_args 2
+    n="${POSITIONAL[1]}"
+    current="$(gh_json api "repos/$REPO/pulls/$n" | jq -r '.head.sha')"
+    sha="${HEAD:-$current}"
+    if [ "$sha" != "$current" ]; then
+      jq -nc --argjson n "$n" --arg sha "$sha" --arg c "$current" \
+        '{item: $n, head: $sha, current_head: $c, state: "superseded", complete: false}'
+      return
+    fi
+  fi
   deadline=$(($(date +%s) + WAIT))
   while :; do
     result="$(checks_json "$n" "$sha")"
-    if [ "$(printf '%s' "$result" | jq -r .state)" != pending ] || [ "$(date +%s)" -ge "$deadline" ]; then
+    if printf '%s' "$result" | jq -e --argjson ff "$FAIL_FAST" '.complete or ($ff == 1 and .state == "fail")' > /dev/null \
+      || [ "$(date +%s)" -ge "$deadline" ]; then
       break
     fi
     sleep "${DELEGATE_STATUS_POLL:-30}"
@@ -730,16 +863,189 @@ cmd_checks() {
       check="$(jq -c --argjson a "$(list_of "repos/$REPO/check-runs/$(printf '%s' "$check" | jq '.id')/annotations?per_page=100" \
         | jq '[.[] | select(.annotation_level == "failure") | {path, line: .start_line, message}] | .[:10]')" '. + {annotations: $a}' <<< "$check")"
     fi
-    annotated="$(jq -c --argjson c "$check" '. + [$c | del(.id)]' <<< "$annotated")"
+    annotated="$(jq -c --argjson c "$check" '. + [$c | (if .run != null then .job = .id else . end) | del(.id)]' <<< "$annotated")"
   done < <(printf '%s' "$failing" | jq -c '.[]')
-  printf '%s' "$result" | jq -c --argjson f "$annotated" '.failing = $f'
+  result="$(printf '%s' "$result" | jq -c --argjson f "$annotated" '.failing = $f')"
+  if [ "$TABLE" -eq 1 ]; then
+    checks_table "$result"
+  else
+    printf '%s\n' "$(printf '%s' "$result" | jq -c 'del(.passing) | .failing |= map(del(.job))')"
+  fi
+}
+
+# ---------------------------------------------------------------- watch digest
+
+# What a Watch or Run pass would act on, without the classification: each
+# delegated PR's head, draft state, conflict and the newest comment, review
+# comment and review that needs an answer (so the delegator's own replies and
+# claims never count as news), and each eligible issue's comment count, labels
+# and body length (so a renewed claim, an edit to a comment, does not either).
+digest_json() {
+  local prs_only="$1" prs="{}" issues="{}" n pull marks
+  while IFS= read -r n; do
+    [ -n "$n" ] || continue
+    pull="$(gh_json api "repos/$REPO/pulls/$n")"
+    marks="$( { comments_of "$n"; list_of "repos/$REPO/pulls/$n/comments?per_page=100"; list_of "repos/$REPO/pulls/$n/reviews?per_page=100"; } \
+      | jq -sc "$JQ_DEFS"'map(map({id, body, login: (.user.login // ""), type: (.user.type // "")} | select(needs_answer)) | map(.id) | max // 0)')"
+    prs="$(jq -c --arg n "$n" --argjson p "$pull" --argjson m "$marks" \
+      '. + {($n): {head: $p.head.sha, draft: ($p.draft // false), conflicted: ($p.mergeable == false),
+                    comment: $m[0], review_comment: $m[1], review: $m[2]}}' <<< "$prs")"
+  done < <(open_prs | jq -r --arg p "$PREFIX" '.[] | select(.headRefName | startswith($p)) | .number')
+  if [ "$prs_only" -eq 0 ]; then
+    issues="$(list_of "repos/$REPO/issues?state=open&per_page=100&labels=$(jq -nr --arg l "$LABEL" '$l | @uri')" \
+      | jq -c 'map(select(has("pull_request") | not)
+                   | {key: (.number | tostring), value: {comments: (.comments // 0), labels: ([.labels[]?.name] | sort), body: (.body // "" | length)}})
+               | from_entries')"
+  fi
+  jq -nc --argjson p "$prs" --argjson i "$issues" '{prs: $p, issues: $i}'
+}
+
+# The reasons two digests differ, as short lines; empty when they agree.
+digest_reasons() {
+  jq -nc --argjson a "$1" --argjson b "$2" '
+    [ ( ($a.prs | keys) as $ak | ($b.prs | keys) as $bk
+          | ($bk - $ak)[] | "PR #\(.) opened" ),
+        ( ($a.prs | keys) - ($b.prs | keys) | .[] | "PR #\(.) merged or closed" ),
+        ( $b.prs | to_entries[] | .key as $k | .value as $y | ($a.prs[$k] // null) as $x | select($x != null)
+          | (if $x.head != $y.head then "PR #\($k): new commits" else empty end),
+            (if $x.draft != $y.draft then (if $y.draft then "PR #\($k): back to draft" else "PR #\($k): marked ready" end) else empty end),
+            (if $x.conflicted != $y.conflicted then "PR #\($k): mergeability changed" else empty end),
+            (if [$x.comment, $x.review_comment, $x.review] != [$y.comment, $y.review_comment, $y.review]
+             then "PR #\($k): new comment or review" else empty end) ),
+        ( ($b.issues | keys) - ($a.issues | keys) | .[] | "issue #\(.) is eligible" ),
+        ( ($a.issues | keys) - ($b.issues | keys) | .[] | "issue #\(.) left the label" ),
+        ( $b.issues | to_entries[] | .key as $k | select(($a.issues[$k] // null) != null and $a.issues[$k] != .value)
+          | "issue #\($k) changed" ) ]'
+}
+
+# The cheap first step of a /loop pass. Without --record it compares GitHub
+# with the baseline the last full pass recorded: `changed` true means run the
+# full pass; false means end the pass, scheduling the next one
+# next_interval_minutes out, which doubles with each idle pass up to
+# --max-interval. A full pass is also due once claim_ttl has passed since the
+# baseline, for what the digest cannot see (a lapsed claim, a reaction, CI).
+# --record, at the start of a full pass, makes the current state the baseline.
+cmd_watch_digest() {
+  [ -n "$STATE" ] || die "watch-digest takes --state <file>" 2
+  local current prev reasons idle interval
+  current="$(digest_json "$PRS_ONLY")"
+  if [ "$RECORD" -eq 1 ]; then
+    jq -n --argjson d "$current" --argjson now "$NOW" --arg at "$NOW_ISO" \
+      '{recorded: $now, recorded_at: $at, idle_passes: 0, digest: $d}' > "$STATE"
+    jq -nc --argjson i "$INTERVAL" --arg at "$NOW_ISO" '{result: "recorded", at: $at, next_interval_minutes: $i}'
+    return
+  fi
+  prev="null"
+  if [ -s "$STATE" ]; then
+    prev="$(jq -c 'if type == "object" and has("digest") then . else null end' "$STATE" 2> /dev/null || echo null)"
+  fi
+  if [ "$prev" = null ]; then
+    reasons='["no baseline yet"]'
+  else
+    reasons="$(digest_reasons "$(printf '%s' "$prev" | jq -c .digest)" "$current")"
+    if [ $((NOW - $(printf '%s' "$prev" | jq '.recorded'))) -ge "$CLAIM_TTL" ]; then
+      reasons="$(jq -c '. + ["full pass due: claim_ttl since the last one"]' <<< "$reasons")"
+    fi
+  fi
+  if [ "$reasons" != "[]" ]; then
+    jq -nc --argjson r "$reasons" --argjson i "$INTERVAL" '{result: "changed", changed: true, reasons: $r, next_interval_minutes: $i}'
+    return
+  fi
+  idle=$(($(printf '%s' "$prev" | jq '.idle_passes // 0') + 1))
+  interval="$(jq -n --argjson b "$INTERVAL" --argjson m "$MAX_INTERVAL" --argjson k "$idle" '[$b * pow(2; $k), $m] | min | floor')"
+  printf '%s' "$prev" | jq --argjson k "$idle" '.idle_passes = $k' > "$STATE"
+  jq -nc --argjson k "$idle" --argjson i "$interval" --arg since "$(printf '%s' "$prev" | jq -r .recorded_at)" \
+    '{result: "idle", changed: false, idle_passes: $k, since: $since, next_interval_minutes: $i}'
+}
+
+# ---------------------------------------------------------------- follow-ups and cost
+
+# Files a follow-up issue unless an open issue with the same title and first
+# label exists, so a finding reported on every pass is filed once.
+cmd_issue_create() {
+  [ -n "$TITLE" ] || die "issue-create takes --title <title>" 2
+  need_body_file
+  local labels="${LABELS:-follow-up}" first existing l parts=() args=()
+  first="${labels%%,*}"
+  existing="$(list_of "repos/$REPO/issues?state=open&per_page=100&labels=$(jq -nr --arg l "$first" '$l | @uri')" \
+    | jq -c --arg t "$TITLE" --arg l "$first" \
+      'first(.[] | select((has("pull_request") | not) and .title == $t and any(.labels[]?; .name == $l))) // null')"
+  if [ "$existing" != null ]; then
+    printf '%s' "$existing" | jq -c '{item: .number, result: "exists", url: .html_url}'
+    return
+  fi
+  IFS=',' read -r -a parts <<< "$labels"
+  for l in "${parts[@]}"; do [ -n "$l" ] && args+=(-f "labels[]=$l"); done
+  gh_json api -X POST "repos/$REPO/issues" -f title="$TITLE" -F body=@"$BODY_FILE" "${args[@]}" \
+    | jq -c '{item: .number, result: "created", url: .html_url}'
+}
+
+# The cost line every delegated PR body ends with. Each session that worked
+# the PR keeps one entry, <session>=<tool calls>/<hand-offs>, set to its own
+# totals, so a note written twice by one session counts it once.
+COST_RE='<!-- delegator:cost ([^>]*)-->'
+cost_of_body() {
+  jq -c --arg re "$COST_RE" '
+    ([(.body // "") | scan($re) | .[0]] | last // null) as $m
+    | if $m == null then null
+      else [$m | split(" ")[] | select(contains("="))
+            | capture("^(?<s>[^=]+)=(?<t>[0-9]+)/(?<h>[0-9]+)$") | {session: .s, tool_calls: (.t | tonumber), handoffs: (.h | tonumber)}]
+      end'
+}
+
+cmd_cost_note() {
+  need_session
+  need_args 2
+  [ -n "$TOOL_CALLS" ] || die "cost-note takes --tool-calls <n>" 2
+  local n="${POSITIONAL[1]}" pull entries body tmp
+  pull="$(gh_json api "repos/$REPO/pulls/$n")"
+  entries="$(printf '%s' "$pull" | cost_of_body)"
+  entries="$(jq -c --arg s "$SESSION" --argjson t "$TOOL_CALLS" --argjson h "$HANDOFF" '
+    (. // []) as $e
+    | ([$e[] | select(.session == $s)] | first // {handoffs: 0}) as $old
+    | [$e[] | select(.session != $s)] + [{session: $s, tool_calls: $t, handoffs: ([$h, $old.handoffs] | max)}]' <<< "$entries")"
+  body="$(jq -nr --argjson p "$pull" --argjson e "$entries" '
+    def plural($n; $w): "\($n) \($w)\(if $n == 1 then "" else "s" end)";
+    ($p.body // "" | split("\n") | map(select(contains("<!-- delegator:cost ") | not)) | join("\n") | sub("\\s+$"; "")) as $rest
+    | ($e | length) as $s | ($e | map(.tool_calls) | add) as $t | ($e | map(.handoffs) | add) as $h
+    | $rest + "\n\nDelegation cost: " + plural($s; "session") + ", " + plural($t; "tool call") + ", " + plural($h; "hand-off")
+      + ". <!-- delegator:cost " + ($e | map("\(.session)=\(.tool_calls)/\(.handoffs)") | join(" ")) + " -->"')"
+  tmp="$(mktemp)"
+  printf '%s\n' "$body" > "$tmp"
+  gh_json api -X PATCH "repos/$REPO/pulls/$n" -F body=@"$tmp" > /dev/null
+  rm -f "$tmp"
+  jq -nc --argjson n "$n" --argjson e "$entries" \
+    '{item: $n, result: "noted", sessions: ($e | length), tool_calls: ($e | map(.tool_calls) | add), handoffs: ($e | map(.handoffs) | add)}'
+}
+
+# Sums the cost lines of the newest merged delegated PRs.
+cmd_cost() {
+  local merged rows="[]" pr
+  merged="$(gh_json api "repos/$REPO/pulls?state=closed&per_page=100" \
+    | jq -c --arg p "$PREFIX" --argjson l "${LIMIT:-10}" \
+      '[.[] | select(.merged_at != null and ((.head.ref // "") | startswith($p)))] | .[:$l] | .[]')"
+  while IFS= read -r pr; do
+    [ -n "$pr" ] || continue
+    rows="$(jq -c --argjson p "$pr" --argjson e "$(printf '%s' "$pr" | cost_of_body)" \
+      '. + [{number: $p.number} + (if $e == null then {measured: false}
+             else {measured: true, sessions: ($e | length), tool_calls: ($e | map(.tool_calls) | add // 0),
+                   handoffs: ($e | map(.handoffs) | add // 0)} end)]' <<< "$rows")"
+  done <<< "$merged"
+  jq -nc --argjson r "$rows" '
+    [$r[] | select(.measured)] as $m
+    | def total(f): $m | map(f) | add // 0;
+      def mean(f): if ($m | length) == 0 then null else ((total(f) / ($m | length)) * 10 | round / 10) end;
+      { prs: [$r[] | select(.measured) | del(.measured)], measured: ($m | length),
+        unmeasured: [$r[] | select(.measured | not) | .number],
+        totals: {sessions: total(.sessions), tool_calls: total(.tool_calls), handoffs: total(.handoffs)},
+        mean: {sessions: mean(.sessions), tool_calls: mean(.tool_calls), handoffs: mean(.handoffs)} }'
 }
 
 # Size of the most recently created merged PRs, for Work's size check.
 cmd_merged_sizes() {
   local numbers sizes="[]" n
   numbers="$(gh_json api "repos/$REPO/pulls?state=closed&per_page=50" \
-    | jq -r --argjson l "$LIMIT" '[.[] | select(.merged_at != null) | .number] | .[:$l] | .[]')"
+    | jq -r --argjson l "${LIMIT:-2}" '[.[] | select(.merged_at != null) | .number] | .[:$l] | .[]')"
   for n in $numbers; do
     sizes="$(jq -c --argjson p "$(gh_json api "repos/$REPO/pulls/$n" | jq -c '{number, additions, deletions, changedFiles: .changed_files}')" \
       '. + [$p]' <<< "$sizes")"
@@ -755,15 +1061,20 @@ case "$COMMAND" in
   claim) cmd_claim ;;
   confirm) cmd_confirm ;;
   renew) cmd_renew ;;
+  heartbeat) cmd_heartbeat ;;
   release) cmd_release ;;
   clear-label) cmd_clear_label ;;
   comment) cmd_comment ;;
   reply) cmd_reply ;;
+  issue-create) cmd_issue_create ;;
   pr-create) cmd_pr_create ;;
   pr-edit) cmd_pr_edit ;;
   to-draft) cmd_to_draft ;;
   merge) cmd_merge ;;
   checks) cmd_checks ;;
+  watch-digest) cmd_watch_digest ;;
+  cost-note) cmd_cost_note ;;
+  cost) cmd_cost ;;
   merged-sizes) cmd_merged_sizes ;;
   *) usage ;;
 esac
