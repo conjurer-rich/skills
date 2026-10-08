@@ -1,5 +1,28 @@
 # @conjurer-rich/skills
 
+## 5.4.0
+
+### Minor Changes
+
+- d342fcd: Codex support. Install with `codex plugin marketplace add conjurer-rich/skills` then `codex plugin add craft@conjurer`; Codex reads the same `.claude-plugin/` manifests.
+
+  - Every skill has an `agents/openai.yaml`. User-invoked skills and the Claude Code-only ones (`delegating-github-issues`, `browser-ux-walkthrough`) turn off Codex's implicit invocation.
+  - `/plan` and `/continue` are now user-invoked skills, `plan` and `continue`, so they work in both harnesses. `/delegate` stays a Claude Code command.
+  - The `tdd-guardian` and `refactor-scan` agents are now skills of the same name. In Claude Code they run in a forked subagent (`context: fork`); elsewhere they run inline. The delegator uses a project's own `tdd-guardian` agent when it has one, and the skill otherwise.
+  - Each item has a portability tier (portable, degrades, claude-only) in `portability.json`. `craft:ask` marks the items that do not run, or run differently, in Codex.
+  - New checks: `scripts/check-portability.py` keeps portable skills free of Claude Code tool names and `~/.claude` paths, and `scripts/check-codex-install.py` installs craft into a throwaway Codex home in CI and checks which skills the model is offered.
+
+- 9dfac9c: delegating-github-issues: cut the token cost of delegated runs, and hand off every run at its limit (ported from the `.dotfiles` fork, PRs 44 and 48).
+
+  - **Tiers and verification scope** come from the project's delegation file: `tier_small_max_lines`, `tier_small_max_packages`, `risk_paths`, the new `full_suite_paths`, and a **Verification scope** section, which replaces the `/pr` gate's complete-suite rule. Tier S writes no plan document and gets one self-review. The rules live in the new `references/tiers.md`. The expected tier also picks the implementer's model (`implementer_model_small` / `implementer_model_large`), with one escalation as before.
+  - **Short sessions.** The Stop rule hands off at 50 % context, 80 tool calls, or once the session's one issue has a PR, under `/loop` or not, and links the new session. A hand-off leaves a `<!-- delegator:handoff -->` PR comment; `delegate-status pr` returns it as `handoff`. See `references/handoff.md`.
+  - **Lean subagents.** Commit, push, PR creation and the CI wait run inline, with output in a log file. Every subagent gets a self-contained brief. Mechanical steps run on `model: haiku`.
+  - **Cheap Watch.** `delegate-status watch-digest` lets `/delegate` end an unchanged pass before loading the skill; the interval backs off from 10 to 60 minutes.
+  - **Claims.** `claim` refuses with exit 4 when another session holds a live claim. A background `heartbeat` keeps a claim live, and `claim_ttl` drops to 45 minutes.
+  - **CI.** `checks <pr> --head <sha>` waits on that exact commit; `--table` prints failing jobs' annotations and log tails.
+  - **Preflight.** A `preflight:` line lists the project's drift fixers, run before a PR's first push.
+  - **Measure.** Each delegated PR body ends with a `Delegation cost:` line; `delegate-status cost` sums it.
+
 ## 5.3.0
 
 ### Minor Changes
