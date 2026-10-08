@@ -20,6 +20,23 @@ Skills load as `craft:<name>` (for example `craft:tdd`), agents as
 `/continue`. The plugin also installs a Stop hook that warns about
 uncommitted or unpushed work.
 
+### Global instructions
+
+The plugin cannot write your global `CLAUDE.md`, so a short script does. From a
+clone of this repository:
+
+```sh
+scripts/install-global            # or --copy where symlinks are unavailable
+```
+
+It links `~/.claude/CLAUDE.md` to [`global/CLAUDE.md`](global/CLAUDE.md), and
+`AGENTS.md` for Codex and OpenCode when they are installed, backing up any
+existing file. The file is short on purpose: it tells every session to load
+`engineering-practice`, which carries the guidelines, and holds a few personal
+preferences. `git pull` updates it.
+
+### Updates
+
 Claude Code offers an update when the plugin's version changes. To update by
 hand: `claude plugin marketplace update conjurer`, then
 `claude plugin update craft@conjurer`.
@@ -40,9 +57,11 @@ load every skill twice. The names are unchanged.
 | `commands/` | `/delegate`, `/plan`, `/continue` |
 | `shelf/` | skills, agents and commands kept in the repository but **not installed** |
 | `skills/deprecated/` | aliases kept for one release, then deleted |
+| `global/` | the global `CLAUDE.md` (and `AGENTS.md`, a link to it) that `scripts/install-global` puts in place |
 
-Start with `craft:engineering-practice`: it carries the engineering guidelines
-and says which skill to load for which kind of work.
+Start with `craft:engineering-practice`: it carries the engineering guidelines,
+and its `references/routing.md` says which skill to load for which kind of
+work.
 
 ### The shelf
 

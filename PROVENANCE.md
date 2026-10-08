@@ -38,3 +38,10 @@ transcripts (Claude Code keeps 30 days by default).
   `skills/engineering/engineering-practice/references/guidelines.md`, which
   the skill now reads instead of `${CLAUDE_PLUGIN_ROOT}/CLAUDE.md`.
 - The Stop hook moved from `settings.json` into `hooks/hooks.json`.
+
+## After the import
+
+- 5.1.0: `references/guidelines.md` folded into `engineering-practice` itself
+  (`SKILL.md` for policy, `references/routing.md` for skill routing, merged
+  with the fork's `CLAUDE.rich.md` routing and pruned to installed skills).
+  The fork's personal preferences moved to `global/CLAUDE.md`.

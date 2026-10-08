@@ -86,7 +86,7 @@ require_text \
   "pr-readiness: keeps exercised survivor fixes inside one gate"
 
 require_text \
-  "$CLAUDE_ROOT/skills/engineering/engineering-practice/references/guidelines.md" \
+  "$CLAUDE_ROOT/skills/engineering/engineering-practice/SKILL.md" \
   "one PR-sized, independently mergeable slice" \
   "global workflow: defines the cadence boundary"
 

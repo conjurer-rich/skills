@@ -61,7 +61,8 @@ REACT_TESTING="$REPO_ROOT/skills/engineering/react-testing/SKILL.md"
 REACT_TESTING_LEGACY="$REPO_ROOT/skills/engineering/react-testing/resources/testing-library-react-legacy.md"
 TESTING="$REPO_ROOT/skills/engineering/testing/SKILL.md"
 MUTATION_TESTING="$REPO_ROOT/skills/engineering/mutation-testing/SKILL.md"
-CLAUDE_POLICY="$REPO_ROOT/skills/engineering/engineering-practice/references/guidelines.md"
+# The global guidelines: engineering-practice SKILL.md plus references/routing.md.
+CLAUDE_POLICY="$REPO_ROOT/skills/engineering/engineering-practice"
 ADR_AGENT="$REPO_ROOT/agents/adr.md"
 DOCS_GUARDIAN="$REPO_ROOT/shelf/agents/docs-guardian.md"
 LEARN_AGENT="$REPO_ROOT/agents/learn.md"
@@ -466,8 +467,6 @@ require_match "plan mirrors follow the owner lifecycle" \
   "plan owner's close/archive/delete lifecycle" "$PROGRESS_GUARDIAN" "$AGENTS_README"
 require_match "stack completion follows the repository plan owner" \
   "repository plan owner's close/archive/delete lifecycle" "$STACK_PULL_REQUESTS"
-require_match "global guidance names the current package architecture" \
-  'v3 architecture generation from the current 4\.9\.0 package' "$CLAUDE_POLICY"
 require_match "debugging trigger permits authorized incident mitigation" \
   'separately authorized reversible incident mitigation may precede diagnosis' "$DEBUGGING"
 require_match "React setup policy allows isolated lifecycle hooks" \

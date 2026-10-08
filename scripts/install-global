@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+#
+# install-global — put craft's global instructions where each agent reads them.
+#
+#   ~/.claude/CLAUDE.md            -> global/CLAUDE.md   (Claude Code; always)
+#   $CODEX_HOME/AGENTS.md          -> global/AGENTS.md   (Codex; if ~/.codex exists)
+#   ~/.config/opencode/AGENTS.md   -> global/AGENTS.md   (OpenCode; if installed)
+#
+# Run it from a clone of this repository: the links point into the clone, so a
+# `git pull` updates them. An existing file is moved aside to
+# <file>.backup.<timestamp> first, and ~/.claude/base-CLAUDE.md (the old
+# dotfiles base, which nothing imports any more) is retired the same way.
+#
+# Usage:
+#   scripts/install-global              # link
+#   scripts/install-global --copy       # copy instead (no symlink support,
+#                                       # e.g. Git Bash without developer mode)
+#   scripts/install-global --dry-run    # say what would change, change nothing
+
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+MODE=link
+DRY_RUN=false
+
+for arg in "$@"; do
+  case "$arg" in
+    --copy) MODE=copy ;;
+    --dry-run) DRY_RUN=true ;;
+    -h|--help) sed -n '2,20s/^# \{0,1\}//p' "$0"; exit 0 ;;
+    *) echo "install-global: unknown option $arg (try --help)" >&2; exit 2 ;;
+  esac
+done
+
+STAMP="$(date +%Y%m%d-%H%M%S)"
+
+say() { printf '%s\n' "$*"; }
+
+do_or_say() { # message command...
+  local message="$1"
+  shift
+  if [ "$DRY_RUN" = true ]; then
+    say "would $message"
+  else
+    "$@"
+    say "$message"
+  fi
+}
+
+back_up() { # path
+  do_or_say "back up $1 to $1.backup.$STAMP" mv "$1" "$1.backup.$STAMP"
+}
+
+install_one() { # agent source target
+  local agent="$1" source="$2" target="$3"
+
+  if [ "$MODE" = link ] && [ -L "$target" ] && [ "$(readlink "$target")" = "$source" ]; then
+    say "$agent: $target already linked"
+    return
+  fi
+  if [ "$MODE" = copy ] && [ -f "$target" ] && [ ! -L "$target" ] && cmp -s "$target" "$source"; then
+    say "$agent: $target already current"
+    return
+  fi
+
+  if [ ! -d "$(dirname "$target")" ]; then
+    do_or_say "create $(dirname "$target")" mkdir -p "$(dirname "$target")"
+  fi
+  if [ -e "$target" ] || [ -L "$target" ]; then
+    back_up "$target"
+  fi
+
+  if [ "$MODE" = copy ]; then
+    do_or_say "$agent: copy $source to $target" cp -L "$source" "$target"
+  elif [ "$DRY_RUN" = true ]; then
+    say "would $agent: link $target -> $source"
+  elif ln -s "$source" "$target" 2>/dev/null && [ -L "$target" ]; then
+    say "$agent: linked $target -> $source"
+  else
+    # Some systems (Git Bash without developer mode) cannot make symlinks and
+    # silently copy instead; say so, because a copy does not follow `git pull`.
+    rm -f "$target"
+    cp -L "$source" "$target"
+    say "$agent: symlinks unavailable, copied $source to $target (re-run after updating)"
+  fi
+}
+
+install_one "Claude Code" "$ROOT/global/CLAUDE.md" "$HOME/.claude/CLAUDE.md"
+
+if [ -f "$HOME/.claude/base-CLAUDE.md" ]; then
+  say "Claude Code: retiring the old base-CLAUDE.md"
+  back_up "$HOME/.claude/base-CLAUDE.md"
+fi
+
+codex_home="${CODEX_HOME:-$HOME/.codex}"
+if [ -d "$codex_home" ]; then
+  install_one "Codex" "$ROOT/global/AGENTS.md" "$codex_home/AGENTS.md"
+else
+  say "Codex: not installed ($codex_home missing), skipped"
+fi
+
+opencode_home="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
+if [ -d "$opencode_home" ]; then
+  install_one "OpenCode" "$ROOT/global/AGENTS.md" "$opencode_home/AGENTS.md"
+else
+  say "OpenCode: not installed ($opencode_home missing), skipped"
+fi
