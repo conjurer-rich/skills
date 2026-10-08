@@ -5,9 +5,7 @@ description: Take a triaged GitHub issue end-to-end to a reviewable pull request
 
 # Delegating GitHub issues
 
-You are the delegator. You do not write production code, and you do no mechanical work in your own context: subagents do it under the **Hand-back contract**, and you read their verdicts, not their output. You decide eligibility, budget, claims, acceptance criteria, the size check and tier, and deferrals, and you write the PR body and commit message files. Bootstrap, implementation, the independent checks, the walkthrough, commit, evidence push, PR creation and issue comments are each a subagent's job. You never enter a worktree. A human reviews. With `land` on, the delegator also merges, but only a PR the human marked Ready for review, only through **Land**.
-
-The **Stop rule** ends a run before it fills its context.
+You are the delegator. You do not write production code, and you do no mechanical work in your own context: subagents do it under the **Hand-back contract**, and you read their verdicts, not their output. You decide eligibility, budget, claims, acceptance criteria, the size check and tier, and deferrals, and you write the PR body and commit message files. Bootstrap, implementation, the independent checks, the walkthrough, commit, evidence push, PR creation and issue comments are each a subagent's job. A human reviews. With `land` on, the delegator also merges, but only a PR the human marked Ready for review, only through **Land**.
 
 ## Parameters
 
@@ -24,6 +22,8 @@ The calling command supplies these; defaults apply when it does not.
 | `tier_small_max_lines` | 150 | Most changed lines (insertions plus deletions) a tier S diff may have; `0` turns tier S off |
 | `tier_small_max_packages` | 1 | Most packages a tier S diff may touch |
 | `risk_paths` | none | Globs a tier S diff may not touch: migrations, the riskiest packages |
+| `implementer_model_small` | `sonnet` | Implementer model for predicted tier S |
+| `implementer_model_large` | `opus` | Implementer model otherwise |
 | `local_full_suite` | off | When on, the implementer also runs the complete test suite locally; off, CI runs it on the PR |
 | `walkthrough` | off | When on, run `browser-ux-walkthrough` when a changed file matches `walkthrough_paths` |
 | `walkthrough_paths` | the UI root, minus `**/*.test.*`, `**/*.spec.*` and `**/__tests__/**` | Globs of user-visible UI files; a glob starting with `!` excludes |
@@ -48,7 +48,7 @@ Several delegator sessions can run at once through one `gh` login, so a session 
 
 - **Claim.** `claim <n>` prints `won` with the `id` (and `open_pr` when a delegated PR is open for the issue), or `lost` with the `holder`. It reuses this session's live claim, so a session never claims an item twice. The loser deletes its own claim comment; a human-started entry point says `#<n> is claimed by delegator session <holder>` and stops. The winner adds the label, creating it if missing; Never `--force`.
 - **Confirm.** `confirm <n> <id>` prints `live` or `lost`. Confirm before any push, PR creation or merge. On `lost`, write nothing more to the item, report it lost to the holder, and leave staged work in the worktree.
-- **Renew.** `renew <n> <id>` confirms, then rewrites the claim's first line to end `renewed <UTC time>`. A lapsed claim keeps its low id, so renewing it blindly would take the item back from the session that claimed it since: a lapsed claim prints `lost` and nothing is written. Renew only right before a long step, Work steps 6, 7, 8 and 9, Review step 5, Land steps 5 and 7, Sync steps 3 and 4, so each starts with a whole `claim_ttl`. The implementer handoff is the longest; a project whose handoffs can outlast `claim_ttl` raises it. A lapse is still caught by the next Confirm.
+- **Renew.** `renew <n> <id>` confirms, then rewrites the claim's first line to end `renewed <UTC time>`. A lapsed claim keeps its low id, so renewing it blindly would take the item back from the session that claimed it since: a lapsed claim prints `lost` and nothing is written. Renew only right before a long step, Work steps 6, 7, 8 and 9, Review step 5, Land steps 5 and 7, Sync steps 3 and 4, so each starts with a whole `claim_ttl`. A project whose implementer handoffs can outlast `claim_ttl` raises it. A lapse is still caught by the next Confirm.
 - **Release.** Every stop releases the claim with `release <n> <id>`, which removes the label first. A stop that posted nothing else on the item deletes the claim comment (`--delete`); any other stop rewrites it (`--reason "<one-line reason>"`) as ``Released by delegator session `<session>`: <reason>.`` and `<!-- delegator claim-released: <session> -->`. It refuses a comment that is not this session's.
 
 A Land waiting on a background task has not stopped: its claim and label hold. Review steps inside Land use Land's claim. A crashed session's claims lapse after `claim_ttl`; the human frees one sooner by deleting it.
@@ -59,7 +59,7 @@ A Land waiting on a background task has not stopped: its claim and label hold. R
 
 A run stops, stops any walkthrough stack it left running, releases its claims and reports when any of these holds: the harness reports context use above 80 %, the run has made more than 150 tool calls in the main session, or the same isolation-guard refusal has occurred three times. The report names the step reached, the worktree path, what is staged there and what the next session should do first. Staged work stays in the worktree. Under `/loop` it then follows **Hand-off**: a wakeup here would trip the rule again.
 
-The counters live in `run-state.json` in the run's scratch directory: `tool_calls` (the delegator's own calls in the main session; a subagent's calls do not count), `guard_refusals` (keyed by the refused command), `step`, `issue`, `worktree`, and the **Session title** state `title` and `ccr_session_id`. The delegator rewrites the file at the start of every numbered step and after every refusal, so a wakeup can read where the stopped run got to without replaying it. Three refusals of the same command mean the command is wrong for this environment, not that a fourth phrasing will pass.
+The counters live in `run-state.json` in the run's scratch directory: `tool_calls` (the delegator's own calls in the main session; a subagent's calls do not count), `guard_refusals` (keyed by the refused command), `step`, `issue`, `worktree`, and the **Session title** state `title` and `ccr_session_id`. The delegator rewrites the file at the start of every numbered step and after every refusal, so a wakeup can resume from it without replaying the run. Three refusals of the same command mean the command is wrong for this environment, not that a fourth phrasing will pass.
 
 ## Entry points
 
