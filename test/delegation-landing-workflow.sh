@@ -257,7 +257,7 @@ require_text 'It never returns a diff, a screenshot, a browser snapshot, a test 
 require_text 'The delegator never runs `git diff` itself' "the delegator never reads a diff"
 require_text 'Write to `<scratch>/<N>/implementer.md`: (a) the list of files changed' "the implementer report goes to a file"
 require_text 'its full report goes to `<scratch>/<N>/checks/<process|acceptance|whole-diff>.md`' "the three checks report to files"
-require_text '     - **Process.** The project'"'"'s `tdd-guardian` agent.' "the tdd-guardian check is unchanged"
+require_text '     - **Process.** The project'"'"'s `tdd-guardian` agent, or else a subagent that loads the `tdd-guardian` skill.' "the tdd-guardian check is unchanged"
 require_text 'dispatch one walkthrough subagent' "the walkthrough runs in a subagent"
 require_text 'The delegator never runs `agent-browser`' "the delegator never drives the browser"
 require_text 'The re-walk never runs in the main session.' "the repair-round re-walk runs in a subagent"
@@ -472,7 +472,7 @@ require_text 'also run `/code-review` at medium effort on the conflict resolutio
 reject_regex 'Run `/code-review` at medium effort and `/simplify` on the diff' "Land no longer re-reviews the approved diff"
 require_text 'Apply only changes that preserve behaviour; do not change any test'"'"'s assertions.' "Land's changes still preserve behaviour"
 require_text 'Do not fix anything that needs a behaviour change: return it instead.' "Land still returns behaviour-changing findings"
-require_text 'If test files changed, run the project'"'"'s `tdd-guardian` agent on the staged diff' "Land runs tdd-guardian only when tests changed"
+require_text 'If test files changed, run the project'"'"'s `tdd-guardian` agent (else a subagent that loads the `tdd-guardian` skill) on the staged diff' "Land runs tdd-guardian only when tests changed"
 
 # The walkthrough booted Docker, auth and the dev servers for test-only and
 # data-layer diffs under the UI root, graded every item in both themes, and

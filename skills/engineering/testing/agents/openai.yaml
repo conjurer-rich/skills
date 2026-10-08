@@ -1,0 +1,4 @@
+interface:
+  display_name: "Testing"
+  short_description: "Behaviour-driven tests and factories"
+  default_prompt: "Use $testing to decide what to test here and structure the tests around behaviour."

@@ -1,0 +1,21 @@
+{
+  "_comment": "Portability tiers (plans D10). An item not listed is portable. scripts/check-portability.py enforces them.",
+  "degrades": [
+    "review",
+    "double-check",
+    "improve-codebase-architecture",
+    "retro",
+    "codebase-design",
+    "grilling",
+    "tdd-guardian",
+    "refactor-scan"
+  ],
+  "claude-only": [
+    "delegating-github-issues",
+    "browser-ux-walkthrough",
+    "delegate",
+    "adr",
+    "learn",
+    "twelve-factor-audit"
+  ]
+}

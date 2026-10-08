@@ -1,0 +1,4 @@
+interface:
+  display_name: "Domain-Driven Design"
+  short_description: "DDD patterns for projects that use DDD"
+  default_prompt: "Use $domain-driven-design to model this concept as value objects, entities and aggregates in the project's ubiquitous language."

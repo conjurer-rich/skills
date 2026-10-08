@@ -1,0 +1,4 @@
+interface:
+  display_name: "Planning"
+  short_description: "Plan work as small, known-good increments"
+  default_prompt: "Use $planning to turn this story into small, known-good increments."

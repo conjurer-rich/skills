@@ -1,0 +1,4 @@
+interface:
+  display_name: "Finding Seams"
+  short_description: "Make tightly coupled code testable"
+  default_prompt: "Use $finding-seams to find a seam that lets us test this code without editing every caller."

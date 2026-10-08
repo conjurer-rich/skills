@@ -1,0 +1,4 @@
+interface:
+  display_name: "CI Debugging"
+  short_description: "Diagnose a failing pipeline from evidence"
+  default_prompt: "Use $ci-debugging to find why this CI job fails, reproduce it locally and test one hypothesis at a time."

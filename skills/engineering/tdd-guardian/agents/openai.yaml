@@ -1,0 +1,4 @@
+interface:
+  display_name: "TDD Guardian"
+  short_description: "Check TDD process for behaviour changes"
+  default_prompt: "Use $tdd-guardian to check that every behaviour change in this work was driven by a failing test first."

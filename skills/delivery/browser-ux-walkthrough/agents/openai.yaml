@@ -1,0 +1,5 @@
+interface:
+  display_name: "Browser UX Walkthrough"
+  short_description: "Claude Code only: grade a UI change in a browser"
+policy:
+  allow_implicit_invocation: false

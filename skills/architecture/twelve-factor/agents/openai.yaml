@@ -1,0 +1,4 @@
+interface:
+  display_name: "Twelve-Factor"
+  short_description: "Twelve-Factor patterns for services"
+  default_prompt: "Use $twelve-factor to check this service's config, backing services and process model against the applicable factors."

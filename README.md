@@ -2,7 +2,8 @@
 
 Engineering skills, agents and commands for coding agents: test-driven
 development, testing, refactoring, architecture, delivery and technical writing.
-craft is a Claude Code plugin; Codex support is planned.
+craft is a Claude Code plugin, and Codex installs it from the same
+manifests.
 
 It grew out of Paul Hammond's [`citypaul/.dotfiles`](https://github.com/citypaul/.dotfiles)
 and borrows from Matt Pocock's [`mattpocock/skills`](https://github.com/mattpocock/skills)
@@ -16,9 +17,30 @@ claude plugin install craft@conjurer
 ```
 
 Skills load as `craft:<name>` (for example `craft:tdd`), agents as
-`craft:<name>` in the agent list, and commands as `/delegate`, `/plan` and
-`/continue`. The plugin also installs a Stop hook that warns about
-uncommitted or unpushed work.
+`craft:<name>` in the agent list, and the command as `/delegate`. The plugin
+also installs a Stop hook that warns about uncommitted or unpushed work.
+
+### Codex
+
+```sh
+codex plugin marketplace add conjurer-rich/skills
+codex plugin add craft@conjurer
+```
+
+Codex reads the same `.claude-plugin/` manifests and each skill's
+`agents/openai.yaml`. Mention a skill as `$<name>` (for example `$tdd`), or
+pick one from `/skills`. Every skill is tagged with a portability tier in
+[`portability.json`](portability.json), and `$ask` marks the ones that do not
+run in Codex:
+
+| Tier | In Codex | Items |
+| --- | --- | --- |
+| **portable** | works as in Claude Code | every skill not listed below |
+| **degrades** | runs its subagent parts one after another | `review`, `double-check`, `retro`, `grilling`, `codebase-design`, `improve-codebase-architecture`, `tdd-guardian`, `refactor-scan` |
+| **claude-only** | not available | `delegating-github-issues`, `/delegate`, `browser-ux-walkthrough`, the `adr`, `learn` and `twelve-factor-audit` agents, the Stop hook |
+
+`scripts/check-portability.py` keeps portable and degrades skills free of
+Claude Code tool names and `~/.claude` paths.
 
 ### Global instructions
 
@@ -53,8 +75,8 @@ load every skill twice. The names are unchanged.
 | `skills/architecture/` | design and structure: `hexagonal-architecture`, `domain-driven-design`, `codebase-design`, `api-design`, `observability`, … |
 | `skills/delivery/` | getting work shipped: `delegating-github-issues`, `planning`, `specification`, `story-splitting`, `acceptance-review`, … |
 | `skills/writing/` | knowledge and prose: `technical-writing`, `diagrams`, `ubiquitous-language`, `expectations`, … |
-| `agents/` | `tdd-guardian`, `refactor-scan`, `twelve-factor-audit`, `adr`, `learn` |
-| `commands/` | `/delegate`, `/plan`, `/continue` |
+| `agents/` | `twelve-factor-audit`, `adr`, `learn` (Claude Code only) |
+| `commands/` | `/delegate` (Claude Code only); `plan` and `continue` are user-invoked skills |
 | `shelf/` | skills, agents and commands kept in the repository but **not installed** |
 | `skills/deprecated/` | aliases kept for one release, then deleted |
 | `global/` | the global `CLAUDE.md` (and `AGENTS.md`, a link to it) that `scripts/install-global` puts in place |

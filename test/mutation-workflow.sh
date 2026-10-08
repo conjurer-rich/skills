@@ -91,7 +91,7 @@ require_text \
   "global workflow: defines the cadence boundary"
 
 require_text \
-  "$CLAUDE_ROOT/agents/refactor-scan.md" \
+  "$CLAUDE_ROOT/skills/engineering/refactor-scan/SKILL.md" \
   "Do not run the mutation harness before or after every refactor" \
   "refactor-scan: defers mutation execution"
 
@@ -131,9 +131,9 @@ require_text \
   "complexity reduction: defers mutation execution"
 
 require_text \
-  "$CLAUDE_ROOT/commands/plan.md" \
+  "$CLAUDE_ROOT/skills/delivery/plan/SKILL.md" \
   "PRE-PR MUTATION" \
-  "plan command: includes the final gate"
+  "plan skill: includes the final gate"
 
 require_text \
   "$CLAUDE_ROOT/skills/engineering/mutation-testing/references/pr-readiness.md" \

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Characterisation Tests"
+  short_description: "Pin what legacy code does before changing it"
+  default_prompt: "Use $characterisation-tests to document this code's current behaviour in tests before we change it."

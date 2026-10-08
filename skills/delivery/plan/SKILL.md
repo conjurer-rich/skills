@@ -1,16 +1,18 @@
 ---
-description: Create a vertical-slice or selected reduction plan in the repository's planning workflow - no code changes
+name: plan
+description: Create a vertical-slice or selected reduction plan in the repository's planning workflow, with no code changes. User-invoked; run it with the feature or work to plan.
+disable-model-invocation: true
 argument-hint: [feature or work to plan]
 allowed-tools: Read, Glob, Grep, Write, Bash(git:*), Bash(gh:*)
 ---
 
-Current branch state:
-!`git log --oneline -5`
+# Plan
 
-Current branch:
-!`git branch --show-current`
+Create a vertical-slice plan for the work the user named when invoking this
+skill. If they named none, ask what to plan.
 
-Create a vertical-slice plan for the requested work: $ARGUMENTS
+First read the branch state: `git branch --show-current` and
+`git log --oneline -5`.
 
 1. Detect the repository's default branch. If currently on it, create a new feature branch first
 2. Explore the codebase to understand the relevant areas

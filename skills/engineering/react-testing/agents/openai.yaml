@@ -1,0 +1,4 @@
+interface:
+  display_name: "React Testing"
+  short_description: "Test React components, hooks and forms"
+  default_prompt: "Use $react-testing to test this React component through its behaviour."

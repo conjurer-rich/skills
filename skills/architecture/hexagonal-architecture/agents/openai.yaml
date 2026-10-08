@@ -1,0 +1,4 @@
+interface:
+  display_name: "Hexagonal Architecture"
+  short_description: "Ports and adapters for opted-in projects"
+  default_prompt: "Use $hexagonal-architecture to place this change behind the right port and adapter."

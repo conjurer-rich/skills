@@ -9,7 +9,7 @@ description: Planning work as vertical slices or an explicitly selected mechanis
 
 Horizontal work is allowed only when it explicitly unblocks the next vertical slice and is independently verifiable, or when it belongs to an explicitly selected reduction program whose terminal state retires one complete mechanism while conserving behavior.
 
-In Claude Code environments where they exist, use `/plan` to create plans and `/continue` after a merged independent PR or to advance and sync an active stack. Otherwise, create or update the plan artifact directly and resume through the active harness or repository workflow.
+The user-invoked `plan` skill (`/plan` in Claude Code, `$plan` in Codex) creates plans, and `continue` (`/continue`, `$continue`) runs after a merged independent PR or to advance and sync an active stack. Without them, create or update the plan artifact directly and resume through the repository workflow.
 
 ## Relationship To Story Splitting
 

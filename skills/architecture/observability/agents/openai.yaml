@@ -1,0 +1,4 @@
+interface:
+  display_name: "Observability"
+  short_description: "Wide events, tracing, SLOs and alerting"
+  default_prompt: "Use $observability to instrument this service so we can tell what production is doing."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Front-End Testing"
+  short_description: "Behaviour-driven UI and end-to-end tests"
+  default_prompt: "Use $front-end-testing to write behaviour-driven UI tests for this change."

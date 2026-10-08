@@ -1,0 +1,4 @@
+interface:
+  display_name: "Mutation Testing"
+  short_description: "Use surviving mutants to strengthen tests"
+  default_prompt: "Use $mutation-testing to run a focused mutation pass on this diff and strengthen the tests it exposes."

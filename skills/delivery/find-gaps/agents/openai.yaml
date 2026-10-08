@@ -1,0 +1,4 @@
+interface:
+  display_name: "Find Gaps"
+  short_description: "Interrogate a spec or plan for gaps"
+  default_prompt: "Use $find-gaps to review this artifact one question at a time and write each answer back."

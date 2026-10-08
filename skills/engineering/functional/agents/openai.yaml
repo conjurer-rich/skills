@@ -1,0 +1,4 @@
+interface:
+  display_name: "Functional"
+  short_description: "Immutable data and pure transformations"
+  default_prompt: "Use $functional to write this transformation with immutable data and pure functions."
