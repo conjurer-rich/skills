@@ -1,6 +1,6 @@
 {
   "name": "@conjurer-rich/skills",
-  "version": "5.2.0",
+  "version": "5.3.0",
   "private": true,
   "description": "craft: engineering skills, agents and commands for Claude Code and Codex",
   "repository": {
