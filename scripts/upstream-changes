@@ -1,0 +1,173 @@
+#!/usr/bin/env python3
+"""List what changed in each watched upstream since it was last reviewed.
+
+For every source in upstream/sources.json this fetches the upstream's history
+(blobs are not downloaded), lists the commits since a revision that touch the
+watched paths, and groups the changed files into units: a skill folder, an
+agent or command file, or a single watched file such as CLAUDE.md. Each unit
+is matched to a craft item through upstream/skill-map.json:
+
+  counterpart  craft has a version of it (same name, or mapped), maybe shelved
+  new          craft has nothing by that name
+  ignored      mapped to null in the skill map: not relevant to craft
+
+The weekly upstream-watch routine runs this and then judges each unit; the
+judgement (adopt, adapt or ignore) is the agent's, not this script's.
+
+Usage:
+  scripts/upstream-changes                          # Markdown, from each baseline
+  scripts/upstream-changes --since mattpocock/skills=<sha> --since citypaul/.dotfiles=<sha>
+  scripts/upstream-changes --format json
+
+The Markdown report ends with an `upstream-watch` marker holding the revision
+each source was reviewed up to; the next run passes those back with --since.
+"""
+
+import argparse
+import json
+import subprocess
+import sys
+import tempfile
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+
+
+def git(repo, *args):
+    return subprocess.run(["git", "-C", str(repo), *args], check=True, capture_output=True, text=True).stdout
+
+
+def fetch(source, source_dirs, workdir):
+    """A local git directory holding the source's history."""
+    if source["repo"] in source_dirs:
+        return Path(source_dirs[source["repo"]])
+    dest = Path(workdir) / source["repo"].replace("/", "__")
+    subprocess.run(
+        ["git", "clone", "--quiet", "--filter=blob:none", "--no-checkout", "--single-branch",
+         "--branch", source["branch"], f"https://github.com/{source['repo']}.git", str(dest)],
+        check=True,
+    )
+    return dest
+
+
+def local_items(plugin_root):
+    """craft's item names, and whether each is shelved."""
+    items = {}
+    for md in plugin_root.glob("skills/*/*/SKILL.md"):
+        if md.parent.parent.name not in {"deprecated", "in-progress"}:
+            items[md.parent.name] = False
+    for md in plugin_root.glob("shelf/skills/*/SKILL.md"):
+        items.setdefault(md.parent.name, True)
+    for kind in ("agents", "commands"):
+        for md in plugin_root.glob(f"{kind}/*.md"):
+            items[md.stem] = False
+        for md in plugin_root.glob(f"shelf/{kind}/*.md"):
+            items.setdefault(md.stem, True)
+    return items
+
+
+def unit_of(path, watched):
+    for w in watched:
+        if path == w:
+            return Path(w).name
+        if path.startswith(w + "/"):
+            segment = path[len(w) + 1:].split("/")[0]
+            if Path(w).name in {"agents", "commands"} and segment.endswith(".md"):
+                return segment[:-3]
+            return segment
+    return None
+
+
+def classify(unit, mapping, items):
+    if unit in mapping:
+        target = mapping[unit]
+        if target is None:
+            return "ignored", None, False
+        return "counterpart", target, items.get(target, False)
+    if unit in items:
+        return "counterpart", unit, items[unit]
+    return "new", None, False
+
+
+def report_source(source, since, repo_dir, mapping, items):
+    head = git(repo_dir, "rev-parse", f"refs/heads/{source['branch']}").strip()
+    try:
+        git(repo_dir, "cat-file", "-e", f"{since}^{{commit}}")
+    except subprocess.CalledProcessError:
+        raise SystemExit(f"upstream-changes: {source['repo']} has no commit {since}")
+    since = git(repo_dir, "rev-parse", since).strip()
+    paths = source["paths"]
+    log = git(repo_dir, "log", "--format=%H%x09%ad%x09%s", "--date=short", f"{since}..{head}", "--", *paths)
+    commits = [dict(zip(("sha", "date", "subject"), line.split("\t", 2))) for line in log.splitlines() if line]
+    files = git(repo_dir, "diff", "--name-only", f"{since}..{head}", "--", *paths).splitlines()
+
+    units = {}
+    for path in files:
+        unit = unit_of(path, paths)
+        if unit is not None:
+            units.setdefault(unit, []).append(path)
+    rows = []
+    for unit in sorted(units):
+        kind, local, shelved = classify(unit, mapping, items)
+        rows.append({"unit": unit, "kind": kind, "local": local, "shelved": shelved, "files": sorted(units[unit])})
+    return {
+        "repo": source["repo"],
+        "from": since,
+        "to": head,
+        "changed": bool(commits),
+        "commits": commits,
+        "units": rows,
+    }
+
+
+def markdown(sources):
+    out = []
+    for s in sources:
+        out.append(f"## {s['repo']}")
+        out.append("")
+        compare = f"https://github.com/{s['repo']}/compare/{s['from'][:12]}...{s['to'][:12]}"
+        if not s["changed"]:
+            out += [f"No changes to the watched paths since `{s['from'][:8]}`.", ""]
+            continue
+        out += [f"{len(s['commits'])} commit(s), `{s['from'][:8]}` → `{s['to'][:8]}` ([compare]({compare})):", ""]
+        out += [f"- `{c['sha'][:8]}` {c['date']} {c['subject']}" for c in s["commits"]]
+        out += ["", "| Upstream | Kind | craft | Files |", "| --- | --- | --- | --- |"]
+        for u in s["units"]:
+            local = f"`{u['local']}`" + (" (shelved)" if u["shelved"] else "") if u["local"] else "—"
+            out.append(f"| `{u['unit']}` | {u['kind']} | {local} | {len(u['files'])} |")
+        out.append("")
+    marker = json.dumps({s["repo"]: s["to"] for s in sources})
+    out.append(f"<!-- upstream-watch: {marker} -->")
+    return "\n".join(out)
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--sources", type=Path, default=ROOT / "upstream" / "sources.json")
+    parser.add_argument("--skill-map", type=Path, default=ROOT / "upstream" / "skill-map.json")
+    parser.add_argument("--plugin-root", type=Path, default=ROOT)
+    parser.add_argument("--since", action="append", default=[], metavar="REPO=SHA",
+                        help="review from this revision instead of the baseline; repeatable")
+    parser.add_argument("--source-dir", action="append", default=[], metavar="REPO=PATH",
+                        help="use a local clone instead of fetching (tests, offline runs)")
+    parser.add_argument("--format", choices=("md", "json"), default="md")
+    args = parser.parse_args(argv)
+
+    since = dict(s.split("=", 1) for s in args.since)
+    source_dirs = dict(s.split("=", 1) for s in args.source_dir)
+    sources = json.loads(args.sources.read_text(encoding="utf-8"))["sources"]
+    skill_map = json.loads(args.skill_map.read_text(encoding="utf-8"))
+    items = local_items(args.plugin_root)
+
+    results = []
+    with tempfile.TemporaryDirectory() as workdir:
+        for source in sources:
+            repo_dir = fetch(source, source_dirs, workdir)
+            mapping = {k: v for k, v in skill_map.get(source["repo"], {}).items() if not k.startswith("_")}
+            results.append(report_source(source, since.get(source["repo"], source["baseline"]), repo_dir, mapping, items))
+
+    print(json.dumps({"sources": results}, indent=2) if args.format == "json" else markdown(results))
+
+
+if __name__ == "__main__":
+    main()

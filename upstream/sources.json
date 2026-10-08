@@ -1,0 +1,27 @@
+{
+  "sources": [
+    {
+      "repo": "citypaul/.dotfiles",
+      "branch": "main",
+      "paths": [
+        "claude/.claude/skills",
+        "claude/.claude/agents",
+        "claude/.claude/commands",
+        "claude/.claude/CLAUDE.md"
+      ],
+      "baseline": "cd4028d57d6e4e95814f7b8ee55ca13c23a9c2f0",
+      "baseline_note": "citypaul/.dotfiles main as merged into conjurer-rich/.dotfiles@927975e, the import source"
+    },
+    {
+      "repo": "mattpocock/skills",
+      "branch": "main",
+      "paths": [
+        "skills/engineering",
+        "skills/productivity",
+        "skills/in-progress"
+      ],
+      "baseline": "b0618bc436ad893b3c5e84e55fba86586d34a404",
+      "baseline_note": "the revision ask, retro, review, grilling, writing-for-agents and teach were adapted from"
+    }
+  ]
+}
