@@ -1,6 +1,6 @@
 {
   "name": "craft",
-  "version": "5.1.0",
+  "version": "5.2.0",
   "description": "Engineering craft toolkit: TDD, testing, refactoring, architecture, delivery and writing skills, agents and commands.",
   "author": {
     "name": "Richard Allen",
