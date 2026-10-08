@@ -1,0 +1,4 @@
+interface:
+  display_name: "Double Check"
+  short_description: "Independent second opinion on finished work"
+  default_prompt: "Use $double-check to get an independent, read-only review of this finished work, ideally from another model provider."

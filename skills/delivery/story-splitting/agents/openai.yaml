@@ -1,0 +1,4 @@
+interface:
+  display_name: "Story Splitting"
+  short_description: "Split epics into thin end-to-end stories"
+  default_prompt: "Use $story-splitting to cut this feature into small end-to-end child stories."

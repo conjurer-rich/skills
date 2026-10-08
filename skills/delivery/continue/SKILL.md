@@ -1,15 +1,14 @@
 ---
-description: Continue after a merged independent PR or advance and sync a dependent PR stack
+name: continue
+description: Continue after a merged independent PR, or advance and sync a dependent PR stack. Sets up the next branch and updates the plan; writes no code. User-invoked.
+disable-model-invocation: true
 allowed-tools: Read, Edit, Bash(git:*), Bash(gh:*)
 ---
 
-Current branch state:
-!`git branch --show-current`
+# Continue
 
-!`git log --oneline -3`
-
-Working tree:
-!`git status --porcelain`
+First read the state: `git branch --show-current`, `git log --oneline -3` and
+`git status --porcelain`.
 
 Read the active plan and current slice's `Delivery` mode before changing branches. If no plan exists, use stack metadata only when reliable; otherwise follow the single-PR path.
 

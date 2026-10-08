@@ -1,0 +1,4 @@
+interface:
+  display_name: "Event Sourcing"
+  short_description: "Persist state as events and fold them back"
+  default_prompt: "Use $event-sourcing to design this write model as a Decider with an event store and projections."

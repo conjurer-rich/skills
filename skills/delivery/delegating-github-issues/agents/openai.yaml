@@ -1,0 +1,5 @@
+interface:
+  display_name: "Delegating GitHub Issues"
+  short_description: "Claude Code only: delegate issues to reviewable PRs"
+policy:
+  allow_implicit_invocation: false

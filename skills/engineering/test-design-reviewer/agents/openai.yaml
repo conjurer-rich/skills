@@ -1,0 +1,4 @@
+interface:
+  display_name: "Test Design Reviewer"
+  short_description: "Score tests on Farley's eight properties"
+  default_prompt: "Use $test-design-reviewer to assess this test suite against Dave Farley's eight properties of good tests."

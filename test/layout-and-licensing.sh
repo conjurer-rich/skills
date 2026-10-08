@@ -44,7 +44,7 @@ trap 'rm -rf "$work"' EXIT
 fresh_copy() {
   rm -rf "$work/repo"
   mkdir -p "$work/repo"
-  (cd "$REPO_ROOT" && cp -R .claude-plugin skills shelf agents commands scripts LICENSE ACKNOWLEDGEMENTS.md "$work/repo/")
+  (cd "$REPO_ROOT" && cp -R .claude-plugin skills shelf agents commands scripts LICENSE ACKNOWLEDGEMENTS.md portability.json "$work/repo/")
 }
 
 expect_failure() { # description check-script expected-text
@@ -94,6 +94,58 @@ text = ask.read_text(encoding="utf-8")
 ask.write_text(re.sub(r"`(?:craft:)?mutation-testing`", "`something-else`", text), encoding="utf-8")
 PY
 expect_failure "a shipped skill missing from craft:ask is caught" check-layout.py "mutation-testing: not listed in craft:ask"
+
+# scripts/check-portability.py: skills that claim to run in Codex must not
+# lean on Claude Code tools, and the router must say which ones do.
+if python3 "$REPO_ROOT/scripts/check-portability.py" > /dev/null; then
+  pass "the declared portability tiers hold"
+else
+  fail "the declared portability tiers hold"
+  python3 "$REPO_ROOT/scripts/check-portability.py" || true
+fi
+
+fresh_copy
+printf '\nDispatch it with the Agent tool.\n' >> "$work/repo/skills/engineering/tdd/SKILL.md"
+expect_failure "a portable skill naming a Claude Code tool is caught" check-portability.py "names 'Agent tool' outside a \"Claude Code:\" note"
+
+fresh_copy
+printf '\n- Claude Code: dispatch it with the Agent tool; elsewhere, run it inline.\n' >> "$work/repo/skills/engineering/tdd/SKILL.md"
+if python3 "$work/repo/scripts/check-portability.py" > /dev/null 2>&1; then
+  pass "a Claude Code tool inside a \"Claude Code:\" note is allowed"
+else
+  fail "a Claude Code tool inside a \"Claude Code:\" note is allowed"
+fi
+
+fresh_copy
+printf '\nLogs live under ~/.claude/projects.\n' >> "$work/repo/skills/delivery/review/SKILL.md"
+expect_failure "a ~/.claude path in a degrades skill is caught" check-portability.py "names '~/.claude' outside"
+
+fresh_copy
+rm "$work/repo/skills/engineering/tdd/agents/openai.yaml"
+expect_failure "a portable skill without openai.yaml is caught" check-portability.py "skills/engineering/tdd: portable skill has no agents/openai.yaml"
+
+fresh_copy
+sed -i.bak '/allow_implicit_invocation/d; /^policy:/d' "$work/repo/skills/delivery/retro/agents/openai.yaml"
+expect_failure "a user-invoked skill that Codex would invoke implicitly is caught" check-portability.py "retro/agents/openai.yaml: the skill is user-invoked but allow_implicit_invocation is not false"
+
+fresh_copy
+rm "$work/repo/skills/delivery/delegating-github-issues/agents/openai.yaml"
+expect_failure "a claude-only skill Codex could pick on its own is caught" check-portability.py "delegating-github-issues: claude-only skill needs agents/openai.yaml"
+
+fresh_copy
+sed -i.bak 's/`adr` agent \*(Claude Code)\*/`adr` agent/g' "$work/repo/skills/delivery/ask/SKILL.md"
+expect_failure "a claude-only item the router does not mark is caught" check-portability.py "ask: adr is claude-only but is never marked *(Claude Code)*"
+
+fresh_copy
+python3 - "$work/repo" <<'PY'
+import json, sys
+from pathlib import Path
+p = Path(sys.argv[1]) / "portability.json"
+d = json.loads(p.read_text())
+d["claude-only"].append("no-such-skill")
+p.write_text(json.dumps(d))
+PY
+expect_failure "a tier for an item that does not ship is caught" check-portability.py "portability.json: no-such-skill is not a shipped skill, agent or command"
 
 fresh_copy
 sed -i.bak '/skills\/writing\/wtf\/LICENSE/d' "$work/repo/ACKNOWLEDGEMENTS.md"

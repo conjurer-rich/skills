@@ -1,0 +1,4 @@
+interface:
+  display_name: "API Design"
+  short_description: "Design stable consumer-facing APIs and contracts"
+  default_prompt: "Use $api-design to design this externally consumed contract: resources, error semantics and versioning."

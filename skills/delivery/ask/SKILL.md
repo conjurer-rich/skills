@@ -13,8 +13,8 @@ Before stating what a skill does or recommending a step be skipped, read that
 skill's `SKILL.md`: the summaries here are for orientation only. In Claude Code
 every name below is `craft:<name>`; in Codex it is `$<name>`.
 
-**Harness notes.** Items marked *(Claude Code)* rely on Claude Code tools and do
-not run elsewhere. Items marked *(subagents)* run their parts in parallel
+**Harness notes.** Items marked *(Claude Code)* rely on Claude Code tools or
+agent files and do not run elsewhere; in Codex, do the step by hand. Items marked *(subagents)* run their parts in parallel
 where the harness has subagents, and one after another where it does not.
 
 A **flow** is a path through the skills. Most work travels the main flow; the
@@ -25,9 +25,9 @@ underneath.
 
 1. **Sharpen the idea.** `/grill-with-docs` interviews you relentlessly in
    rounds and records the terms (`ubiquitous-language`) and hard-to-reverse
-   decisions (the `adr` agent) it settles. With no repository to write into,
+   decisions (the `adr` agent *(Claude Code)*) it settles. With no repository to write into,
    `/grill-me` runs the same interview and writes nothing; both run the
-   `grilling` skill underneath. Then `specification` turns the conversation
+   `grilling` skill underneath *(subagents)*. Then `specification` turns the conversation
    into acceptance criteria. Visual work with several
    screens: `storyboard` puts every mock on one reviewable page first.
 2. **Tighten what you wrote.** `find-gaps` interrogates an existing spec, story
@@ -39,13 +39,13 @@ underneath.
    `stack-pull-requests`; `/continue` advances the stack after a merge.
 5. **Build.** `tdd` drives every behaviour change, with `testing` for the
    test design and `refactoring` after each green. `typescript-strict` and
-   `functional` apply to every line. The `tdd-guardian` agent checks the
-   process; the `refactor-scan` agent judges whether a refactor earns its
-   place.
+   `functional` apply to every line. `tdd-guardian` checks the
+   process and `refactor-scan` judges whether a refactor earns its
+   place *(subagents)*.
    - **Hand it off instead:** label the issue and run `/delegate` (the
      `delegating-github-issues` skill) to take it from issue to reviewable PR
-     in its own worktree, with `browser-ux-walkthrough` for UI changes.
-     *(Claude Code)*
+     in its own worktree, with `browser-ux-walkthrough` for UI changes
+     *(Claude Code)*.
 6. **Check it before the PR.** `mutation-testing` runs once, at PR
    readiness; its `references/pr-readiness.md` is the evidence gate.
    `review` checks the diff on two separate axes, the repository's standards
@@ -70,10 +70,10 @@ underneath.
   Then join the main flow at step 5.
 - **A spare afternoon for upkeep.** `improve-codebase-architecture` surveys the
   codebase and ranks improvement candidates *(subagents)*; pick one and design
-  it with `codebase-design`. `reduce-system-complexity` removes mechanism from
+  it with `codebase-design` *(subagents)*. `reduce-system-complexity` removes mechanism from
   a chosen path without changing behaviour.
 - **About to deploy a service.** `twelve-factor` for the design; run the
-  `twelve-factor-audit` agent before the first production deploy or when it
+  `twelve-factor-audit` agent *(Claude Code)* before the first production deploy or when it
   works in one environment but not another. `observability` when you cannot
   tell what production is doing.
 - **About to add a dependency or build something generic.**
@@ -89,7 +89,7 @@ underneath.
 | Front end | `xstate` (before reaching for `useState`), `react-performance`, `browser-ux-walkthrough` |
 | Architecture | `codebase-design`, `structure-codebase`, `improve-codebase-architecture`, `hexagonal-architecture`, `domain-driven-design`, `event-sourcing` |
 | Services and APIs | `api-design`, `bff-entry-points`, `secure-oauth-oidc`, `twelve-factor`, `observability` |
-| Writing and knowledge | `technical-writing`, `diagrams`, `ubiquitous-language`, `expectations` (where a learning should live), the `adr` agent (record a decision), the `learn` agent (capture a lesson), `writing-for-agents` (skills, `CLAUDE.md` / `AGENTS.md`) |
+| Writing and knowledge | `technical-writing`, `diagrams`, `ubiquitous-language`, `expectations` (where a learning should live), the `adr` agent *(Claude Code)* (record a decision), the `learn` agent *(Claude Code)* (capture a lesson), `writing-for-agents` (skills, `CLAUDE.md` / `AGENTS.md`) |
 | Learning something new | `/teach` builds a workspace in the current directory (mission, lessons, reference sheets, learning records) and teaches over several sessions |
 | When an answer didn't land | `/wtf` re-explains the last answer in plain UK English |
 | Finding more skills | `find-skills`, when a kind of task keeps coming up with no skill behind it, or `retro` reports one missing |

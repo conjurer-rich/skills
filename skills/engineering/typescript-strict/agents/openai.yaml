@@ -1,0 +1,4 @@
+interface:
+  display_name: "TypeScript Strict"
+  short_description: "Strict TypeScript and schema-first types"
+  default_prompt: "Use $typescript-strict to type this code strictly, schema first."

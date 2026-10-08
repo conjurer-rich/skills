@@ -1,0 +1,4 @@
+interface:
+  display_name: "Diagrams"
+  short_description: "Create or audit diagrams that earn their place"
+  default_prompt: "Use $diagrams to draw this relationship in a format the destination renders, and keep its source authoritative."

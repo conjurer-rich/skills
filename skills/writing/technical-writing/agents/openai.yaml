@@ -1,0 +1,4 @@
+interface:
+  display_name: "Technical Writing"
+  short_description: "Developer prose that skims and can be trusted"
+  default_prompt: "Use $technical-writing to draft or tighten this developer-facing document."

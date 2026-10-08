@@ -35,6 +35,20 @@ jobs:
       - name: claude plugin validate
         run: node scripts/validate-plugin.mjs "npx --yes @anthropic-ai/claude-code@2.1.294"
 
+  codex:
+    name: Install in Codex
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # Installs craft from this checkout into a throwaway Codex home and
+      # checks which skills the model is offered. No login is needed. The CLI
+      # is pinned for the same reason as the plugin validator's.
+      - name: codex plugin add
+        run: scripts/check-codex-install.py npx --yes @openai/codex@0.161.0
+
   changesets:
     name: Validate changesets
     runs-on: ubuntu-latest

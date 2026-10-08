@@ -38,6 +38,11 @@ This repository is the `craft` plugin. `AGENTS.md` is a symlink to this file.
 - Refer to files inside a skill relatively. Do not name `~/.claude/...` paths.
 - Keep `description` front-loaded with when to use the skill; it is loaded
   into every session.
+- Give every skill an `agents/openai.yaml` (Codex's display name, short
+  description and policy), and list a skill in `portability.json` unless it
+  is portable. A user-invoked skill sets `disable-model-invocation: true` in
+  `SKILL.md` and `allow_implicit_invocation: false` in `openai.yaml`: Codex
+  reads only the second. `scripts/check-portability.py` enforces all three.
 
 ## Borrowing from elsewhere
 

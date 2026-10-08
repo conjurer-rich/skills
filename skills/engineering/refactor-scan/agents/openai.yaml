@@ -1,0 +1,4 @@
+interface:
+  display_name: "Refactor Scan"
+  short_description: "Judge whether a refactor earns its place"
+  default_prompt: "Use $refactor-scan to assess refactoring opportunities in this area now that the tests pass."

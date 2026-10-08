@@ -1,0 +1,4 @@
+interface:
+  display_name: "Storyboard"
+  short_description: "Audit related mocks on one page"
+  default_prompt: "Use $storyboard to put these mocks on one reviewable page with audit checklists and gap cards."

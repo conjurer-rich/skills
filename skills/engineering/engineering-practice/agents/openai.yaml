@@ -1,0 +1,4 @@
+interface:
+  display_name: "Engineering Practice"
+  short_description: "Core rules for every coding task"
+  default_prompt: "Use $engineering-practice to load the core engineering rules and route this task to the right skills."

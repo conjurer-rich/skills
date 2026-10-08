@@ -1,0 +1,4 @@
+interface:
+  display_name: "Ubiquitous Language"
+  short_description: "Keep one language per bounded context"
+  default_prompt: "Use $ubiquitous-language to check these names against the glossary and record any language decision."

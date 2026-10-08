@@ -1,0 +1,4 @@
+interface:
+  display_name: "Refactoring"
+  short_description: "Behaviour-preserving refactoring on green"
+  default_prompt: "Use $refactoring to assess and apply a behaviour-preserving refactor now that the tests pass."

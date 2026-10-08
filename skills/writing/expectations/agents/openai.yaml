@@ -1,0 +1,4 @@
+interface:
+  display_name: "Expectations"
+  short_description: "Decide where a learning should live"
+  default_prompt: "Use $expectations to decide where this learning belongs and capture it there now."
