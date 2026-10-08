@@ -1,0 +1,289 @@
+#!/usr/bin/env bash
+#
+# delegate-loop: run the delegating-github-issues skill unattended under any
+# agent CLI, one fresh process per pass (a "Ralph loop").
+#
+# Each iteration asks `delegate-status next-action` what a Run pass would do.
+# That is plain gh and jq and costs no tokens. When the answer is idle, the
+# loop sleeps; otherwise it starts the agent CLI once with the Run prompt
+# (prompts/delegate-run.md), in an empty context, and logs the pass. All state
+# lives on GitHub and in git, so the CLI is swappable and a restarted loop
+# loses nothing.
+#
+# Run it from the project's main checkout. The project's .claude/delegation.md
+# supplies the same parameters `/delegate` reads; without one the loop refuses
+# to start.
+#
+# Usage:
+#   delegate-loop [--agent claude|codex|opencode] [options]
+#
+# Options:
+#   --agent <cli>         claude (default), codex or opencode; also $AGENT
+#   --repo <owner/repo>   default: the origin remote
+#   --session <name>      the claim name every pass uses; default loop-<host>
+#   --idle <seconds>      sleep after an idle check (default 900)
+#   --pause <seconds>     sleep after a pass that did work (default 60)
+#   --max-failures <n>    stop after n failed passes in a row (default 3)
+#   --max-passes <n>      agent passes per UTC day (default 20); then idle
+#   --state-dir <dir>     logs, STOP file and counters (default .delegate-loop)
+#   --prompt <file>       the Run prompt (default: the skill's prompts/delegate-run.md)
+#   --once                run one iteration and exit with its result
+#
+# Stop it with Ctrl-C, or `touch <state-dir>/STOP` to stop before the next
+# iteration. Exit status: 0 stopped, 1 too many failures, 2 usage.
+#
+# Each CLI runs with flags fit for an unattended pass; replace them with
+# DELEGATE_LOOP_CLAUDE_ARGS, DELEGATE_LOOP_CODEX_ARGS or
+# DELEGATE_LOOP_OPENCODE_ARGS, space-separated (the prompt is always the last
+# argument).
+# DELEGATE_STATUS overrides the bookkeeping script and DELEGATE_LOOP_SLEEP the
+# sleep command, for tests.
+#
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SKILL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+STATUS="${DELEGATE_STATUS:-$SCRIPT_DIR/delegate-status}"
+SLEEP="${DELEGATE_LOOP_SLEEP:-sleep}"
+
+usage() {
+  sed -n '/^# Usage:/,/^# Stop it with/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//' >&2
+  exit 2
+}
+
+die() {
+  printf 'delegate-loop: %s\n' "$1" >&2
+  exit "${2:-1}"
+}
+
+AGENT="${AGENT:-claude}"
+REPO=""
+SESSION=""
+IDLE=900
+PAUSE=60
+MAX_FAILURES=3
+MAX_PASSES=20
+STATE_DIR=".delegate-loop"
+PROMPT="$SKILL_DIR/prompts/delegate-run.md"
+ONCE=0
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --agent) AGENT="${2:-}"; shift 2 ;;
+    --repo) REPO="${2:-}"; shift 2 ;;
+    --session) SESSION="${2:-}"; shift 2 ;;
+    --idle) IDLE="${2:-}"; shift 2 ;;
+    --pause) PAUSE="${2:-}"; shift 2 ;;
+    --max-failures) MAX_FAILURES="${2:-}"; shift 2 ;;
+    --max-passes) MAX_PASSES="${2:-}"; shift 2 ;;
+    --state-dir) STATE_DIR="${2:-}"; shift 2 ;;
+    --prompt) PROMPT="${2:-}"; shift 2 ;;
+    --once) ONCE=1; shift ;;
+    -h|--help) usage ;;
+    *) die "unknown argument $1" 2 ;;
+  esac
+done
+
+case "$AGENT" in claude|codex|opencode) ;; *) die "--agent takes claude, codex or opencode" 2 ;; esac
+case "$IDLE$PAUSE$MAX_FAILURES$MAX_PASSES" in
+  *[!0-9]*) die "--idle, --pause, --max-failures and --max-passes take whole numbers" 2 ;;
+esac
+[ -r "$PROMPT" ] || die "no prompt at $PROMPT" 2
+
+CHECKOUT="$(git rev-parse --show-toplevel 2> /dev/null)" || die "run it from the project's main checkout" 2
+SETTINGS="$CHECKOUT/.claude/delegation.md"
+[ -r "$SETTINGS" ] || die "this project has no .claude/delegation.md, so delegation is not set up here" 2
+
+if [ -z "$REPO" ]; then
+  REPO="$(git -C "$CHECKOUT" remote get-url origin 2> /dev/null || true)"
+  REPO="${REPO#https://github.com/}"
+  REPO="${REPO#git@github.com:}"
+  REPO="${REPO%.git}"
+fi
+[ -n "$REPO" ] || die "no origin remote; pass --repo <owner/repo>" 2
+SESSION="${SESSION:-loop-$(hostname -s 2> /dev/null || hostname)}"
+
+cd "$CHECKOUT"
+mkdir -p "$STATE_DIR/passes"
+STATE_DIR="$(cd "$STATE_DIR" && pwd)"
+# Keep the loop's own files out of every commit a pass makes.
+case "$STATE_DIR/" in
+  "$CHECKOUT"/*)
+    exclude="$(git rev-parse --git-path info/exclude)"
+    rel="/${STATE_DIR#"$CHECKOUT"/}/"
+    mkdir -p "$(dirname "$exclude")"
+    grep -qxF "$rel" "$exclude" 2> /dev/null || printf '%s\n' "$rel" >> "$exclude" ;;
+esac
+LOG="$STATE_DIR/loop.log"
+USAGE_LOG="$STATE_DIR/usage.jsonl"
+WORKTREES="$(dirname "$CHECKOUT")/$(basename "$CHECKOUT")-worktrees"
+
+# A parameter from the settings file's Parameters table: | `name` | value |.
+param() {
+  sed -n "s/^|[[:space:]]*\`$1\`[[:space:]]*|[[:space:]]*\([^|]*[^|[:space:]]\)[[:space:]]*|.*/\1/p" "$SETTINGS" \
+    | head -n 1 | tr -d '`'
+}
+
+# claim_ttl reads "45 minutes", "4 hours" or plain seconds.
+ttl_seconds() {
+  local n="${1%% *}" unit="${1#* }"
+  case "$n" in ''|*[!0-9]*) die "claim_ttl in $SETTINGS is not a duration: $1" 2 ;; esac
+  [ "$unit" = "$1" ] && unit="seconds"
+  case "$unit" in
+    minute|minutes) echo $((n * 60)) ;;
+    hour|hours) echo $((n * 3600)) ;;
+    second|seconds) echo "$n" ;;
+    *) die "claim_ttl in $SETTINGS is not a duration: $1" 2 ;;
+  esac
+}
+
+STATUS_ARGS=(--repo "$REPO" --session "$SESSION" --cache "$STATE_DIR/pick-cache.json")
+v="$(param label)" && [ -n "$v" ] && STATUS_ARGS+=(--label "$v")
+v="$(param rank_labels)" && [ -n "$v" ] && STATUS_ARGS+=(--rank-labels "$(printf '%s' "$v" | tr -d ' ')")
+v="$(param branch_prefix)" && [ -n "$v" ] && STATUS_ARGS+=(--prefix "$v")
+v="$(param progress_label)" && [ -n "$v" ] && STATUS_ARGS+=(--progress-label "$v")
+v="$(param max_worktrees)" && [ -n "$v" ] && STATUS_ARGS+=(--max-worktrees "$v")
+v="$(param max_open_prs)" && [ -n "$v" ] && STATUS_ARGS+=(--max-open-prs "$v")
+v="$(param land)" && [ -n "$v" ] && STATUS_ARGS+=(--land "$v")
+v="$(param claim_ttl)" && [ -n "$v" ] && STATUS_ARGS+=(--claim-ttl "$(ttl_seconds "$v")")
+
+log() {
+  printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" | tee -a "$LOG" >&2
+}
+
+# The agent CLI's command line for one pass, minus the prompt.
+agent_args() {
+  case "$AGENT" in
+    claude)
+      if [ -n "${DELEGATE_LOOP_CLAUDE_ARGS:-}" ]; then
+        read -r -a ARGS <<< "$DELEGATE_LOOP_CLAUDE_ARGS"
+      else
+        ARGS=(-p --output-format json --permission-mode acceptEdits
+          --allowedTools "Read,Glob,Grep,Edit,Write,Skill,Agent,SendMessage,Bash(git:*),Bash(gh:*),Bash(jq:*),Bash(tail:*),Bash(timeout:*),Bash(pnpm:*),Bash(npm:*),Bash(npx:*),Bash($STATUS:*)")
+      fi
+      ARGS=(claude "${ARGS[@]}") ;;
+    codex)
+      if [ -n "${DELEGATE_LOOP_CODEX_ARGS:-}" ]; then
+        read -r -a ARGS <<< "$DELEGATE_LOOP_CODEX_ARGS"
+      else
+        ARGS=(--json --sandbox workspace-write -c sandbox_workspace_write.network_access=true
+          -c 'approval_policy="never"' --add-dir "$WORKTREES" --add-dir "$STATE_DIR" -C "$CHECKOUT")
+      fi
+      ARGS=(codex exec "${ARGS[@]}") ;;
+    opencode)
+      if [ -n "${DELEGATE_LOOP_OPENCODE_ARGS:-}" ]; then
+        read -r -a ARGS <<< "$DELEGATE_LOOP_OPENCODE_ARGS"
+      else
+        ARGS=()
+      fi
+      ARGS=(opencode run "${ARGS[@]}") ;;
+  esac
+}
+
+# Token use from a pass's output, where the CLI reports it; null otherwise.
+usage_of() {
+  local out="$1"
+  case "$AGENT" in
+    claude)
+      jq -c 'select(type == "object" and has("usage"))
+             | {input: .usage.input_tokens, output: .usage.output_tokens,
+                cache_read: .usage.cache_read_input_tokens, cost_usd: .total_cost_usd}' "$out" 2> /dev/null \
+        | tail -n 1 | grep . || echo null ;;
+    codex)
+      jq -sc '[.[] | objects | select(.type == "turn.completed") | .usage]
+              | if length == 0 then null else
+                {input: (map(.input_tokens // 0) | add), cached: (map(.cached_input_tokens // 0) | add),
+                 output: (map(.output_tokens // 0) | add)} end' "$out" 2> /dev/null || echo null ;;
+    *) echo null ;;
+  esac
+}
+
+render_prompt() { # action reasons scratch
+  local text
+  text="$(cat "$PROMPT")"
+  text="${text//\{\{repo\}\}/$REPO}"
+  text="${text//\{\{session\}\}/$SESSION}"
+  text="${text//\{\{action\}\}/$1}"
+  text="${text//\{\{reasons\}\}/$2}"
+  text="${text//\{\{scratch\}\}/$3}"
+  text="${text//\{\{status_script\}\}/$STATUS}"
+  text="${text//\{\{skill_dir\}\}/$SKILL_DIR}"
+  printf '%s' "$text"
+}
+
+passes_today() {
+  local file="$STATE_DIR/passes-$(date -u +%Y-%m-%d)"
+  [ -s "$file" ] && cat "$file" || echo 0
+}
+
+count_pass() {
+  local file="$STATE_DIR/passes-$(date -u +%Y-%m-%d)"
+  echo $(($(passes_today) + 1)) > "$file"
+}
+
+# One iteration. Returns 0 for an idle check or a pass that succeeded, 1 for a
+# failure, and sets NEXT_SLEEP.
+iterate() {
+  local gate action reasons stamp scratch out start code usage
+  NEXT_SLEEP="$IDLE"
+  if ! gate="$("$STATUS" next-action "${STATUS_ARGS[@]}" 2>> "$LOG")"; then
+    log "next-action failed; see the lines above"
+    return 1
+  fi
+  action="$(printf '%s' "$gate" | jq -r '.action')"
+  reasons="$(printf '%s' "$gate" | jq -r '.reasons | join("; ")')"
+  if [ "$action" = idle ]; then
+    log "idle: $reasons"
+    return 0
+  fi
+  if [ "$(passes_today)" -ge "$MAX_PASSES" ]; then
+    log "idle: daily pass budget ($MAX_PASSES) reached; $action waits for tomorrow ($reasons)"
+    return 0
+  fi
+
+  stamp="$(date -u +%Y%m%dT%H%M%SZ)"
+  scratch="$STATE_DIR/passes/$stamp-$action"
+  mkdir -p "$scratch" "$WORKTREES"
+  out="$scratch/output.log"
+  agent_args
+  log "$action: $reasons; running $AGENT (log: $out)"
+  start="$(date +%s)"
+  code=0
+  "${ARGS[@]}" "$(render_prompt "$action" "$reasons" "$scratch")" < /dev/null > "$out" 2>&1 || code=$?
+  count_pass
+  usage="$(usage_of "$out")"
+  jq -nc --arg at "$stamp" --arg agent "$AGENT" --arg action "$action" --argjson code "$code" \
+    --argjson seconds $(($(date +%s) - start)) --argjson usage "$usage" \
+    '{at: $at, agent: $agent, action: $action, exit: $code, seconds: $seconds, usage: $usage}' >> "$USAGE_LOG"
+  NEXT_SLEEP="$PAUSE"
+  if [ "$code" -ne 0 ]; then
+    log "$AGENT exited $code; last lines: $(tail -n 3 "$out" | tr '\n' ' ')"
+    return 1
+  fi
+  log "$action pass done in $(($(date +%s) - start))s; usage: $usage"
+  return 0
+}
+
+trap 'log "interrupted"; exit 0' INT TERM
+
+log "starting: agent $AGENT, repo $REPO, session $SESSION"
+failures=0
+while :; do
+  if [ -e "$STATE_DIR/STOP" ]; then
+    log "stopped: $STATE_DIR/STOP exists"
+    exit 0
+  fi
+  if iterate; then
+    failures=0
+    [ "$ONCE" -eq 1 ] && exit 0
+  else
+    failures=$((failures + 1))
+    [ "$ONCE" -eq 1 ] && exit 1
+    if [ "$failures" -ge "$MAX_FAILURES" ]; then
+      log "stopping: $failures failed passes in a row"
+      exit 1
+    fi
+  fi
+  "$SLEEP" "$NEXT_SLEEP"
+done

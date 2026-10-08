@@ -36,6 +36,7 @@
 #   delegate-status merge       <pr> --sha <verified head>             [options]
 #   delegate-status checks      <pr> [--head <sha>] [--wait <s>] [--fail-fast] [--table]
 #   delegate-status checks      --ref <branch or sha> [--table]        [options]
+#   delegate-status next-action                [--from <status file>] [options]
 #   delegate-status watch-digest --state <file> [--record] [--prs-only] [--interval 10] [--max-interval 60]
 #   delegate-status cost-note   <pr> --tool-calls <n> [--handoff]      [options]
 #   delegate-status cost        [--limit 10]                           [options]
@@ -48,9 +49,10 @@
 #   --label agent-ready      --rank-labels p1,p2      --prefix delegated/
 #   --progress-label in-progress                       --claim-ttl 2700 (seconds)
 #   --max-worktrees 1        --max-open-prs 6          --land off|on
-#   --cache <file>           status only: Pick's skip cache, read and rewritten
+#   --cache <file>           status and next-action: Pick's skip cache, read and rewritten
+#   --from <file>            next-action only: classify this status output instead of reading GitHub
 #
-# Run it from the main checkout. status, budget, issue, pr, checks,
+# Run it from the main checkout. status, next-action, budget, issue, pr, checks,
 # watch-digest, cost and merged-sizes write nothing to GitHub. Exit status:
 # 0 done, 1 a gh or git call failed, 2 usage, 3 refused (the comment is
 # another session's, or a live claim backs the label), 4 another session
@@ -107,6 +109,7 @@ HANDOFF=0
 FAIL_FAST=0
 TABLE=0
 PRS_ONLY=0
+FROM=""
 POSITIONAL=()
 
 while [ $# -gt 0 ]; do
@@ -144,6 +147,7 @@ while [ $# -gt 0 ]; do
     --fail-fast) FAIL_FAST=1; shift ;;
     --table) TABLE=1; shift ;;
     --prs-only) PRS_ONLY=1; shift ;;
+    --from) FROM="${2:-}"; shift 2 ;;
     -h|--help) usage ;;
     --*) die "unknown option $1" 2 ;;
     *) POSITIONAL+=("$1"); shift ;;
@@ -701,6 +705,40 @@ cmd_status() {
       counts: ($i | group_by(.state) | map({(.[0].state): length}) | add // {})}'
 }
 
+# What one Run pass would do, without a model: the gate a harness-neutral
+# runner (scripts/delegate-loop) asks before it spends tokens. One of
+#   watch  a delegated PR needs review or a sync
+#   land   land is on and a PR is marked Ready
+#   pick   an eligible issue is free and the budget has room
+#   idle   nothing to do; the reasons say why
+# in Watch's order (Review, Land, Sync), then Pick.
+next_action_of() {
+  jq -c '
+    [ .prs[] | select(.class == "needs-review") | "PR #\(.number) needs review" ] as $review
+    | [ .prs[] | select(.class == "conflicted") | "PR #\(.number) has a merge conflict" ] as $sync
+    | [ .prs[] | select(.class == "ready") | "PR #\(.number) is marked ready" ] as $land
+    | (if .pick != null and (.budget.at_limit | not) then ["issue #\(.pick.number) is eligible"] else [] end) as $pick
+    | if ($review + $sync | length) > 0 then {action: "watch", reasons: ($review + $sync + $land + $pick)}
+      elif ($land | length) > 0 then {action: "land", reasons: ($land + $pick)}
+      elif ($pick | length) > 0 then {action: "pick", reasons: $pick, issue: .pick.number}
+      else {action: "idle",
+            reasons: (if .pick != null and .budget.at_limit
+                      then ["budget at limit: \(.budget.worktrees)/\(.budget.max_worktrees) worktrees, \(.budget.open_prs)/\(.budget.max_open_prs) open PRs"]
+                      else ["no eligible issue"] end
+                      + [.prs[] | select(.class == "claimed") | "PR #\(.number) is claimed by \(.holder)"]),
+            counts: .counts}
+      end'
+}
+
+cmd_next_action() {
+  if [ -n "$FROM" ]; then
+    [ -s "$FROM" ] || die "--from $FROM: no such status file" 2
+    next_action_of < "$FROM"
+  else
+    cmd_status | next_action_of
+  fi
+}
+
 # ---------------------------------------------------------------- writes
 #
 # The GitHub writes the references make outside git. Each takes its text from
@@ -1055,6 +1093,7 @@ cmd_merged_sizes() {
 
 case "$COMMAND" in
   status) cmd_status ;;
+  next-action) cmd_next_action ;;
   budget) cmd_budget ;;
   issue) cmd_issue ;;
   pr) cmd_pr ;;

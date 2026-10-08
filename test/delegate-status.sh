@@ -727,6 +727,46 @@ check_called "issues/35/comments" "an issue updated since it was cached is re-re
 RUN_NOW=$((NOW + 14401)) run status --cache "$CACHE" > /dev/null
 check_called "issues/36/comments" "a claimed issue is re-read once claim_ttl has passed"
 
+# ---------------------------------------------------------------- next-action
+#
+# The runner's zero-token gate: what one Run pass would do, in Watch's order.
+
+use status
+out="$(run next-action --max-worktrees 5 --max-open-prs 6 --land on)"
+check "next-action reads GitHub like status and names Watch work first" "$out" \
+  '.action == "watch" and (.reasons | index("PR #20 needs review")) != null'
+check "next-action lists every reason, not only the first" "$out" \
+  '(.reasons | index("PR #21 is marked ready")) != null'
+check "next-action writes nothing to GitHub" "$(grep -c -- ' -X ' "$FAKE_STATE/calls.log" || true)" '. == 0'
+
+from_status() { # json -> next-action --from on it
+  printf '%s' "$1" > "$TMP/status.json"
+  run next-action --from "$TMP/status.json"
+}
+budget_ok='{"worktrees": 0, "max_worktrees": 1, "open_prs": 1, "max_open_prs": 6, "at_limit": false}'
+budget_full='{"worktrees": 1, "max_worktrees": 1, "open_prs": 1, "max_open_prs": 6, "at_limit": true}'
+
+check "a conflicted PR is Watch work" \
+  "$(from_status "{\"prs\": [{\"number\": 4, \"class\": \"conflicted\"}], \"pick\": null, \"budget\": $budget_ok, \"counts\": {}}")" \
+  '.action == "watch" and .reasons == ["PR #4 has a merge conflict"]'
+check "a Ready PR with nothing to review is Land work" \
+  "$(from_status "{\"prs\": [{\"number\": 5, \"class\": \"ready\"}], \"pick\": {\"number\": 9}, \"budget\": $budget_ok, \"counts\": {}}")" \
+  '.action == "land" and .reasons == ["PR #5 is marked ready", "issue #9 is eligible"]'
+check "an eligible issue with budget left is Pick work" \
+  "$(from_status "{\"prs\": [{\"number\": 6, \"class\": \"idle\"}], \"pick\": {\"number\": 9}, \"budget\": $budget_ok, \"counts\": {\"free\": 1}}")" \
+  '.action == "pick" and .issue == 9'
+check "an eligible issue over budget is idle, and says why" \
+  "$(from_status "{\"prs\": [], \"pick\": {\"number\": 9}, \"budget\": $budget_full, \"counts\": {\"free\": 1}}")" \
+  '.action == "idle" and (.reasons[0] | startswith("budget at limit"))'
+check "claimed and idle PRs with no issue to pick are idle" \
+  "$(from_status "{\"prs\": [{\"number\": 7, \"class\": \"claimed\", \"holder\": \"$OTHER\"}, {\"number\": 8, \"class\": \"idle\"}], \"pick\": null, \"budget\": $budget_ok, \"counts\": {\"waiting-on-human\": 2}}")" \
+  ".action == \"idle\" and .reasons == [\"no eligible issue\", \"PR #7 is claimed by $OTHER\"] and .counts == {\"waiting-on-human\": 2}"
+if run next-action --from "$TMP/missing.json" > /dev/null 2>&1; then
+  fail "next-action --from a missing file is a usage error"
+else
+  pass "next-action --from a missing file is a usage error"
+fi
+
 echo ""
 
 if [ "$FAILURES" -gt 0 ]; then
