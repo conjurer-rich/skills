@@ -14,7 +14,7 @@ Create a vertical-slice plan for the requested work: $ARGUMENTS
 
 1. Detect the repository's default branch. If currently on it, create a new feature branch first
 2. Explore the codebase to understand the relevant areas
-3. If the request has unresolved product or design decisions, use `grill-me` before writing stories or plans
+3. If the request has unresolved product or design decisions, use `grilling` before writing stories or plans
 4. If the request is still a large story, epic, broad feature idea, or backlog item, use the `story-splitting` skill first to identify independently valuable child stories
 5. Define known-good vertical implementation slices; default each to one trunk-based PR, and use `stack-pull-requests` when one slice needs review layers or later slices should start on the same evolving baseline before lower PRs merge
 6. If the selected story, acceptance criteria, or mocks are ambiguous, use `find-gaps` to tighten the artifact before finalizing the plan

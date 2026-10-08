@@ -29,13 +29,13 @@ Pair with `characterisation-tests` when the "gap" is behavior of existing code t
 
 | Need | Use | Why |
 |------|-----|-----|
-| Pressure-test unresolved product or design decisions | `grill-me` when installed; otherwise `specification` or one focused question at a time | Resolve the decision tree before reviewing a written artifact |
+| Pressure-test unresolved product or design decisions | `grilling`, or `specification` | Resolve the decision tree before reviewing a written artifact |
 | Break broad work into independently valuable child stories | `story-splitting` | It creates product/backlog stories, not implementation tasks |
 | Tighten a written story, plan, AC set, or mock spec | `find-gaps` | It finds missing states, edge cases, roles, constraints, and unverifiable wording, then writes confirmed decisions back |
 | Decide whether finished implementation satisfies an authoritative artifact | `acceptance-review` | It reviews code read-only, criterion by criterion, without rewriting the requirement |
 | Sequence a selected child story into PR-sized work | `planning` | It owns implementation slices and the TDD execution plan |
 
-If the artifact is not yet written down, use an installed `grill-me` skill when available. Otherwise ask one focused question at a time or use `specification` to establish the artifact; use `story-splitting` when the problem is oversized work rather than unresolved intent. If this review discovers the artifact is actually multiple stories tangled together, stop and route back to `story-splitting`. If the artifact is clear enough to implement, route forward to `planning`.
+If the artifact is not yet written down, use `grilling` or `specification` to establish it first; use `story-splitting` when the problem is oversized work rather than unresolved intent. If this review discovers the artifact is actually multiple stories tangled together, stop and route back to `story-splitting`. If the artifact is clear enough to implement, route forward to `planning`.
 
 ## Core Principles
 

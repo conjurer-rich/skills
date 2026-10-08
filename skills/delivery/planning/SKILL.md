@@ -29,13 +29,13 @@ A sequence is work order; a stack is branch topology. Default each slice to a tr
 
 If a plan starts producing database-only, API-only, UI-only, or "do all plumbing first" slices, pause and return to `story-splitting` unless the horizontal work explicitly unlocks the next vertical slice with independent verification or advances an explicitly selected reduction program toward its named terminal mechanism-removal state.
 
-Use `grill-me` where installed before planning when the selected story still contains unresolved product or design decisions. Otherwise, ask one focused question at a time, with a recommended answer and its trade-off. Use `find-gaps` before or after drafting the plan when acceptance criteria, failure modes, roles, states, or release constraints are missing or unverifiable.
+Load `grilling` before planning when the selected story still contains unresolved product or design decisions: rounds of numbered questions, each with a recommended answer. Use `find-gaps` before or after drafting the plan when acceptance criteria, failure modes, roles, states, or release constraints are missing or unverifiable.
 
 Before freezing slices that introduce a material generic mechanism or durable new dependency, run the proportionate `evaluate-existing-solutions` preflight, due diligence, or full comparison. Link a decision-owner-accepted result when a choice was unresolved. Planning sequences the chosen solution; it does not silently turn the first plausible library or a bespoke sketch into the plan.
 
 | Input state | Use | Output |
 |-------------|-----|--------|
-| Fuzzy decision tree | `grill-me` where installed; otherwise a one-question-at-a-time interview | Resolved decisions or named open questions |
+| Fuzzy decision tree | `grilling` | Resolved decisions or named open questions |
 | Broad requirement with multiple outcomes | `story-splitting` | Child stories |
 | Existing story/plan/AC/mocks with holes | `find-gaps` | Confirmed artifact updates |
 | Selected child story ready for delivery sequencing | `planning` | Implementation slices with a delivery shape |

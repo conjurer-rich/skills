@@ -12,7 +12,7 @@ in. Do not change code, and do not apply any proposal until the user picks it.
 
 ## Steps
 
-1. **Load the writing guide.** Load `writing-for-agents` when installed: most
+1. **Load the writing guide.** Load `writing-for-agents`: most
    proposals change a file an agent reads, and it says how those should be
    written.
 2. **Read the primary sources.** Default to the current session. If the user

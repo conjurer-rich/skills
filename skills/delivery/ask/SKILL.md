@@ -23,10 +23,12 @@ underneath.
 
 ## The main flow: idea → ship
 
-1. **Sharpen the idea.** `grill-me`, when installed, interviews you
-   relentlessly. With a repository to write into, follow it with
-   `specification` to turn the conversation into acceptance criteria, and
-   `ubiquitous-language` for any new or changed term. Visual work with several
+1. **Sharpen the idea.** `/grill-with-docs` interviews you relentlessly in
+   rounds and records the terms (`ubiquitous-language`) and hard-to-reverse
+   decisions (the `adr` agent) it settles. With no repository to write into,
+   `/grill-me` runs the same interview and writes nothing; both run the
+   `grilling` skill underneath. Then `specification` turns the conversation
+   into acceptance criteria. Visual work with several
    screens: `storyboard` puts every mock on one reviewable page first.
 2. **Tighten what you wrote.** `find-gaps` interrogates an existing spec, story
    or plan one question at a time and writes each answer back.
@@ -46,9 +48,10 @@ underneath.
      *(Claude Code)*
 6. **Check it before the PR.** `mutation-testing` runs once, at PR
    readiness; its `references/pr-readiness.md` is the evidence gate.
-   `acceptance-review` checks every acceptance criterion against the
-   evidence *(subagents)*. For bugs in the diff, use the harness's own
-   reviewer (`/code-review` in Claude Code, `/review` in Codex). For high
+   `review` checks the diff on two separate axes, the repository's standards
+   and the spec (it runs `acceptance-review` for the second) *(subagents)*.
+   For bugs in the diff, use the harness's own reviewer (`/code-review` in
+   Claude Code, `codex review` in Codex). For high
    stakes, `double-check` gets an independent second opinion, preferably from
    another provider *(subagents)*.
 7. **Close the loop.** `retro` looks back over the session and suggests
@@ -86,7 +89,8 @@ underneath.
 | Front end | `xstate` (before reaching for `useState`), `react-performance`, `browser-ux-walkthrough` |
 | Architecture | `codebase-design`, `structure-codebase`, `improve-codebase-architecture`, `hexagonal-architecture`, `domain-driven-design`, `event-sourcing` |
 | Services and APIs | `api-design`, `bff-entry-points`, `secure-oauth-oidc`, `twelve-factor`, `observability` |
-| Writing and knowledge | `technical-writing`, `diagrams`, `ubiquitous-language`, `expectations` (where a learning should live), the `adr` agent (record a decision), the `learn` agent (capture a lesson) |
+| Writing and knowledge | `technical-writing`, `diagrams`, `ubiquitous-language`, `expectations` (where a learning should live), the `adr` agent (record a decision), the `learn` agent (capture a lesson), `writing-for-agents` (skills, `CLAUDE.md` / `AGENTS.md`) |
+| Learning something new | `/teach` builds a workspace in the current directory (mission, lessons, reference sheets, learning records) and teaches over several sessions |
 | When an answer didn't land | `/wtf` re-explains the last answer in plain UK English |
 | Finding more skills | `find-skills`, when a kind of task keeps coming up with no skill behind it, or `retro` reports one missing |
 
@@ -118,6 +122,5 @@ from `shelf/` into the plugin and list it in `.claude-plugin/plugin.json`.
 | `cli-design` | building a command-line tool (CC BY-SA 4.0) |
 | `render-code-shape` | you want a cited map of existing code's modules and types before changing it |
 | `panel-review` with `graph-engineering` | a large structural change needs review through several craft skills at once *(Claude Code)* |
-| `teach-me` | learning a new topic over several sessions (to be replaced by `teach`) |
 | `docs-guardian`, `progress-guardian`, `ts-enforcer`, `use-case-data-patterns` agents | documentation upkeep, long-running plan tracking, a TypeScript-only review, or tracing a use case through the code |
 | `/setup` | onboarding a new project's `CLAUDE.md`, hooks and commands in one go |

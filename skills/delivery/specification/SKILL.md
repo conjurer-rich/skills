@@ -69,7 +69,7 @@ Specification conversations coin vocabulary constantly — that is half their va
 
 | Situation | Skill |
 |-----------|-------|
-| A fuzzy decision tree, no artifact yet, resolving choices | `grill-me` where installed; otherwise this skill's one-question protocol |
+| A fuzzy decision tree, no artifact yet, resolving choices | `grilling`, or this skill's one-question protocol |
 | An existing story/plan/spec that needs holes poked | `find-gaps` |
 | The agreed map is too big; slicing into child stories | `story-splitting` |
 | Turning a child story into PR-sized plans | `planning` |

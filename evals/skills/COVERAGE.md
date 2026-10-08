@@ -63,7 +63,7 @@ one-liner); routing coverage only.
 | bff-design | B | todo | 8 | adoption signals, granularity, identity mediation |
 | test-design-reviewer | B | todo | 8 | eight properties, unknowns unscored |
 | production-parity-skill-builder | B | todo | 8 | app-specific parity skill, harness questions |
-| teach-me | B | todo | 8 | mission-grounded plan, Socratic, HTML lesson |
+| teach | B | todo | 8 | mission-grounded workspace, retrieval practice, HTML lesson (replaced teach-me) |
 | double-check | B | todo | 9 | cross-provider, scope-fidelity check |
 | panel-review | B | todo | 9 | lens fan-out, verified ranked report |
 | graph-engineering | B | proven | 9 | 2 cases for bounded fan-in and persisted checkpoints; reference and negative grader proof pass; live baseline pending |

@@ -28,7 +28,7 @@ Keep story boundaries vertical regardless of the repository's implementation or 
 
 Use `find-gaps` **after** a split or plan exists when you need to tighten missing states, acceptance criteria, edge cases, or unverifiable language. If `find-gaps` discovers that the plan is still horizontal or too large, return here and split again.
 
-Use `grill-me` when installed for unresolved product or design decision-making rather than splitting mechanics. Otherwise use `specification` and ask one focused question at a time before or after this skill proposes slices.
+Use `grilling` (or `specification`) for unresolved product or design decision-making rather than splitting mechanics, and resolve it before or after this skill proposes slices.
 
 Use `storyboard` when the work spans multiple UX surfaces or mock states; the storyboard can reveal missing screens and flow gaps that become child stories. Use design skills such as `shape`, `critique`, and `polish` to improve the mocks themselves, not to replace product slicing.
 
@@ -40,13 +40,13 @@ Use the earliest skill that matches the uncertainty:
 
 | If the problem is... | Use... | Stop when you have... |
 |----------------------|--------|------------------------|
-| "We don't know which decision branch is right." | `grill-me` when installed; otherwise `specification` | A resolved decision tree or a named open decision |
+| "We don't know which decision branch is right." | `grilling`, or `specification` | A resolved decision tree or a named open decision |
 | "This requirement is too broad or solution-shaped." | `story-splitting` | Independently valuable child stories |
 | "This story/spec/plan/mock has holes." | `find-gaps` | Confirmed artifact updates with testable wording |
 | "We selected a child story and need to build it." | `planning` | Implementation slices with per-slice delivery shapes |
 | "A selected child story needs implementation sequencing." | The project's planning/delivery skills | A repository-compliant implementation and delivery plan |
 
-Do not use `story-splitting` to interrogate every product decision from scratch; use the optional `grill-me` skill or the `specification` fallback when the decision tree is the real work. Do not use `story-splitting` to produce implementation tasks; use `planning` after a child story is selected. Do not use `find-gaps` before there is an artifact to inspect; use it to harden a split, plan, AC set, or mock spec.
+Do not use `story-splitting` to interrogate every product decision from scratch; use `grilling` or `specification` when the decision tree is the real work. Do not use `story-splitting` to produce implementation tasks; use `planning` after a child story is selected. Do not use `find-gaps` before there is an artifact to inspect; use it to harden a split, plan, AC set, or mock spec.
 
 ## Core Principles
 
