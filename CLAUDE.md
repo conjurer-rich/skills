@@ -41,6 +41,9 @@ This repository is the `craft` plugin. `AGENTS.md` is a symlink to this file.
 
 ## Borrowing from elsewhere
 
+Upstream changes arrive as `upstream-watch` issues (see `upstream/`). Acting
+on one is an ordinary PR under the rules below.
+
 - Copying text from another project: put its licence verbatim in the skill's
   folder as `LICENSE` (and its `NOTICE`, for Apache 2.0), record the pinned
   commit and what changed in `references/source-notes.md`, and add a row to

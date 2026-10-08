@@ -1,0 +1,18 @@
+{
+  "_comment": "Upstream unit -> local craft item. A unit is the first path segment under a watched path (a skill folder, an agent or command file without .md, or a file such as CLAUDE.md). Units not listed default to the same name when craft has an item by that name, otherwise they are reported as new. Map a unit to null to report it as not relevant.",
+  "citypaul/.dotfiles": {
+    "CLAUDE.md": "engineering-practice",
+    "README.md": null
+  },
+  "mattpocock/skills": {
+    "ask-matt": "ask",
+    "code-review": "review",
+    "diagnosing-bugs": "debugging",
+    "domain-modeling": "ubiquitous-language",
+    "to-spec": "specification",
+    "to-tickets": "story-splitting",
+    "wait-what": "wtf",
+    "setup-matt-pocock-skills": null,
+    "README.md": null
+  }
+}

@@ -92,6 +92,14 @@ pnpm install
 - Skill evaluations (promptfoo, real tokens) live in `evals/skills/`; see its
   README.
 
+## Upstream watch
+
+craft borrows from [`citypaul/.dotfiles`](https://github.com/citypaul/.dotfiles)
+and [`mattpocock/skills`](https://github.com/mattpocock/skills) without merging
+them. A weekly routine files one `upstream-watch` issue listing what changed
+there and whether craft should adopt, adapt or ignore it. See
+[`upstream/`](upstream/README.md).
+
 ## Licence
 
 MIT, except where a nested `LICENSE` or `NOTICE` says otherwise
