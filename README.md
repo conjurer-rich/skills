@@ -59,6 +59,11 @@ load every skill twice. The names are unchanged.
 | `skills/deprecated/` | aliases kept for one release, then deleted |
 | `global/` | the global `CLAUDE.md` (and `AGENTS.md`, a link to it) that `scripts/install-global` puts in place |
 
+Not sure which skill fits? Run `/craft:ask` and describe the situation; it
+maps every skill, agent and command into flows, and points at shelved skills
+worth promoting. After a session, `/craft:retro` turns what went wrong into
+changes to checks, standards and steering files.
+
 Start with `craft:engineering-practice`: it carries the engineering guidelines,
 and its `references/routing.md` says which skill to load for which kind of
 work.

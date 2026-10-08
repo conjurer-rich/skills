@@ -11,8 +11,9 @@ here, or a row points at a notice that no longer exists.
   the original development framework this plugin grew from, and most of its
   skills, agents and commands. MIT, root [`LICENSE`](LICENSE).
 - **Matt Pocock** ([`mattpocock/skills`](https://github.com/mattpocock/skills)):
-  deep-module design and architecture-improvement skills, and the repository
-  shape this one borrows (buckets, explicit `plugin.json` skill list).
+  deep-module design and architecture-improvement skills, the `ask` router and
+  `retro`, and the repository shape this one borrows (buckets, explicit
+  `plugin.json` skill list).
 - **Adam Bulmer** ([`mintuz/skills`](https://github.com/mintuz/skills)):
   acceptance review, system-complexity reduction, code-shape rendering,
   technical writing and `wtf`.
@@ -30,6 +31,8 @@ here, or a row points at a notice that no longer exists.
 | everything without a nested notice | `citypaul/.dotfiles` | MIT | Paul Hammond (2024) | see [`PROVENANCE.md`](PROVENANCE.md) | [`LICENSE`](LICENSE) |
 | `codebase-design` | `mattpocock/skills` | MIT | Matt Pocock (2026) | `66898f60` | [`skills/architecture/codebase-design/LICENSE`](skills/architecture/codebase-design/LICENSE) |
 | `improve-codebase-architecture` | `mattpocock/skills` | MIT | Matt Pocock (2026) | `66898f60` | [`skills/architecture/improve-codebase-architecture/LICENSE`](skills/architecture/improve-codebase-architecture/LICENSE) |
+| `ask` | `mattpocock/skills` (`ask-matt`) | MIT | Matt Pocock (2026) | `b0618bc4` | [`skills/delivery/ask/LICENSE`](skills/delivery/ask/LICENSE) |
+| `retro` | `mattpocock/skills` | MIT | Matt Pocock (2026) | `b0618bc4` | [`skills/delivery/retro/LICENSE`](skills/delivery/retro/LICENSE) |
 | `acceptance-review` | `mintuz/skills` | MIT | Adam Bulmer (2025) | `976d4a0c` | [`skills/delivery/acceptance-review/LICENSE`](skills/delivery/acceptance-review/LICENSE) |
 | `reduce-system-complexity` | `mintuz/skills` | MIT | Adam Bulmer (2025) | `d698a88f` | [`skills/engineering/reduce-system-complexity/LICENSE`](skills/engineering/reduce-system-complexity/LICENSE) |
 | `technical-writing` | `mintuz/skills` | MIT | Adam Bulmer (2025) | `280c0152` | [`skills/writing/technical-writing/LICENSE`](skills/writing/technical-writing/LICENSE) |
