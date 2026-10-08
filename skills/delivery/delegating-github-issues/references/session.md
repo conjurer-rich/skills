@@ -4,6 +4,8 @@
 
 ## Session title
 
+Only where the harness can name a session (Claude Code); elsewhere skip every rename (`references/harness.md`).
+
 The chat's name is how the human finds one delegator session among several, in the Claude Code on the web sidebar, the `/resume` picker and the terminal title, so a session names itself after the last item it worked on. The title stays after the session releases its claim, so a finished PR can still be traced to the session that handled it, and only the next item replaces it. The title changes at these moments, and only when the new title differs from `title` in `run-state.json`:
 
 | Moment | Title |

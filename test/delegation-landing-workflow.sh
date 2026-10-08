@@ -133,7 +133,7 @@ reject_regex 'search "head:' "Watch filters branches locally, not by fuzzy searc
 
 # Dry run 2 findings (#1708, #1710)
 # Land's review took 24 minutes; a foreground subagent froze the watcher.
-require_text 'with `subagent_type: general-purpose`, `model: opus`, `run_in_background: true`' "Land's review runs in the background"
+require_text 'with `subagent_type: general-purpose`, `model: <review_model>`, `run_in_background: true`' "Land's review runs in the background"
 require_text 'A review interrupted by a restart leaves staged changes' "a restarted Land discards a dead review's changes"
 # Another agent session answered a thread without the marker, and the watcher
 # treated its reply as the human's.
@@ -268,12 +268,12 @@ require_text 'The re-walk never runs in the main session.' "the repair-round re-
 require_text '**Shipping inline.** Commit, push, PR creation and the CI wait are fixed commands, so the delegator runs them itself' "commit, push, PR and CI wait run inline"
 require_text 'each with its output appended to `<scratch>/<N>/ship.log`' "shipping output goes to a log, not the context"
 require_text 'with no `echo`, loop or pipe' "the inline commands need no extra permission"
-require_text 'If the environment refuses `git -C` (an isolation guard), do not rephrase it: dispatch one ship subagent on `model: haiku` instead' "a refused git -C falls back to a haiku ship subagent"
+require_text 'If the environment refuses `git -C` (an isolation guard), do not rephrase it: dispatch one ship subagent on `model: <mechanical_model>` instead' "a refused git -C falls back to a mechanical-model ship subagent"
 require_text '**Self-contained briefs.** A subagent starts from its brief alone. Never fork the conversation into it' "subagents never inherit the conversation"
 require_text 'Fork the conversation into a subagent; every brief is self-contained.' "the Never list forbids forking the conversation"
-require_text '**Cheapest model that can do the step.** Mechanical steps, where the brief names every command, run on `model: haiku`' "mechanical steps run on the cheapest model"
+require_text '**Cheapest model that can do the step.** Mechanical steps, where the brief names every command, run on `model: <mechanical_model>` (default `haiku`)' "mechanical steps run on the cheapest model"
 require_text 'The delegator commits only from the message file and runs nothing else in the worktree.' "the delegator commits only from the message file"
-require_text '11. **Evidence.** If there are screenshots under `<scratch>/<N>/`, dispatch one evidence subagent on `model: haiku`' "evidence is pushed by a haiku subagent"
+require_text '11. **Evidence.** If there are screenshots under `<scratch>/<N>/`, dispatch one evidence subagent on `model: <mechanical_model>`' "evidence is pushed by a mechanical-model subagent"
 require_text 'with the proposed message shown, **before** you ship' "a hand-started Work asks for commit approval before shipping"
 require_text 'Push whatever is staged as a draft PR, inline as the **Hand-back contract** ships' "Blocked ships inline too"
 # C. Claims bookkeeping goes to one subagent, renewed less often.
@@ -287,7 +287,7 @@ require_text 'Renew the claim (**Claims**), then dispatch one subagent' "Work re
 require_text 'renew the claim and dispatch one walkthrough subagent' "Work renews before the walkthrough"
 require_text 'Otherwise renew the claim, then send the implementer subagent' "Work renews before the repair round"
 require_text 'Renew the claim, then hand the actionable threads' "Review renews before its handoff"
-require_text 'Renew the claim, then dispatch one subagent with `subagent_type: general-purpose`, `model: opus`, `run_in_background: true`' "Land renews before its review wait"
+require_text 'Renew the claim, then dispatch one subagent with `subagent_type: general-purpose`, `model: <review_model>`, `run_in_background: true`' "Land renews before its review wait"
 require_text '**Wait for CI.** Renew the claim, then run' "Land renews before its CI wait"
 # D. Pick caches skips across loop passes.
 require_script 'updatedAt: .updated_at' "Pick lists updatedAt"
@@ -467,8 +467,8 @@ reject_regex 'Where the self-check or gate requires the complete test suite, run
 
 # Land re-reviewed the whole diff the human had just approved. It simplifies
 # the diff, and reviews only what it wrote itself: a conflict resolution.
-require_text 'Run `/simplify` on the diff against `origin/<default branch>`.' "Land simplifies the whole diff"
-require_text 'also run `/code-review` at medium effort on the conflict resolution only' "Land reviews only its own conflict resolution"
+require_text 'Run `<simplify>` on the diff against `origin/<default branch>`.' "Land simplifies the whole diff"
+require_text 'also run `<correctness_review>` on the conflict resolution only' "Land reviews only its own conflict resolution"
 reject_regex 'Run `/code-review` at medium effort and `/simplify` on the diff' "Land no longer re-reviews the approved diff"
 require_text 'Apply only changes that preserve behaviour; do not change any test'"'"'s assertions.' "Land's changes still preserve behaviour"
 require_text 'Do not fix anything that needs a behaviour change: return it instead.' "Land still returns behaviour-changing findings"

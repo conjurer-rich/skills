@@ -46,6 +46,8 @@ underneath.
      `delegating-github-issues` skill) to take it from issue to reviewable PR
      in its own worktree, with `browser-ux-walkthrough` for UI changes
      *(Claude Code)*.
+     In Codex or OpenCode, run the skill's `scripts/delegate-loop` instead:
+     a shell loop that starts one fresh agent pass whenever there is work.
 6. **Check it before the PR.** `mutation-testing` runs once, at PR
    readiness; its `references/pr-readiness.md` is the evidence gate.
    `review` checks the diff on two separate axes, the repository's standards

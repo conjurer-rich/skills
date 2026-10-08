@@ -1,6 +1,6 @@
 ---
 name: delegating-github-issues
-description: Take a triaged GitHub issue end-to-end to a reviewable pull request in an isolated worktree, then address review comments on request. With the land parameter on, also review, simplify and merge one the human marked Ready for review. Use when a project command such as /delegate asks to pick up an issue, work a specific issue number, address review comments on a PR the delegator opened, watch delegated PRs, sync or land one, or run one unattended pass that watches and then picks and works the next issue (for example under `/loop /delegate`). Not for triage, merging PRs the delegator did not open, or writing production code in the calling session.
+description: Take a triaged GitHub issue end-to-end to a reviewable pull request in an isolated worktree, then address review comments on request. With the land parameter on, also review, simplify and merge one the human marked Ready for review. Use when a project command such as /delegate asks to pick up an issue, work a specific issue number, address review comments on a PR the delegator opened, watch delegated PRs, sync or land one, or run one unattended pass that watches and then picks and works the next issue (under `/loop /delegate` or `scripts/delegate-loop`). Not for triage, merging PRs the delegator did not open, or writing production code in the calling session.
 ---
 
 # Delegating GitHub issues
@@ -24,6 +24,8 @@ The calling command supplies these; defaults apply when it does not, and keep th
 | `risk_paths` | none | Globs a tier S diff may not touch: migrations, the riskiest packages |
 | `implementer_model_small` | `sonnet` | Implementer for expected tier S |
 | `implementer_model_large` | `opus` | Implementer otherwise |
+| `review_model`, `mechanical_model` | `opus`, `haiku` | Land's review and Sync's check; mechanical steps |
+| `correctness_review`, `simplify` | `/code-review` (medium), `/simplify` | The bug review a check runs; Land's clean-up |
 | `full_suite_paths` | none | Globs that, when a diff touches one, make the implementer run the complete suite locally |
 | `local_full_suite` | off | When on, the implementer also runs the complete test suite locally; off, CI runs it on the PR |
 | `preflight` | none | The project's drift fixers, from a `preflight:` line; the implementer runs them before a PR's first push |
@@ -38,7 +40,7 @@ A **Verification scope** section in the project's delegation file replaces the `
 
 ## Delegator marker
 
-The delegator posts through the human's `gh` auth, so a comment's author cannot tell the two apart. Every comment and thread reply the delegator posts therefore ends with `<!-- delegator -->`. Other agent sessions post through the same auth with the Claude Code footer (`[Claude Code](https://claude.`) instead.
+The delegator posts through the human's `gh` auth, so a comment's author cannot tell the two apart. Every comment and thread reply the delegator posts therefore ends with `<!-- delegator -->`.
 
 A comment **needs an answer** when it does not contain `<!-- delegator`, it does not contain the Claude Code footer (another agent posted it, not the human), its author login does not end in `[bot]` (nor is a GitHub App), it does not contain `<!-- preview-`, and nothing answers it. A later comment with either marker in the same review thread answers an inline comment. A PR comment containing `<!-- delegator reply-to: <comment id> -->` answers a top-level comment or review body; Land's own status comments answer nothing. `delegate-status` computes this.
 
@@ -48,7 +50,7 @@ Several delegator sessions can run at once through one `gh` login, so a session 
 
 **Session name.** Before its first claim, a session names itself with 8 random hex characters. It is not the **Session title**; the two never mix.
 
-**`delegate-status`.** `scripts/delegate-status`, in this skill's directory, runs the claims and every fixed query and prints one JSON line. Run it from the main checkout with `--repo <owner>/<repo> --session <session>` and each parameter the project changed (`--label`, `--rank-labels`, `--prefix`, `--progress-label`, `--claim-ttl <seconds>`, `--max-worktrees`, `--max-open-prs`, `--land on`). Keep claim ids in `claims.json` in the run's scratch directory. On a non-zero exit, report its last line and stop. It also makes every GitHub write outside git, and waits for CI, over REST: Claude Code on the web blocks GraphQL.
+**`delegate-status`.** `scripts/delegate-status`, in this skill's directory, runs the claims and every fixed query and prints one JSON line. Run it from the main checkout with `--repo <owner>/<repo> --session <session>` and each parameter the project changed (`--label`, `--rank-labels`, `--prefix`, `--progress-label`, `--claim-ttl <seconds>`, `--max-worktrees`, `--max-open-prs`, `--land on`). Keep claim ids in `claims.json` in the run's scratch directory. On a non-zero exit, report its last line and stop.
 
 - **Claim.** `claim <n>` prints `won` with the `id` (and `open_pr` when a delegated PR is open for the issue). When another session holds a live claim, it posts nothing, prints `lost` with the `holder` and exits 4; in a race, the loser deletes its own claim comment and exits 4. On exit 4, stop work on the item, never retry or take over; a human-started entry point says `#<n> is claimed by delegator session <holder>`. It reuses this session's live claim, so a session never claims an item twice. The winner adds the label, creating it if missing; Never `--force`.
 - **Heartbeat.** After a won claim, run `heartbeat <n> <id>` as a background task until you release. It renews every 15 minutes; when it exits 4 the claim is lost, so stop work on the item.
@@ -86,6 +88,7 @@ Read only the reference files for the entry point you are running. Paths are rel
 | **Hand-back contract** | `references/hand-back.md`, before any dispatch or ship |
 | **Session title**, **Running in a cloud container** | `references/session.md` |
 | **Stop rule** reached, **Hand-off**, cost note | `references/handoff.md` |
+| A harness other than Claude Code, or `scripts/delegate-loop` | `references/harness.md` |
 
 ## PR body contract
 
@@ -119,7 +122,6 @@ End with the project's PR footer. `delegate-status cost-note` then appends the c
 - `git stash`, `git commit --amend` on a pushed branch, or `git branch -D`.
 - Re-run, or hand to another agent, a command that a subagent's own permission system refused: a refusal is an answer, not an obstacle.
 - Put a model identifier in anything pushed: commit messages, PR titles or bodies, comments or code.
-- Work a second issue in the same session, before or after the first one's PR opens; run another session instead.
 - Put `<progress_label>` on an item without holding a live claim on it, or leave it on one you released.
 - Run the full test suite locally unless `local_full_suite` is on or the diff touches a `full_suite_paths` glob, and never at the repository root in the foreground or to check a single change.
 - Point a browser at a deployed preview URL.

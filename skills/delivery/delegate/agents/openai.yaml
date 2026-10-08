@@ -1,0 +1,5 @@
+interface:
+  display_name: "Delegate"
+  short_description: "Claude Code first: delegate labelled issues to PRs"
+policy:
+  allow_implicit_invocation: false

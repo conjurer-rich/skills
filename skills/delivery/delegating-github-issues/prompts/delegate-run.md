@@ -10,7 +10,8 @@ The runner's gate says this pass has work: **{{action}}**
 Load the `delegating-github-issues` skill: `craft:delegating-github-issues` in
 Claude Code, `$delegating-github-issues` in Codex. If your harness does not
 list it, read `{{skill_dir}}/SKILL.md`. Read only the reference files its
-**Entry points** index names for **Run**.
+**Entry points** index names for **Run**, plus `references/harness.md`, which
+says what each Claude Code tool the references name becomes here.
 
 ## Settings
 

@@ -1,5 +1,7 @@
 ---
+name: delegate
 description: Keep delegating under /loop (watch delegated PRs, then pick and work the next issue), or work a labelled GitHub issue to a reviewable PR, pick the next one, address review comments, watch delegated PRs, or land a PR marked ready
+disable-model-invocation: true
 argument-hint: "[run] | #<issue> | next | review #<pr> | watch | land #<pr> | sync #<pr>"
 allowed-tools: Read, Glob, Grep, Bash(git:*), Bash(gh:*), Bash(pnpm:*), Bash(npm:*), Bash(npx:*), Bash(timeout:*), Bash(jq:*), Bash(tail:*), Bash(*/delegating-github-issues/scripts/delegate-status:*), Agent, SendMessage, mcp__claude-code-remote__get_session, mcp__claude-code-remote__set_session_title, mcp__claude-code-remote__subscribe_pr_activity, mcp__claude-code-remote__unsubscribe_pr_activity, mcp__claude-code-remote__create_session, mcp__claude-code-remote__send_later, mcp__claude-code-remote__delete_trigger
 ---
@@ -16,15 +18,17 @@ Project delegation settings (`.claude/delegation.md`):
 Bookkeeping script:
 !`find ~/.claude/skills ~/.claude/plugins -path '*/delegating-github-issues/scripts/delegate-status' -type f 2>/dev/null | sort -V | tail -n 1 | grep . || echo "none"`
 
+Claude Code fills in the four blocks above before this skill loads. In another harness they arrive unfilled: run the commands yourself (`git branch --show-current`, `git remote get-url origin`, read `.claude/delegation.md` at the repository root), and use `../delegating-github-issues/scripts/delegate-status` beside this skill as the bookkeeping script. Outside Claude Code, prefer the runner, `scripts/delegate-loop` in that skill, to `/loop`.
+
 ## Settings
 
 If the settings above read `none`, reply "This project has no `.claude/delegation.md`, so `/delegate` is not set up here. Add one with a **Parameters** table for the `delegating-github-issues` skill and a **Project rules** list." and stop. Never guess a project's settings.
 
-Otherwise the settings file's **Parameters** table sets the skill's parameters; any parameter it leaves out takes the skill's default. The skill's defaults are `max_worktrees` 1, `max_open_prs` 6, `branch_prefix` `delegated/`, `claim_ttl` 45 minutes, `progress_label` `in-progress`, `tier_small_max_lines` 150, `tier_small_max_packages` 1, no `risk_paths`, no `full_suite_paths`, no `preflight`, `implementer_model_small` `sonnet`, `implementer_model_large` `opus`, `walkthrough_paths` the UI root without test files, and `local_full_suite`, `walkthrough`, `oracle` and `land` off. A `preflight:` line in the settings file sets `preflight`, and a **Verification scope** section replaces the `/pr` gate's complete-suite rule. A project that defines none of these gets the skill's behaviour from before they existed. `max_worktrees` is 1 because one session works one issue; parallelism comes from running several `/loop /delegate` sessions, each claiming its own issue, and a project that raises it pays in that session's context. Its **Project rules** apply inside every delegated run. Owner and repo come from the **Repository** line above: strip any `https://github.com/` or `git@github.com:` prefix and `.git` suffix. A value in the settings file wins over it.
+Otherwise the settings file's **Parameters** table sets the skill's parameters; any parameter it leaves out takes the skill's default. The skill's defaults are `max_worktrees` 1, `max_open_prs` 6, `branch_prefix` `delegated/`, `claim_ttl` 45 minutes, `progress_label` `in-progress`, `tier_small_max_lines` 150, `tier_small_max_packages` 1, no `risk_paths`, no `full_suite_paths`, no `preflight`, `implementer_model_small` `sonnet`, `implementer_model_large` `opus`, `review_model` `opus`, `mechanical_model` `haiku`, `correctness_review` `/code-review` at medium effort, `simplify` `/simplify`, `walkthrough_paths` the UI root without test files, and `local_full_suite`, `walkthrough`, `oracle` and `land` off. A `preflight:` line in the settings file sets `preflight`, and a **Verification scope** section replaces the `/pr` gate's complete-suite rule. A project that defines none of these gets the skill's behaviour from before they existed. `max_worktrees` is 1 because one session works one issue; parallelism comes from running several `/loop /delegate` sessions, each claiming its own issue, and a project that raises it pays in that session's context. Its **Project rules** apply inside every delegated run. Owner and repo come from the **Repository** line above: strip any `https://github.com/` or `git@github.com:` prefix and `.git` suffix. A value in the settings file wins over it.
 
 ## Mode
 
-Parse `$ARGUMENTS`:
+Parse the arguments given with the skill (`$ARGUMENTS` in Claude Code):
 
 - No arguments, or `run` → one **Run** pass: Watch, then Pick and Work. Run it as `/loop /delegate` to keep delegating until something needs the human. Several sessions can run `/loop /delegate` at once: each claims an issue or PR before touching it and labels it with the skill's `progress_label` while it holds the claim, and the others skip it. An idle pass costs one digest call (**Idle pass**), and the loop backs off from 10 to 60 minutes while nothing changes. One pass works at most one issue through to its PR.
 - `#<n>` or a bare number → **Work** issue `n`.
@@ -37,7 +41,7 @@ Parse `$ARGUMENTS`:
 
 ## Model
 
-The `/loop /delegate` session mostly routes: it runs `delegate-status`, reads verdict lines and dispatches subagents, and it writes no production code. It can run on a cheaper model than the work it hands out; choose one with `/model` before starting the loop. Land's review subagent (Land step 5) and Sync's resolution check keep `model: opus` whatever the session runs on. The implementer (Work step 6) runs on `implementer_model_small` (default `sonnet`) when Work expects tier S and on `implementer_model_large` (default `opus`) otherwise, escalating once to the large model if the small one is blocked or its diff is not tier S. Mechanical subagents (bootstrap, evidence, cleanup) run on `model: haiku`, and every other subagent runs at its own default. This is a recommendation for the human: the command pins no model, so a session that needs judgement it cannot give can be switched without editing anything.
+The `/loop /delegate` session mostly routes: it runs `delegate-status`, reads verdict lines and dispatches subagents, and it writes no production code. It can run on a cheaper model than the work it hands out; choose one with `/model` before starting the loop. Land's review subagent (Land step 5) and Sync's resolution check run on `review_model` (default `opus`) whatever the session runs on. The implementer (Work step 6) runs on `implementer_model_small` (default `sonnet`) when Work expects tier S and on `implementer_model_large` (default `opus`) otherwise, escalating once to the large model if the small one is blocked or its diff is not tier S. Mechanical subagents (bootstrap, evidence, cleanup) run on `mechanical_model` (default `haiku`), and every other subagent runs at its own default. This is a recommendation for the human: the command pins no model, so a session that needs judgement it cannot give can be switched without editing anything.
 
 ## Idle pass
 
