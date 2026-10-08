@@ -1,0 +1,18 @@
+{
+  "number": 24,
+  "title": "PR 24",
+  "state": "open",
+  "draft": true,
+  "merged_at": null,
+  "head": {
+    "ref": "delegated/18-stale",
+    "sha": "h24"
+  },
+  "created_at": "2026-09-24T09:00:00Z",
+  "labels": [
+    {
+      "name": "in-progress"
+    }
+  ],
+  "html_url": "https://github.com/acme/widgets/pull/24"
+}

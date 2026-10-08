@@ -1,0 +1,4 @@
+{"total_count": 2, "check_runs": [
+  {"id": 811, "name": "test", "status": "completed", "conclusion": "failure", "details_url": "https://github.com/acme/widgets/actions/runs/9100/job/7", "output": {"title": "2 tests failed"}},
+  {"id": 812, "name": "lint", "status": "completed", "conclusion": "skipped", "details_url": "https://github.com/acme/widgets/actions/runs/9100/job/8", "output": {"title": null}}
+]}

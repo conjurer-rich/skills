@@ -1,0 +1,65 @@
+[
+  {
+    "id": 501,
+    "body": "Can you add a test for the empty list?",
+    "created_at": "2026-09-30T10:00:00Z",
+    "updated_at": "2026-09-30T10:00:00Z",
+    "user": {
+      "login": "rich"
+    }
+  },
+  {
+    "id": 502,
+    "body": "> Can you add a test for the empty list?\nAdded in abc123.\n<!-- delegator reply-to: 501 -->",
+    "created_at": "2026-09-30T10:00:00Z",
+    "updated_at": "2026-09-30T10:00:00Z",
+    "user": {
+      "login": "rich"
+    }
+  },
+  {
+    "id": 503,
+    "body": "Coverage: 91%",
+    "created_at": "2026-09-30T10:00:00Z",
+    "updated_at": "2026-09-30T10:00:00Z",
+    "user": {
+      "login": "github-actions[bot]"
+    }
+  },
+  {
+    "id": 504,
+    "body": "<!-- preview-e2e -->\npreview-e2e: pass",
+    "created_at": "2026-09-30T10:00:00Z",
+    "updated_at": "2026-09-30T10:00:00Z",
+    "user": {
+      "login": "rich"
+    }
+  },
+  {
+    "id": 505,
+    "body": "Also check the empty state copy.",
+    "created_at": "2026-09-30T10:00:00Z",
+    "updated_at": "2026-09-30T10:00:00Z",
+    "user": {
+      "login": "rich"
+    }
+  },
+  {
+    "id": 506,
+    "body": "> Please add a changelog line\nAdded.\n<!-- delegator reply-to: 703 -->",
+    "created_at": "2026-09-30T10:00:00Z",
+    "updated_at": "2026-09-30T10:00:00Z",
+    "user": {
+      "login": "rich"
+    }
+  },
+  {
+    "id": 507,
+    "body": "Looked at the CI logs.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)",
+    "created_at": "2026-09-30T10:00:00Z",
+    "updated_at": "2026-09-30T10:00:00Z",
+    "user": {
+      "login": "rich"
+    }
+  }
+]

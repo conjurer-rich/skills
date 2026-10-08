@@ -1,0 +1,7 @@
+# Shell scripts must be LF in the working tree. A CR in the shebang breaks
+# direct execution outside MSYS2 (WSL, Linux, macOS), and files copied out of
+# the tree carry the CRs with them.
+*.sh text eol=lf
+
+# Markdown installed into ~/.claude is read by tooling that does not expect CRs.
+*.md text eol=lf

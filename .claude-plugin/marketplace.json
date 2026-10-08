@@ -1,0 +1,21 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "conjurer",
+  "description": "Claude Code plugins by Richard Allen.",
+  "owner": {
+    "name": "Richard Allen",
+    "url": "https://github.com/conjurer-rich"
+  },
+  "plugins": [
+    {
+      "name": "craft",
+      "description": "Engineering craft toolkit: TDD, testing, refactoring, architecture, delivery and writing skills, agents and commands.",
+      "author": {
+        "name": "Richard Allen"
+      },
+      "category": "development",
+      "source": "./",
+      "homepage": "https://github.com/conjurer-rich/skills"
+    }
+  ]
+}

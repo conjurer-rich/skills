@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+#
+# Fake git for test/delegate-status.sh: worktree list, status and rev-parse
+# come from the scenario's recorded files.
+#
+
+set -euo pipefail
+
+state="${FAKE_STATE:?FAKE_STATE is not set}"
+printf 'git %s\n' "$*" >> "$state/calls.log"
+
+if [ "$1" = -C ]; then
+  dir="$2"
+  shift 2
+  if [ "$1" = status ]; then
+    cat "$state/status-$(basename "$dir").txt" 2>/dev/null || true
+    exit 0
+  fi
+fi
+
+case "$1 ${2:-}" in
+  "worktree list") cat "$state/worktrees.txt" 2>/dev/null || true; exit 0 ;;
+  "rev-parse "*)
+    ref="${*: -1}"
+    cat "$state/rev-$(printf '%s' "$ref" | tr '/' '_').txt"
+    exit 0 ;;
+esac
+
+echo "fake git: no fixture for: $*" >&2
+exit 1

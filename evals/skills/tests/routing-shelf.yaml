@@ -1,0 +1,55 @@
+# Routing cases for shelved skills (shelf/skills/). They are not run:
+# a shelved skill is not installed, so no session can route to it. Move a
+# case back into routing.yaml when its skill is promoted into the plugin.
+
+- description: bff-design — whether and how many BFFs
+  metadata: { cluster: api }
+  vars:
+    request: "We're adding an iOS app next to the web app. Should both clients share one backend, or should each get its own backend-for-frontend? What are the trade-offs?"
+  assert:
+    - { type: skill-used, value: bff-design }
+    - { type: not-skill-used, value: bff-entry-points }
+
+- description: cli-design — command-line tool
+  metadata: { cluster: api }
+  vars:
+    request: "Build a small CLI, `notes export`, that prints notes as a table by default and as JSON with --json, and exits non-zero when the notes file can't be read."
+  assert:
+    - { type: skill-used, value: cli-design }
+
+# ---------------------------------------------------------------- planning ---
+
+- description: production-parity-skill-builder — staging and prod differ
+  metadata: { cluster: debugging }
+  vars:
+    request: "Sharing works in staging but breaks in production because the feature flags and the identity provider groups are different there. We keep getting bitten by this. Build me something reusable that catches these environment differences for this app."
+  assert:
+    - { type: skill-used, value: production-parity-skill-builder }
+    - { type: not-skill-used, value: twelve-factor }
+
+# ------------------------------------------------------------------- other ---
+
+- description: render-code-shape — how does it compose
+  metadata: { cluster: other }
+  vars:
+    request: "Show me the shape of the sync path — which modules a call to syncNotes touches, the signatures, and what crosses each boundary. I don't want a picture, and don't change anything."
+  assert:
+    - { type: skill-used, value: render-code-shape }
+    - { type: not-skill-used, value: diagrams }
+
+- description: panel-review — review through named lenses
+  metadata: { cluster: other }
+  vars:
+    request: "Review the work on this branch through the hexagonal-architecture and typescript-strict lenses and give me one ranked list of findings."
+  assert:
+    - { type: skill-used, value: panel-review }
+    - { type: not-skill-used, value: double-check }
+
+- description: teach-me — learn a topic
+  metadata: { cluster: other }
+  vars:
+    request: "I don't really understand event sourcing. Teach it to me properly, quiz me as we go."
+  assert:
+    - { type: skill-used, value: teach-me }
+    - { type: not-skill-used, value: event-sourcing }
+

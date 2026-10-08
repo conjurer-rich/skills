@@ -1,0 +1,16 @@
+[
+  {
+    "number": 40,
+    "title": "fix(web): thing (#12)",
+    "state": "open",
+    "draft": true,
+    "merged_at": null,
+    "head": {
+      "ref": "delegated/12-fix-thing",
+      "sha": "h40"
+    },
+    "created_at": "2026-10-02T11:59:00Z",
+    "labels": [],
+    "html_url": "https://github.com/acme/widgets/pull/40"
+  }
+]

@@ -1,0 +1,78 @@
+{
+  "data": {
+    "repository": {
+      "pullRequest": {
+        "reviewThreads": {
+          "nodes": [
+            {
+              "isResolved": false,
+              "path": "src/import.ts",
+              "line": 42,
+              "comments": {
+                "nodes": [
+                  {
+                    "databaseId": 600
+                  },
+                  {
+                    "databaseId": 601
+                  }
+                ]
+              }
+            },
+            {
+              "isResolved": false,
+              "path": "src/import.ts",
+              "line": 42,
+              "comments": {
+                "nodes": [
+                  {
+                    "databaseId": 602
+                  },
+                  {
+                    "databaseId": 603
+                  }
+                ]
+              }
+            },
+            {
+              "isResolved": false,
+              "path": "src/import.ts",
+              "line": 42,
+              "comments": {
+                "nodes": [
+                  {
+                    "databaseId": 604
+                  }
+                ]
+              }
+            },
+            {
+              "isResolved": true,
+              "path": "src/import.ts",
+              "line": 42,
+              "comments": {
+                "nodes": [
+                  {
+                    "databaseId": 605
+                  }
+                ]
+              }
+            },
+            {
+              "isResolved": false,
+              "path": "src/import.ts",
+              "line": 42,
+              "comments": {
+                "nodes": [
+                  {
+                    "databaseId": 606
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

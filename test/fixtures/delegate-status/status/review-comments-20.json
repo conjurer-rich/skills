@@ -1,0 +1,74 @@
+[
+  {
+    "id": 600,
+    "body": "Can this name be clearer?",
+    "path": "src/import.ts",
+    "line": 42,
+    "user": {
+      "login": "rich",
+      "type": "User"
+    }
+  },
+  {
+    "id": 601,
+    "body": "Rename this please",
+    "path": "src/import.ts",
+    "line": 42,
+    "user": {
+      "login": "rich",
+      "type": "User"
+    },
+    "in_reply_to_id": 600
+  },
+  {
+    "id": 602,
+    "body": "Rename the import helper",
+    "path": "src/import.ts",
+    "line": 42,
+    "user": {
+      "login": "rich",
+      "type": "User"
+    }
+  },
+  {
+    "id": 603,
+    "body": "Renamed in abc123.\n<!-- delegator -->",
+    "path": "src/import.ts",
+    "line": 42,
+    "user": {
+      "login": "rich",
+      "type": "User"
+    },
+    "in_reply_to_id": 602
+  },
+  {
+    "id": 604,
+    "body": "Unused import",
+    "path": "src/import.ts",
+    "line": 42,
+    "user": {
+      "login": "github-advanced-security",
+      "type": "Bot"
+    }
+  },
+  {
+    "id": 605,
+    "body": "Old request",
+    "path": "src/import.ts",
+    "line": 42,
+    "user": {
+      "login": "rich",
+      "type": "User"
+    }
+  },
+  {
+    "id": 606,
+    "body": "Fixed it.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)",
+    "path": "src/import.ts",
+    "line": 42,
+    "user": {
+      "login": "rich",
+      "type": "User"
+    }
+  }
+]

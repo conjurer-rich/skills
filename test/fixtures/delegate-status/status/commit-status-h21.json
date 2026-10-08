@@ -1,0 +1,1 @@
+{"state": "failure", "total_count": 2, "statuses": [{"id": 2, "context": "deploy", "state": "pending", "target_url": null, "description": "old"}, {"id": 3, "context": "deploy", "state": "error", "target_url": "https://ci/deploy", "description": "Deploy failed"}]}

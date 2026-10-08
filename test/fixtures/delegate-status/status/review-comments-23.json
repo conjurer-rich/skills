@@ -1,0 +1,12 @@
+[
+  {
+    "id": 631,
+    "body": "Please fix",
+    "path": "src/x.ts",
+    "line": 1,
+    "user": {
+      "login": "rich",
+      "type": "User"
+    }
+  }
+]

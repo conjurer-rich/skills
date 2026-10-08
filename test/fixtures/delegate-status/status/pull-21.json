@@ -1,0 +1,14 @@
+{
+  "number": 21,
+  "title": "PR 21",
+  "state": "open",
+  "draft": false,
+  "merged_at": null,
+  "head": {
+    "ref": "delegated/15-ready",
+    "sha": "h21"
+  },
+  "created_at": "2026-09-21T09:00:00Z",
+  "labels": [],
+  "html_url": "https://github.com/acme/widgets/pull/21"
+}
