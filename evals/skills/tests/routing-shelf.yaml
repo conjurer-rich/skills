@@ -45,11 +45,3 @@
     - { type: skill-used, value: panel-review }
     - { type: not-skill-used, value: double-check }
 
-- description: teach-me — learn a topic
-  metadata: { cluster: other }
-  vars:
-    request: "I don't really understand event sourcing. Teach it to me properly, quiz me as we go."
-  assert:
-    - { type: skill-used, value: teach-me }
-    - { type: not-skill-used, value: event-sourcing }
-

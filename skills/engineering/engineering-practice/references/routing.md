@@ -17,6 +17,7 @@ For verifying test effectiveness through mutation analysis, load the `mutation-t
 For CI failure diagnosis, load the `ci-debugging` skill.
 For local or runtime failure diagnosis — an error message, permission denial, crash, or wrong output outside CI — load `debugging` to preserve evidence, localize one causal hypothesis at a time, and fix the earliest shared owning boundary when a fix is requested.
 For a read-only decision on whether finished implementation satisfies an authoritative requirement, load `acceptance-review` and report every criterion plus its evidence and exact verdict.
+For reviewing a branch, pull request or work in progress against the repository's written standards and against its spec, load `review` (two separate axes; the harness's own reviewer covers bugs).
 For a rigorous second opinion on finished work, load `double-check`. It selects an available reviewer dynamically, prefers a different provider when possible, labels a same-provider fresh-context fallback honestly, and bounds unresolved disagreement rather than requiring artificial consensus.
 When the user is unsure which skill or flow fits, point them at `/ask` (the `ask` skill); it maps every craft skill, including shelved ones.
 At the end of a session, especially one that went sideways, suggest `/retro` (the `retro` skill) to turn what went wrong into changes to the environment.
@@ -24,9 +25,7 @@ For delegating a labelled GitHub issue end to end, or watching and landing deleg
 
 ## Discovery, specification and planning
 
-For fuzzy product/design decisions, load `grill-me` when installed; otherwise
-use the host's one-question mechanism or `specification` to pressure-test the
-decision tree before writing stories or plans.
+For fuzzy product/design decisions, load `grilling` to pressure-test the decision tree in rounds before writing stories or plans. The user can start it themselves with `/grill-with-docs` (records terms and decisions in the repository) or `/grill-me` (writes nothing).
 For turning fuzzy intent into shared understanding and acceptance criteria — agent-facilitated draft followed by accountable, risk-proportionate human review — load the `specification` skill.
 For naming domain concepts, glossary work, or any new/changed domain term — the five-step language protocol, never silent coinage — load the `ubiquitous-language` skill.
 For broad stories, epics, features, or backlog items, load `story-splitting` to create child stories before planning.
@@ -72,8 +71,9 @@ For reader-facing prose that needs sentence-level co-writing, rewriting, review,
 For technical prose requested in plain English, layman's terms, ASD-STE100, or a form suitable for non-native readers or translation, load `simple-english` when installed. Use its Plain mode by default and its Strict mode only when the user names STE or compliance; leave marketing and brand voice to `clarity`.
 For diagrams and visual documentation, load the `diagrams` skill.
 For deciding where a learning, gotcha or decision should live, load the `expectations` skill.
-For documents an *agent* consumes rather than a human — a SKILL.md, `CLAUDE.md`/`AGENTS.md`, or a doc reached by a pointer — load `writing-for-agents` when installed: context pointers and trigger wording, the context/cognitive load split, the information hierarchy and progressive disclosure, and completion criteria that resist premature completion. Route by audience, not by file type: `technical-writing` owns human-facing prose, `writing-for-agents` owns agent-facing instruction.
+For documents an *agent* consumes rather than a human — a SKILL.md, `CLAUDE.md`/`AGENTS.md`, or a doc reached by a pointer — load `writing-for-agents`: context pointers and trigger wording, the context/cognitive load split, the information hierarchy and progressive disclosure, and completion criteria that resist premature completion. Route by audience, not by file type: `technical-writing` owns human-facing prose, `writing-for-agents` owns agent-facing instruction.
 For authoring, restructuring, evaluating, or benchmarking a skill itself — drafting from scratch, running evals over test prompts, or tuning a description for trigger accuracy — load `skill-creator` when installed. Use `writing-for-agents` for how the words should read and `skill-creator` for the authoring and measurement loop around them.
 For grading installed skills against recent local agent conversations, load `skill-doctor` when installed. It owns retrospective scoring and evidence-backed improvement proposals; use `skill-creator` for authoring and controlled prompt evals.
 For discovering and installing agent skills from the open ecosystem (`npx skills`), load the `find-skills` skill.
+For learning a topic over several sessions, the user can run `/teach`, which keeps a teaching workspace in the current directory.
 When the previous answer did not land, use `/wtf` to have it re-explained in plain, precise UK English.

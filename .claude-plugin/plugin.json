@@ -36,8 +36,12 @@
     "./skills/delivery/delegating-github-issues",
     "./skills/delivery/double-check",
     "./skills/delivery/find-gaps",
+    "./skills/delivery/grill-me",
+    "./skills/delivery/grill-with-docs",
+    "./skills/delivery/grilling",
     "./skills/delivery/planning",
     "./skills/delivery/retro",
+    "./skills/delivery/review",
     "./skills/delivery/specification",
     "./skills/delivery/stack-pull-requests",
     "./skills/delivery/story-splitting",
@@ -62,8 +66,10 @@
     "./skills/writing/diagrams",
     "./skills/writing/expectations",
     "./skills/writing/find-skills",
+    "./skills/writing/teach",
     "./skills/writing/technical-writing",
     "./skills/writing/ubiquitous-language",
+    "./skills/writing/writing-for-agents",
     "./skills/writing/wtf"
   ],
   "hooks": "./hooks/hooks.json"

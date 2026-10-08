@@ -109,7 +109,6 @@ TEST_REVIEWER_SOURCE="$REPO_ROOT/skills/engineering/test-design-reviewer/referen
 TDD="$REPO_ROOT/skills/engineering/tdd/SKILL.md"
 TWELVE_FACTOR="$REPO_ROOT/skills/architecture/twelve-factor/SKILL.md"
 TWELVE_FACTOR_NODE="$REPO_ROOT/skills/architecture/twelve-factor/resources/node-patterns.md"
-TEACH_ME="$REPO_ROOT/shelf/skills/teach-me/SKILL.md"
 INSTALLER="$REPO_ROOT/install-claude.sh"
 MIGRATION="$REPO_ROOT/MIGRATION.md"
 CHARACTERISATION_WRITING="$REPO_ROOT/skills/engineering/characterisation-tests/resources/writing-process.md"
@@ -286,8 +285,8 @@ require_match "twelve-factor checklist permits platform-native config injection"
   'operator-facing example documents every required setting alongside the schema' "$TWELVE_FACTOR"
 require_match "deploy-varying config stays outside source and build artifacts" \
   'build artifacts, supplied through the runtime' "$TWELVE_FACTOR"
-require_match "teaching artifacts require authority outside the repository" \
-  'Writing outside the active repository requires explicit authorization' "$TEACH_ME"
+require_match "teach keeps its artifacts in the workspace it was run in" \
+  'Treat the current directory as a teaching workspace' "$REPO_ROOT/skills/writing/teach/SKILL.md"
 require_match "wide-event guidance budgets telemetry cost" \
   'storage still need an explicit telemetry cost budget' "$OBSERVABILITY"
 require_match "alert review uses measured false-page evidence" \
@@ -519,8 +518,6 @@ require_match "characterisation distinguishes compatibility from correctness" \
   'compatibility evidence, not correctness authority' "$CHARACTERISATION"
 require_match "refactoring does not infer dead code from missing tests" \
   'Existing untested code is not proven speculative or dead' "$REFACTORING"
-require_match "one-off teaching permits direct explanation" \
-  'Direct explanation is legitimate' "$TEACH_ME"
 require_match "technical-writing scopes receipts to material claims" \
   'Material Claims Need Receipts' "$TECHNICAL_WRITING"
 require_match "parity skill creation does not authorize app mutations" \
@@ -650,8 +647,6 @@ reject_match "twelve-factor summary does not mandate platform-specific mechanism
 reject_match "current use-case agent does not claim an unlicensed adaptation" \
   'adapted from.*kieran-ohara|kieran-ohara/dotfiles/blob/(main|master)' \
   "$USE_CASE_DATA" "$AGENTS_README" "$README"
-reject_match "teaching skill has no provider-specific global learning path" \
-  '\.claude/learning' "$TEACH_ME" "$REPO_ROOT/shelf/skills/teach-me/resources/"*.md
 reject_match "twelve-factor checklist does not mandate environment variables" \
   'All config comes from environment variables' "$TWELVE_FACTOR"
 reject_match "twelve-factor guidance does not restore env-only config shorthand" \
