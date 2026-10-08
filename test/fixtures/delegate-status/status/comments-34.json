@@ -1,0 +1,20 @@
+[
+  {
+    "id": 3401,
+    "body": "**Question before delegation**\nDo you mean A or B?\n<!-- delegator -->",
+    "created_at": "2026-09-01T09:00:00Z",
+    "updated_at": "2026-09-01T09:00:00Z",
+    "user": {
+      "login": "rich"
+    }
+  },
+  {
+    "id": 3402,
+    "body": "B, please.",
+    "created_at": "2026-09-02T09:00:00Z",
+    "updated_at": "2026-09-02T09:00:00Z",
+    "user": {
+      "login": "rich"
+    }
+  }
+]

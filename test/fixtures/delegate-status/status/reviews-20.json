@@ -1,0 +1,38 @@
+[
+  {
+    "id": 701,
+    "body": "Overall: split the helper",
+    "state": "COMMENTED",
+    "user": {
+      "login": "rich",
+      "type": "User"
+    }
+  },
+  {
+    "id": 702,
+    "body": "",
+    "state": "COMMENTED",
+    "user": {
+      "login": "rich",
+      "type": "User"
+    }
+  },
+  {
+    "id": 703,
+    "body": "Please add a changelog line",
+    "state": "COMMENTED",
+    "user": {
+      "login": "rich",
+      "type": "User"
+    }
+  },
+  {
+    "id": 704,
+    "body": "LGTM",
+    "state": "COMMENTED",
+    "user": {
+      "login": "copilot-pull-request-reviewer",
+      "type": "Bot"
+    }
+  }
+]

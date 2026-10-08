@@ -1,0 +1,20 @@
+[
+  {
+    "id": 3501,
+    "body": "**Question before delegation**\nWhich page?\n<!-- delegator -->",
+    "created_at": "2026-09-01T09:00:00Z",
+    "updated_at": "2026-09-01T09:00:00Z",
+    "user": {
+      "login": "rich"
+    }
+  },
+  {
+    "id": 3502,
+    "body": "I think it is the settings page.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)",
+    "created_at": "2026-09-02T09:00:00Z",
+    "updated_at": "2026-09-02T09:00:00Z",
+    "user": {
+      "login": "rich"
+    }
+  }
+]

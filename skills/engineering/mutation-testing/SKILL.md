@@ -1,0 +1,245 @@
+---
+name: mutation-testing
+description: Set up and run mutation testing with Stryker, including full-project and focused diff runs against the current review base, then use surviving mutants to strengthen weak or missing tests. Use as the end-of-phase PR-readiness gate after implementation and refactoring are complete, not inside each RED-GREEN increment. Also use when the user explicitly asks for mutation testing, Stryker, mutation score, or surviving-mutant analysis. For writing the tests themselves, see testing.
+---
+
+# Mutation Testing
+
+For writing good tests (factories, behavior-driven patterns), load the `testing` skill. This skill focuses on verifying test effectiveness.
+
+Mutation testing answers the question: **"Are my tests actually catching bugs?"**
+
+Code coverage tells you what code your tests execute. Mutation testing tells you if your tests would **detect meaningful changes** to that code. Complete line coverage alone does not prove that assertions protect behavior.
+
+**Default posture:** use an automated mutation harness first. For JavaScript and TypeScript projects, recommend Stryker as the starting point if it is not already set up. Use manual/mental mutations only as a fallback, a teaching aid, or a focused follow-up for subtle survivors.
+
+**Deep-dive resources** are in the `resources/` directory. Load them on demand:
+
+| Resource | Load when... |
+|----------|-------------|
+| `mutator-rules.md` | Planning tests, scanning changed code for likely gaps, manually applying mutations, or interpreting surviving/equivalent mutants |
+
+---
+
+## Core Concept
+
+**The Mutation Testing Process:**
+
+1. **Generate mutants**: Introduce small bugs (mutations) into production code
+2. **Run tests**: Execute your test suite against each mutant
+3. **Evaluate results**: If tests fail, the mutant is "killed" (good). If tests pass, the mutant "survived" (bad - your tests missed the bug)
+
+**The Insight**: A surviving mutant represents a bug your tests wouldn't catch.
+
+---
+
+## When to Use This Skill
+
+Use mutation testing analysis when:
+
+- A completed phase of work is ready to become a PR
+- Reviewing code changes on a branch
+- Verifying test effectiveness after TDD and refactoring
+- Identifying weak tests that appear to have coverage
+- Finding missing edge case tests
+- Validating that refactoring didn't weaken test suite
+
+**Integration with planning and TDD:**
+
+```
+FOR EACH TDD INCREMENT:
+    ├─► CONFIRM: Human approves observable acceptance criteria
+    ├─► RED: Write failing test, using mutator rules to spot likely gaps
+    ├─► GREEN: Make it pass
+    ├─► REFACTOR: If valuable
+    └─► Repeat without running the mutation harness
+
+END-OF-PHASE PR-READINESS GATE:
+    ├─► BASELINE: one full run for the accumulated branch/PR scope - the only whole-project run
+    ├─► KILL MUTANTS: Strengthen tests for worthwhile survivors
+    ├─► RE-RUN SCOPED ONLY: `--mutate <file>:<startLine>-<endLine>`, `--incremental`, or the diff
+    │   script - never repeat the whole-project run to recheck one file, one edit, or one config fix
+    └─► CLOSE: at most one final full run, present the triaged report, proceed to PR verification
+```
+
+The automated mutation harness is deliberately **not** part of the inner RED-GREEN-REFACTOR loop. Do not run it after each test, increment, refactor, or commit: its cost grows with the codebase and makes short feedback loops progressively slower. During RED, use the mutator rules to choose strong examples cheaply. Run the harness when the implementation and refactoring phase is complete and the work is otherwise ready for a PR.
+
+Once that PR-readiness gate begins, the normal mutation process takes over: triage the complete report, add or strengthen behavior tests for valuable survivors, and re-run focused mutations until they are killed or classified. These focused reruns are part of the same gate, not a return to per-increment mutation testing.
+
+---
+
+## Harness-First Mutation Workflow
+
+At the end-of-phase PR-readiness gate, prove test effectiveness with Stryker whenever practical. Do not stop at reasoning about whether a test would catch a mutation; run the harness against the accumulated change, then use the report to drive focused test improvements.
+
+### Step 1: Inspect Setup and Scope
+
+```bash
+rg --files | rg '(^|/)(package.json|stryker\.config\.(mjs|cjs|js|json)|stryker\.conf\.(js|json))$'
+git status --porcelain
+git diff <review-base>...HEAD --name-only
+```
+
+- Identify the package manager, test runner, affected package(s), and existing Stryker config.
+- Use the actual review boundary: the detected default branch for a single PR, or the immediately lower branch for a stacked PR layer.
+- Diff-scoped mutation intentionally covers committed branch changes only. Require a clean working tree before running it. If `git status --porcelain` is non-empty, stop and explain that staged, unstaged, and untracked work is excluded; do not silently commit, stash, or claim a complete diff result.
+- For a stacked slice, mutate the focused layer against its parent. The top also runs the cumulative acceptance and repository gates required by `stack-pull-requests`.
+- In monorepos, start in the smallest affected package, then widen to the repo-level command when the targeted run is healthy.
+- If no Stryker setup exists in a JS/TS project, recommend adding it before doing manual mutation analysis.
+
+### Step 2: Set Up Stryker When Missing
+
+First select compatible exact Stryker package versions from official
+documentation and the repository's runtime/test-runner constraints. Adding
+the dependency and running an initializer both change the repository, so
+obtain the same authorization required for other dependency/setup changes.
+Then use the repository's package manager with that reviewed version, for
+example:
+
+```bash
+pnpm dlx create-stryker@<reviewed-version>
+```
+
+Then inspect and adapt the generated `stryker.config.*`:
+
+- Prefer the project test runner plugin when available (`vitest`, `jest`, `mocha`, etc.). Use the generic command runner only when no tighter integration is practical.
+- Mutate first-party production source only. Exclude tests, fixtures, snapshots, generated files, declaration files, build outputs, migrations, and low-signal barrels.
+- For TypeScript, consider `@stryker-mutator/typescript-checker` so type-invalid mutants are reported as compile errors instead of wasting test time.
+- Write no `thresholds.break` value in a first setup. With no measured baseline any number either breaks the build on day one or is decoration: leave `break` unset or `null`, report the first run's score, and propose a threshold only after that score exists.
+- Keep setup changes reviewable: dependencies, config and scripts, plus - whenever Stryker is newly added to a repository - `.gitignore` entries for its temp and report output (`.stryker-tmp/` and the configured report directory, commonly `reports/`), so a run never leaves untracked artefacts behind.
+
+### Step 3: Recommend Useful Commands
+
+Add all three scripts - full-project, cached (`--incremental`), and branch-diff - even when the request names only one or two of them; the cached script is what makes the scoped reruns of the gate affordable. Match the naming the project or request already implies:
+
+```json
+{
+  "scripts": {
+    "mutation": "stryker run",
+    "mutation:incremental": "stryker run --incremental",
+    "mutation:diff": "node scripts/stryker-diff.mjs <review-base>"
+  }
+}
+```
+
+The `mutation:diff` helper should:
+
+- Read the base branch argument, defaulting to the repository's detected default branch.
+- Refuse to run when `git status --porcelain` is non-empty, explaining that `<base>...HEAD` excludes staged, unstaged, and untracked work.
+- Collect changed files with `git diff --name-only -z --diff-filter=ACMRTUXB <base>...HEAD` and parse NUL-delimited records; filenames may contain whitespace or newlines.
+- Keep changed production files matching the project's source extensions.
+- Exclude test/spec files, fixtures, snapshots, generated files, declaration files, and build output.
+- Invoke the repository-local Stryker binary without a shell. If its `--mutate` option requires comma-separated patterns, reject a candidate filename containing a comma with a clear message before joining; never silently change the scope.
+- Exit clearly when there are no changed production files to mutate.
+
+Use a small Node helper, not dense shell inside `package.json`: command substitution cannot preserve NUL-delimited paths, and quoting `*`, `!`, commas, and newlines is fragile across shells.
+
+Use exact line ranges for tiny follow-up checks when the report points to a specific survivor:
+
+```bash
+pnpm exec stryker run --incremental --force --mutate src/example.ts:42-57
+```
+
+Use the repository's actual package manager; the examples use pnpm only to
+show a repository-local binary. Do not let an execution command silently
+download a moving Stryker release.
+
+### Step 4: Run and Triage
+
+At the PR-readiness gate, start with `mutation:diff` for branch feedback. A whole-project `mutation` run is warranted when introducing Stryker, changing shared test infrastructure, preparing CI gates, or validating a broad test-strengthening pass - and the gate gets two of them at most: one baseline before you change any test, one verification after. Every other run is scoped (`--mutate <file>[:<start>-<end>]`, `--incremental`, or the diff script), including rechecking a config edit or a single file you just strengthened.
+
+Prove the harness runs before you spend the baseline. The first invocation after writing or changing a Stryker config is a scoped smoke run over one small file (`--mutate <file>[:<start>-<end>]`), never the whole project: it finishes in seconds and surfaces the failures that abort a run before any mutant is measured - a missing runner plugin, a path the sandbox copy cannot read, a blocked port or permission. Count attempts, not results: an invocation that crashed, was killed, or produced no mutation report has still spent one of the two. After such an abort, fix the cause, re-prove it with the scoped smoke run, and only then spend the whole-project run.
+
+Never re-run the harness to re-read its own output. The baseline run already produced the survivor list: capture it once (`... 2>&1 | tee mutation-baseline.log`, or add a `json` reporter and read that file) and triage from the copy. Re-running the whole project to grep for survivors spends a full run and tells you nothing the first one did not.
+
+Categorize every survivor before the gate closes, and carry those categories into the report you hand back - including when you stop to ask whether to continue. Take each survivor in turn and ask the equivalence question before anything else: is there any input for which this mutant returns a different value, persists different state, or emits a different message? If there is none it is Equivalent - a guard whose removal leaves the same result, an identity operation such as `+ 0` or `* 1`, a redundant early return, an unreachable branch - and no test can kill it; record the one-line argument for why. Only survivors that outlive that question are candidates to kill or to defer. Each surviving mutant must therefore end as exactly one of: killed by a new test, Equivalent with that argument, or a judgment call you name and defer explicitly. Run the equivalence pass even when you have killed nothing yet and are only reporting: offering to kill every survivor asserts that none of them is equivalent, and that is a claim to check survivor by survivor, not one to make by omission. Listing survivors without classifying them is not a triaged report, and neither is treating every survivor as a defect.
+
+Categorize Stryker findings:
+
+| Category | Description | Action Required |
+|----------|-------------|-----------------|
+| Killed | Test failed when mutant was applied | None - tests are effective |
+| Survived | Tests passed with mutant active | Add/strengthen test, unless equivalent |
+| No Coverage | No test exercises this code | Add behavior test |
+| Equivalent | Mutant produces same behavior | None - not a real bug |
+
+Fix obvious issues immediately:
+
+- Missing boundary tests
+- Weak or absent assertions
+- One-sided branch coverage
+- Missing side-effect verification
+- High-value business rules such as money, permissions, eligibility, safety, or data loss
+
+For subtle survivors that require human judgment, use the active harness's structured ask-question facility when available; otherwise ask one concise plain-text question. Give concrete choices, explain the mutation, and describe the tradeoff. Use this when behavior is intentionally unspecified, the correct domain rule is unclear, the test would be expensive or brittle, or the mutant may be equivalent but you are not certain.
+
+### Step 5: Kill Survivors With TDD
+
+For each survivor worth killing:
+
+1. Keep or recreate the mutant.
+2. Write the smallest behavior test that fails against the mutant for the right reason.
+3. Restore the original production code.
+4. Verify the new test passes.
+5. Re-run Stryker scoped to the mutated file or line range, then re-run the diff command.
+
+Avoid overfitting tests to implementation details. Strong mutation tests assert observable behavior: return values, persisted state, emitted events, permissions, messages, or meaningful collaborator calls.
+
+## Stryker Configuration Guidance
+
+Stryker should be the normal entry point for JS/TS mutation testing.
+
+### Starting Configuration
+
+Prefer `stryker.config.mjs` or the format generated by the initializer. Using the Vitest runner requires installing `@stryker-mutator/vitest-runner` alongside `@stryker-mutator/core`. A typical starting point:
+
+```javascript
+export default {
+  testRunner: "vitest",
+  coverageAnalysis: "perTest",
+  reporters: ["html", "clear-text", "progress"],
+  mutate: [
+    "src/**/*.{ts,tsx,js,jsx}",
+    "!src/**/*.test.{ts,tsx,js,jsx}",
+    "!src/**/*.spec.{ts,tsx,js,jsx}",
+    "!src/**/*.d.ts"
+  ]
+}
+```
+
+Adapt `testRunner`, `mutate`, `vitest.configFile`, build commands, and checker plugins to match the project. Do not cargo-cult this exact config into a repo with a different layout.
+
+**Vitest Browser Mode caveat:** Stryker's Vitest runner targets Node-based test projects, not browser-mode ones. When a repository uses Browser Mode because the tested claim needs real browser behavior and the support/cost fit, scope `mutate` to non-UI source covered by Node tests, or point Stryker at the Node project of a multi-project Vitest setup. Verify current Browser Mode support in the Stryker docs before assuming a UI package can be mutated.
+
+### CI and Quality Gates
+
+- Start with report-only or diff-only mutation checks if the existing suite has many survivors.
+- Add failing thresholds only after establishing a realistic baseline.
+- Persist HTML and clear-text reports as CI artifacts.
+- Use incremental mode for fast local feedback, but periodically force a full run to avoid stale assumptions.
+- Treat mutation score as a signal, not a vanity metric. Prioritize surviving/no-coverage mutants in changed and high-risk code.
+
+### Manual Mutation Fallback
+
+If Stryker is unavailable or cannot target the code under review, load `resources/mutator-rules.md` and manually apply the relevant operators. Always revert each mutation before the next one. Manual mutation should still follow the same loop: mutate, run tests, classify, fix obvious gaps, ask about judgment calls, and report the result.
+
+---
+
+## Summary: Mutation Testing Mindset
+
+**The key question for every line of code:**
+
+> "If I introduced a bug here, would my tests catch it?"
+
+**For each test, verify it would catch:**
+- Arithmetic operator changes
+- Boundary condition shifts
+- Boolean logic inversions
+- Removed statements
+- Changed return values
+
+**Remember:**
+- Coverage measures execution, mutation testing measures detection
+- A test that doesn't make assertions can't kill mutants
+- Boundary values, mixed boolean cases, non-identity values, and observable side effects kill many common mutants
+- For the full mutator checklist and examples, load `resources/mutator-rules.md`

@@ -1,0 +1,214 @@
+#!/usr/bin/env bash
+#
+# Fake gh for test/delegate-status.sh. Serves recorded REST responses from
+# $FAKE_STATE (a per-test copy of a fixture scenario), applies writes to the
+# recorded comments so a later read sees them, and logs every call to
+# $FAKE_STATE/calls.log.
+#
+# A `ccr-404` file in the scenario makes the /ccr/ routes answer 404, as
+# github.com does for the CLI, so the GraphQL fallbacks can be tested. A
+# `<fixture>.next` file replaces its fixture after the fixture is first read,
+# so a poll sees a change.
+#
+
+set -euo pipefail
+
+state="${FAKE_STATE:?FAKE_STATE is not set}"
+printf '%s\n' "$*" >> "$state/calls.log"
+
+method=GET
+args=()
+fields=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -X|--method) method="$2"; shift 2 ;;
+    --paginate) shift ;;
+    -f|-F|--raw-field|--field) fields+=("$2"); shift 2 ;;
+    *) args+=("$1"); shift ;;
+  esac
+done
+
+# A field's value; `@file` reads the file, as gh -F does.
+field() {
+  local name="$1" f v
+  for f in "${fields[@]}"; do
+    case "$f" in
+      "$name="*)
+        v="${f#"$name="}"
+        case "$v" in @*) cat "${v#@}" ;; *) printf '%s' "$v" ;; esac
+        return ;;
+    esac
+  done
+}
+
+serve() {
+  if [ -f "$state/$1" ]; then
+    cat "$state/$1"
+    if [ -f "$state/$1.next" ]; then mv "$state/$1.next" "$state/$1"; fi
+  else
+    printf '%s\n' "${2:-[]}"
+  fi
+}
+
+not_found() {
+  echo "gh: Not Found (HTTP 404)" >&2
+  exit 1
+}
+
+ccr() {
+  if [ -f "$state/ccr-404" ]; then
+    echo "gh: Not Found (HTTP 404)" >&2
+    exit 1
+  fi
+}
+
+now_iso() {
+  date -u -d "@${DELEGATE_STATUS_NOW:?}" +%Y-%m-%dT%H:%M:%SZ
+}
+
+comments_file_holding() {
+  local id="$1" f
+  for f in "$state"/comments-*.json; do
+    [ -f "$f" ] || continue
+    if jq -e --argjson id "$id" 'any(.[]; .id == $id)' "$f" > /dev/null; then
+      printf '%s' "$f"
+      return
+    fi
+  done
+}
+
+query_param() {
+  printf '%s' "$query" | tr '&' '\n' | sed -n "s/^$1=//p" | head -n 1
+}
+
+if [ "${args[0]:-}" = pr ] && [ "${args[1]:-}" = ready ]; then
+  exit 0
+fi
+
+if [ "${args[0]:-}" = api ]; then
+  path="${args[1]%%\?*}"
+  query=""
+  case "${args[1]}" in *\?*) query="${args[1]#*\?}" ;; esac
+  case "$method $path" in
+    "GET user") serve user.json '{}'; exit 0 ;;
+    "POST graphql"|"GET graphql")
+      [ -f "$state/graphql-threads-$(field pr).json" ] || not_found
+      serve "graphql-threads-$(field pr).json"; exit 0 ;;
+    GET\ repos/*/labels/*)
+      name="${path##*/}"
+      if jq -e --arg n "$name" 'any(.[]; .name == $n)' "$state/labels.json" > /dev/null; then
+        jq -c --arg n "$name" '.[] | select(.name == $n)' "$state/labels.json"; exit 0
+      fi
+      not_found ;;
+    POST\ repos/*/labels)
+      jq -n --arg n "$(field name)" '{name: $n}'; exit 0 ;;
+    GET\ repos/*/pulls)
+      head="$(query_param head)"
+      if [ -n "$head" ]; then
+        head="$(printf '%s' "$head" | sed 's/%3A/:/g; s/%2F/\//g')"
+        serve "pr-head-$(printf '%s' "${head#*:}" | tr '/' '_').json"; exit 0
+      fi
+      case "$(query_param state)" in
+        closed) serve closed-prs.json ;;
+        *) serve prs.json ;;
+      esac
+      exit 0 ;;
+    POST\ repos/*/pulls)
+      jq -n --arg h "$(field head)" --arg d "$(field draft)" \
+        '{number: 99, html_url: "https://github.com/acme/widgets/pull/99", head: {ref: $h, sha: "h99"}, draft: ($d == "true")}'
+      exit 0 ;;
+    GET\ repos/*/pulls/*/ccr/review_threads)
+      ccr
+      n="${path%/ccr/review_threads}"; n="${n##*/}"
+      serve "threads-$n.json"; exit 0 ;;
+    POST\ repos/*/pulls/*/ccr/convert_to_draft)
+      ccr
+      echo '{}'; exit 0 ;;
+    POST\ repos/*/pulls/*/comments/*/replies)
+      id="${path%/replies}"; id="${id##*/}"
+      jq -n --argjson id "$id" '{id: 950, in_reply_to_id: $id, html_url: "https://github.com/acme/widgets/pull/20#discussion_r950"}'
+      exit 0 ;;
+    GET\ repos/*/pulls/*/comments)
+      n="${path%/comments}"; n="${n##*/}"
+      serve "review-comments-$n.json"; exit 0 ;;
+    GET\ repos/*/pulls/*/reviews)
+      n="${path%/reviews}"; n="${n##*/}"
+      serve "reviews-$n.json"; exit 0 ;;
+    PUT\ repos/*/pulls/*/merge)
+      n="${path%/merge}"; n="${n##*/}"
+      if [ "$(field sha)" != "$(jq -r '.head.sha' "$state/pull-$n.json")" ]; then
+        echo "gh: Head branch was modified. Review and try the merge again. (HTTP 409)" >&2
+        exit 1
+      fi
+      jq -n '{merged: true, sha: "m1", message: "Pull Request successfully merged"}'; exit 0 ;;
+    GET\ repos/*/pulls/*)
+      n="${path##*/}"
+      [ -f "$state/pull-$n.json" ] || not_found
+      serve "pull-$n.json"; exit 0 ;;
+    PATCH\ repos/*/pulls/*)
+      n="${path##*/}"
+      jq -n --argjson n "$n" '{number: $n, html_url: "https://github.com/acme/widgets/pull/\($n)"}'; exit 0 ;;
+    GET\ repos/*/commits/*/check-runs)
+      sha="${path%/check-runs}"; sha="${sha##*/}"
+      serve "check-runs-$sha.json" '{"total_count": 0, "check_runs": []}'; exit 0 ;;
+    GET\ repos/*/commits/*/status)
+      sha="${path%/status}"; sha="${sha##*/}"
+      serve "commit-status-$sha.json" '{"state": "pending", "statuses": []}'; exit 0 ;;
+    GET\ repos/*/check-runs/*/annotations)
+      id="${path%/annotations}"; id="${id##*/}"
+      serve "annotations-$id.json"; exit 0 ;;
+    GET\ repos/*/issues)
+      serve issues.json; exit 0 ;;
+    GET\ repos/*/issues/comments/*/reactions)
+      id="${path%/reactions}"; id="${id##*/}"
+      serve "reactions-$id.json"; exit 0 ;;
+    GET\ repos/*/issues/comments/*)
+      id="${path##*/}"
+      f="$(comments_file_holding "$id")"
+      [ -n "$f" ] || not_found
+      n="$(basename "$f" .json)"; n="${n#comments-}"
+      jq --argjson id "$id" --arg n "$n" '.[] | select(.id == $id) | .issue_url = "https://api.github.com/repos/acme/widgets/issues/\($n)"' "$f"; exit 0 ;;
+    GET\ repos/*/issues/*/comments)
+      n="${path%/comments}"; n="${n##*/}"
+      serve "comments-$n.json"; exit 0 ;;
+    GET\ repos/*/issues/*/timeline)
+      n="${path%/timeline}"; n="${n##*/}"
+      serve "timeline-$n.json"; exit 0 ;;
+    POST\ repos/*/issues/*/comments)
+      n="${path%/comments}"; n="${n##*/}"
+      f="$state/comments-$n.json"
+      [ -f "$f" ] || echo '[]' > "$f"
+      id="$(cat "$state/next-id" 2>/dev/null || echo 900)"
+      echo $((id + 1)) > "$state/next-id"
+      jq --argjson id "$id" --arg body "$(field body)" --arg at "$(now_iso)" --arg login "$(jq -r .login "$state/user.json")" \
+        '. + [{id: $id, body: $body, created_at: $at, updated_at: $at, user: {login: $login}}]' "$f" > "$f.tmp"
+      mv "$f.tmp" "$f"
+      jq -n --argjson id "$id" --arg n "$n" '{id: $id, html_url: "https://github.com/acme/widgets/issues/\($n)#issuecomment-\($id)"}'; exit 0 ;;
+    PATCH\ repos/*/issues/comments/*)
+      id="${path##*/}"
+      f="$(comments_file_holding "$id")"
+      jq --argjson id "$id" --arg body "$(field body)" --arg at "$(now_iso)" \
+        'map(if .id == $id then .body = $body | .updated_at = $at else . end)' "$f" > "$f.tmp"
+      mv "$f.tmp" "$f"
+      jq -n --argjson id "$id" '{id: $id}'; exit 0 ;;
+    DELETE\ repos/*/issues/comments/*)
+      id="${path##*/}"
+      f="$(comments_file_holding "$id")"
+      jq --argjson id "$id" 'map(select(.id != $id))' "$f" > "$f.tmp"
+      mv "$f.tmp" "$f"
+      exit 0 ;;
+    POST\ repos/*/issues/*/labels) echo '[]'; exit 0 ;;
+    DELETE\ repos/*/issues/*/labels/*)
+      if [ -f "$state/labels-404" ]; then echo "gh: Label does not exist (HTTP 404)" >&2; exit 1; fi
+      exit 0 ;;
+    GET\ repos/*/issues/*)
+      n="${path##*/}"
+      [ -f "$state/issue-$n.json" ] || not_found
+      serve "issue-$n.json"; exit 0 ;;
+    GET\ repos/*/*)
+      echo '{"default_branch": "main"}'; exit 0 ;;
+  esac
+fi
+
+echo "fake gh: no fixture for: $method ${args[*]}" >&2
+exit 1

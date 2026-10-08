@@ -1,0 +1,24 @@
+worktree /repo
+HEAD aaa
+branch refs/heads/main
+
+worktree /wt/2-merged
+HEAD bbb
+branch refs/heads/delegated/2-merged
+
+worktree /wt/3-dirty
+HEAD ccc
+branch refs/heads/delegated/3-dirty
+
+worktree /wt/4-open
+HEAD ddd
+branch refs/heads/delegated/4-open
+
+worktree /wt/5-nopr
+HEAD eee
+branch refs/heads/delegated/5-nopr
+
+worktree /wt/6-unpushed
+HEAD fff
+branch refs/heads/delegated/6-unpushed
+

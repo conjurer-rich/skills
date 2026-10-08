@@ -1,0 +1,14 @@
+[
+  {
+    "content": "+1",
+    "user": {
+      "login": "someone-else"
+    }
+  },
+  {
+    "content": "heart",
+    "user": {
+      "login": "rich"
+    }
+  }
+]

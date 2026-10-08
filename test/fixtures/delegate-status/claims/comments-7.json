@@ -1,0 +1,20 @@
+[
+  {
+    "id": 99,
+    "body": "Looks good to me",
+    "created_at": "2026-09-30T10:00:00Z",
+    "updated_at": "2026-09-30T10:00:00Z",
+    "user": {
+      "login": "rich"
+    }
+  },
+  {
+    "id": 100,
+    "body": "Claimed by delegator session `e5f6a7b8` until released, or 4 hours without renewal.\n<!-- delegator claim: e5f6a7b8 -->",
+    "created_at": "2026-10-02T11:50:00Z",
+    "updated_at": "2026-10-02T11:50:00Z",
+    "user": {
+      "login": "rich"
+    }
+  }
+]

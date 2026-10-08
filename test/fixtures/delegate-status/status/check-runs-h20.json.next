@@ -1,0 +1,5 @@
+{"total_count": 2, "check_runs": [
+  {"id": 801, "name": "lint", "status": "completed", "conclusion": "success", "details_url": "https://github.com/acme/widgets/actions/runs/9001/job/1", "output": {"title": "Lint"}},
+  {"id": 803, "name": "test", "status": "completed", "conclusion": "success", "details_url": "https://github.com/acme/widgets/actions/runs/9001/job/3", "output": {"title": "Tests"}},
+  {"id": 802, "name": "test", "status": "completed", "conclusion": "cancelled", "details_url": "https://github.com/acme/widgets/actions/runs/9001/job/2", "output": {"title": null}}
+]}

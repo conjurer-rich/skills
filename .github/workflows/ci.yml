@@ -1,0 +1,63 @@
+name: CI
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - main
+  push:
+    branches:
+      - main
+
+jobs:
+  tests:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Run the test suite
+        run: ./test/run.sh
+
+  plugin:
+    name: Validate the plugin manifests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # Validation needs no login. The CLI is pinned so a new release cannot
+      # change what counts as valid underneath a pull request. Every warning
+      # fails except the expected one about the repository's own CLAUDE.md.
+      - name: claude plugin validate
+        run: node scripts/validate-plugin.mjs "npx --yes @anthropic-ai/claude-code@2.1.294"
+
+  changesets:
+    name: Validate changesets
+    runs-on: ubuntu-latest
+    # The automated "chore: version packages" PR consumes the changesets it
+    # releases, so "no changesets found" is the expected state there.
+    if: github.event_name == 'pull_request' && github.head_ref != 'changeset-release/main'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: pnpm/action-setup@v3
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+      - run: pnpm install --frozen-lockfile
+      - name: Validate changesets
+        run: pnpm changeset status --since origin/main
+      # `changeset status` accepts a changeset naming a package that does not
+      # exist, but the Release workflow's `changeset version` rejects it. Run
+      # the same version step here, on the throwaway checkout, so the PR goes
+      # red instead of main.
+      - name: Dry-run the release version step
+        run: bash scripts/version.sh

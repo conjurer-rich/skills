@@ -1,0 +1,21 @@
+{
+  "name": "@conjurer-rich/skills",
+  "version": "4.30.3",
+  "private": true,
+  "description": "craft: engineering skills, agents and commands for Claude Code and Codex",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/conjurer-rich/skills.git"
+  },
+  "author": "Richard Allen",
+  "license": "SEE LICENSE IN LICENSE",
+  "scripts": {
+    "test": "./test/run.sh",
+    "changeset": "changeset",
+    "version": "bash scripts/version.sh",
+    "eval:skills": "./evals/skills/run.sh"
+  },
+  "devDependencies": {
+    "@changesets/cli": "^2.27.1"
+  }
+}

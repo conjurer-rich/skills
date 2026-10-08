@@ -1,0 +1,49 @@
+[
+  {
+    "resolved": false,
+    "outdated": false,
+    "path": "src/import.ts",
+    "line": 42,
+    "comment_ids": [
+      600,
+      601
+    ]
+  },
+  {
+    "resolved": false,
+    "outdated": false,
+    "path": "src/import.ts",
+    "line": 42,
+    "comment_ids": [
+      602,
+      603
+    ]
+  },
+  {
+    "resolved": false,
+    "outdated": false,
+    "path": "src/import.ts",
+    "line": 42,
+    "comment_ids": [
+      604
+    ]
+  },
+  {
+    "resolved": true,
+    "outdated": false,
+    "path": "src/import.ts",
+    "line": 42,
+    "comment_ids": [
+      605
+    ]
+  },
+  {
+    "resolved": false,
+    "outdated": false,
+    "path": "src/import.ts",
+    "line": 42,
+    "comment_ids": [
+      606
+    ]
+  }
+]
