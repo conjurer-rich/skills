@@ -126,7 +126,7 @@ cheap, each optional:
 | `tier_small_max_lines`, `tier_small_max_packages`, `risk_paths` | A diff under the limits that touches no risk path is tier S: no plan document, one self-review instead of a review panel, and the implementer starts on `implementer_model_small` |
 | `implementer_model_small`, `implementer_model_large` | The implementer's model for an expected tier S (default `sonnet`) and otherwise (default `opus`) |
 | `full_suite_paths` | Paths whose change makes the implementer run the complete suite locally |
-| **Verification scope** section | Replaces the `/pr` gate's complete-suite rule with the project's own scope |
+| **Verification scope** section | Replaces the pre-PR gate's complete-suite rule with the project's own scope |
 | `preflight:` line | Drift fixers run before a PR's first push, in order |
 
 A project that sets none of them keeps the skill's defaults. Every delegated PR

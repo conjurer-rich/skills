@@ -26,7 +26,7 @@ No tier skips independent verification, and RED-before-GREEN evidence goes in th
 
 ## Verification scope
 
-When the project's delegation file has a **Verification scope** section, it replaces the `pre_pr_gate`'s complete-suite rule (for a `/pr` command, its step 5) and this skill's default scope. Copy the section verbatim into every implementer, repair-round and Land brief, and the implementer follows it in place of the gate's suite step. Without one, the default holds: lint, typecheck, build and the tests of the packages the diff touches, plus the mutation gate on the diff; CI runs the complete suite on the PR.
+When the project's delegation file has a **Verification scope** section, it replaces the `pre_pr_gate`'s complete-suite rule (for `pr-readiness.md`, the complete non-watch test gate in its §3) and this skill's default scope. Copy the section verbatim into every implementer, repair-round and Land brief, and the implementer follows it in place of the gate's suite step. Without one, the default holds: lint, typecheck, build and the tests of the packages the diff touches, plus the mutation gate on the diff; CI runs the complete suite on the PR.
 
 Either way, the implementer also runs the complete suite locally, once, at the end, when `local_full_suite` is on or a changed file matches a `full_suite_paths` glob.
 

@@ -18,7 +18,7 @@ The calling command supplies these; defaults apply when it does not, and keep th
 | `max_worktrees` | 1 | Active `<branch_prefix>` worktrees. Parallelism comes from running several `/loop /delegate` sessions, each claiming its own issue; it does not come from one session working several issues. |
 | `max_open_prs` | 6 | Open PRs in the repository, all authors |
 | `branch_prefix` | `delegated/` | Prefix of every delegated branch |
-| `pre_pr_gate` | the project's `/pr` command | The gate the implementer passes before the PR opens |
+| `pre_pr_gate` | the project's gate, else `mutation-testing`'s `pr-readiness.md` | The implementer runs it before the PR |
 | `tier_small_max_lines` | 150 | Most changed lines (insertions plus deletions) a tier S diff may have; `0` turns tier S off |
 | `tier_small_max_packages` | 1 | Most packages a tier S diff may touch |
 | `risk_paths` | none | Globs a tier S diff may not touch: migrations, the riskiest packages |
