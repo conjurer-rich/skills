@@ -1,6 +1,6 @@
 # Delegating GitHub issues: source notes
 
-## Ideas only, no text copied
+## Matt Pocock's `pr` skill
 
 The PR body contract's **Summary** (`references/work.md`, step 10) takes two
 ideas from Matt Pocock's `pr` skill, which credits Dex Horthy's `show-me`
