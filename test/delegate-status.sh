@@ -440,6 +440,28 @@ echo '[]' > "$FAKE_STATE/issues.json"
 out="$(run status --land on || true)"
 check "with no issues, pick is null and counts is empty" "$out" '.pick == null and .counts == {}'
 
+# One jq argument may not exceed 128 KB (Linux caps a single process argument),
+# and a busy PR's or issue's comments pass that. Status, pr and issue must
+# still classify them.
+use status
+head -c 200000 /dev/zero | tr '\0' x > "$TMP/big.txt"
+big_comment() {
+  jq --rawfile b "$TMP/big.txt" '. + [{id: 590, body: $b, created_at: "2026-10-01T10:00:00Z", updated_at: "2026-10-01T10:00:00Z", user: {login: "rich"}}]' \
+    "$FAKE_STATE/$1" > "$FAKE_STATE/$1.tmp" && mv "$FAKE_STATE/$1.tmp" "$FAKE_STATE/$1"
+}
+big_comment comments-21.json
+big_comment comments-31.json
+big_comment review-comments-20.json
+jq --rawfile b "$TMP/big.txt" '.body = $b' "$FAKE_STATE/pull-21.json" > "$FAKE_STATE/pull-21.tmp" && mv "$FAKE_STATE/pull-21.tmp" "$FAKE_STATE/pull-21.json"
+out="$(run status --land on 2> /dev/null || true)"
+check "status classifies a PR whose comments and body exceed one jq argument" "$out" "$(pr 21) | .class == \"ready\""
+check "status classifies a PR whose review comments exceed one jq argument" "$out" "$(pr 20) | .class == \"needs-review\""
+check "status classifies an issue whose comments exceed one jq argument" "$out" "$(issue 31) | .state == \"free\" and .criteria == \"body\""
+out="$(run pr 21 --land on 2> /dev/null || true)"
+check "pr reports a PR whose comments exceed one jq argument" "$out" '.number == 21 and .class == "ready" and any(.items[]; .id == 590)'
+out="$(run issue 31 2> /dev/null || true)"
+check "issue classifies an issue whose comments exceed one jq argument" "$out" '.number == 31 and .eligible and .state == "free"'
+
 # ---------------------------------------------------------------- merge conflicts
 
 # The list endpoint carries no mergeability, so status reads each delegated PR

@@ -210,6 +210,18 @@ comments_of() {
   list_of "repos/$REPO/issues/$1/comments"
 }
 
+# Linux caps one process argument at 128 KB, and a busy PR's or issue's
+# comments pass that, so a value of unbounded size reaches jq as a file
+# (--slurpfile, which binds it as a one-element array), never as --argjson.
+JSON_DIR="$(mktemp -d)"
+trap 'rm -rf "$JSON_DIR"' EXIT
+json_file() {
+  local f
+  f="$(mktemp "$JSON_DIR/json.XXXXXX")"
+  printf '%s' "$1" > "$f"
+  printf '%s' "$f"
+}
+
 # Runs gh, leaving its stdout in $GH_OUT and its stderr in $GH_ERR, so a
 # caller can tell a 404 from any other failure. Exit status is gh's. Call it
 # directly, not in $(...), or the two variables stay in the subshell.
@@ -500,9 +512,10 @@ issue_from_comments() {
     reactions="$(gh_json api --paginate "repos/$REPO/issues/comments/$derived/reactions" | jq -s 'add // []')"
     confirmed="$(printf '%s' "$reactions" | jq --arg l "$login" 'any(.[]; .content == "+1" and .user.login == $l)')"
   fi
-  jq -nc --argjson i "$issue" --argjson c "$comments" --argjson w "$winner" --arg s "$SESSION" \
+  jq -nc --slurpfile i "$(json_file "$issue")" --slurpfile c "$(json_file "$comments")" --argjson w "$winner" --arg s "$SESSION" \
     --arg pl "$PROGRESS_LABEL" --argjson derived "$derived" --argjson confirmed "$confirmed" "$JQ_DEFS"'
-    ($i.body // "" | gsub("\r"; "")
+    $i[0] as $i | $c[0] as $c
+    | ($i.body // "" | gsub("\r"; "")
       | test("(^|\n) {0,3}#{1,6}[^\n]*acceptance criteria[^\n]*\n(\\s*\n)*\\s*([-*+]|[0-9]+[.)])\\s"; "i")) as $in_body
     | ([$c | to_entries[] | select(.value.body // "" | startswith("**Question before delegation**")) | .key] | last) as $q
     | (if $q == null then false
@@ -545,18 +558,19 @@ pr_json() {
   number="$(printf '%s' "$pr" | jq '.number')"
   comments="$(comments_of "$number")"
   threads="$(threads_of "$number")"
-  # Only the fields the classifier reads: a REST object carries a dozen URLs,
-  # and one jq argument may not exceed 128 KB.
+  # Only the fields the classifier reads: a REST object carries a dozen URLs.
   review_comments="$(list_of "repos/$REPO/pulls/$number/comments?per_page=100" \
     | jq -c 'map({id, body, user: {login: .user.login, type: .user.type}})')"
   reviews="$(list_of "repos/$REPO/pulls/$number/reviews?per_page=100" \
     | jq -c 'map({id, body, user: {login: .user.login, type: .user.type}})')"
   timeline="$(list_of "repos/$REPO/issues/$number/timeline?per_page=100" \
     | jq -c '[.[] | select(.event == "ready_for_review" or .event == "committed") | .event]')"
-  result="$(jq -nc --argjson p "$pr" --argjson c "$comments" --argjson w "$(winner_of "$comments")" \
-      --argjson t "$threads" --argjson rc "$review_comments" --argjson rv "$reviews" --argjson tl "$timeline" \
+  result="$(jq -nc --slurpfile p "$(json_file "$pr")" --slurpfile c "$(json_file "$comments")" --argjson w "$(winner_of "$comments")" \
+      --slurpfile t "$(json_file "$threads")" --slurpfile rc "$(json_file "$review_comments")" \
+      --slurpfile rv "$(json_file "$reviews")" --slurpfile tl "$(json_file "$timeline")" \
       --arg s "$SESSION" --arg pl "$PROGRESS_LABEL" --arg land "$LAND" "$JQ_DEFS"'
-      ($rc | map({key: (.id | tostring), value: .}) | from_entries) as $by_id
+      $p[0] as $p | $c[0] as $c | $t[0] as $t | $rc[0] as $rc | $rv[0] as $rv | $tl[0] as $tl
+      | ($rc | map({key: (.id | tostring), value: .}) | from_entries) as $by_id
       | [$c[].body // "" | scan("<!-- delegator reply-to: ([0-9]+) -->") | .[0] | tonumber] as $replied
       | [ ( $t[] | select(.resolved | not)
             | . as $thread
