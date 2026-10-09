@@ -1,5 +1,11 @@
 # @conjurer-rich/skills
 
+## 5.6.1
+
+### Patch Changes
+
+- 75a0481: delegate-status passes comments, threads, reviews and timelines to jq through files (`--slurpfile`), so a PR or issue with more than 128 KB of comments no longer fails with "Argument list too long".
+
 ## 5.6.0
 
 ### Minor Changes
