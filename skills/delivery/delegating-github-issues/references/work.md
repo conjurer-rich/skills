@@ -69,6 +69,8 @@
 10. **Commit.** Write the commit message to `<scratch>/<N>/commit-message.md`: a conventional-commit subject that names the issue (`fix(web): … (#N)`) and the project's co-author trailer. Write the PR body to `<scratch>/<N>/pr-body.md` per the **PR body contract**:
 
     - `Summary` links the issue (`Closes #N`) and names the tier with its measurement (`Tier S: +83/−4, 1 package, no risk path`).
+      Then one view of the change, the smallest that makes it clear: pseudocode, a call tree, a component or file tree, a Mermaid diagram, or a diff sketch of one of those. Keep only the calls, files and states the reader needs; leave the view out when one sentence says it all.
+      Then a merge-danger line: `Door: two-way` when a revert undoes the change, `Door: one-way` when it cannot (a destructive migration, deleted data, a published contract), and `Blast radius:` naming who or what a bad merge would hit (`Blast radius: the invoice page only`).
     - `Acceptance criteria` lists each criterion with the test name that proves it.
     - `TDD evidence` and `Mutation gate` carry what the implementer returned.
     - `Verification` opens with the scope line from `references/tiers.md` (`Verification scope: project` or `default`), then the exact commands and their last lines.
