@@ -32,6 +32,7 @@
 #   delegate-status issue-create --title <t> --body-file <f> [--labels follow-up]
 #   delegate-status pr-create   --head <branch> --title <t> --body-file <f> [--draft] [--base <b>]
 #   delegate-status pr-edit     <pr> [--title <t>] [--body-file <f>]   [options]
+#   delegate-status review-status <pr> --addressed <n>                 [options]
 #   delegate-status to-draft    <pr>                                   [options]
 #   delegate-status merge       <pr> --sha <verified head>             [options]
 #   delegate-status checks      <pr> [--head <sha>] [--wait <s>] [--fail-fast] [--table]
@@ -49,10 +50,11 @@
 #   --label agent-ready      --rank-labels p1,p2      --prefix delegated/
 #   --progress-label in-progress                       --claim-ttl 2700 (seconds)
 #   --answer-label needs-answer                        --blocked-label blocked
+#   --review-label awaiting-review
 #   --max-worktrees 1        --max-open-prs 6          --land off|on
 #   --cache <file>           status and next-action: Pick's skip cache, read and rewritten
-#   --sync-labels            status only: add or remove the derived answer and blocked
-#                            labels to match each issue's classification
+#   --sync-labels            status only: add or remove the derived answer, blocked and
+#                            review labels to match each issue's and PR's classification
 #   --from <file>            next-action only: classify this status output instead of reading GitHub
 #
 # Run it from the main checkout. status (without --sync-labels), next-action,
@@ -88,6 +90,8 @@ PREFIX="delegated/"
 PROGRESS_LABEL="in-progress"
 ANSWER_LABEL="needs-answer"
 BLOCKED_LABEL="blocked"
+REVIEW_LABEL="awaiting-review"
+ADDRESSED=""
 SYNC_LABELS=0
 CLAIM_TTL=2700
 MAX_WORKTREES=1
@@ -129,6 +133,8 @@ while [ $# -gt 0 ]; do
     --progress-label) PROGRESS_LABEL="${2:-}"; shift 2 ;;
     --answer-label) ANSWER_LABEL="${2:-}"; shift 2 ;;
     --blocked-label) BLOCKED_LABEL="${2:-}"; shift 2 ;;
+    --review-label) REVIEW_LABEL="${2:-}"; shift 2 ;;
+    --addressed) ADDRESSED="${2:-}"; shift 2 ;;
     --sync-labels) SYNC_LABELS=1; shift ;;
     --claim-ttl) CLAIM_TTL="${2:-}"; shift 2 ;;
     --max-worktrees) MAX_WORKTREES="${2:-}"; shift 2 ;;
@@ -167,8 +173,8 @@ done
 [ "${#POSITIONAL[@]}" -gt 0 ] || usage
 COMMAND="${POSITIONAL[0]}"
 [ -n "$REPO" ] || die "--repo <owner/repo> is required" 2
-case "$CLAIM_TTL$MAX_WORKTREES$MAX_OPEN_PRS$WAIT$LIMIT$EVERY$INTERVAL$MAX_INTERVAL$TOOL_CALLS" in
-  *[!0-9]*) die "--claim-ttl, --max-worktrees, --max-open-prs, --wait, --limit, --every, --interval, --max-interval and --tool-calls take whole numbers" 2 ;;
+case "$CLAIM_TTL$MAX_WORKTREES$MAX_OPEN_PRS$WAIT$LIMIT$EVERY$INTERVAL$MAX_INTERVAL$TOOL_CALLS$ADDRESSED" in
+  *[!0-9]*) die "--claim-ttl, --max-worktrees, --max-open-prs, --wait, --limit, --every, --interval, --max-interval, --tool-calls and --addressed take whole numbers" 2 ;;
 esac
 case "$LAND" in on|off) ;; *) die "--land takes on or off" 2 ;; esac
 
@@ -201,6 +207,9 @@ def human_reply:
 def pr_norm:
   { number, title, isDraft: (.draft // false), headRefName: .head.ref, headRefOid: .head.sha,
     createdAt: .created_at, labels: [.labels[]? | {name}], mergeable: .mergeable };
+def human_review:
+  (.user.login // "" | endswith("[bot]") | not) and ((.user.type // "") != "Bot")
+  and (.body // "" | contains("<!-- delegator") | not) and .commit_id != null;
 def pr_state:
   if .merged_at != null then "MERGED" elif .state == "open" then "OPEN" else "CLOSED" end;
 def body_blockers:
@@ -625,6 +634,9 @@ query($owner:String!,$repo:String!,$pr:Int!){ repository(owner:$owner,name:$repo
 # Classify one delegated PR (one pr_norm object of a single-PR read, which
 # alone carries mergeability): its claim, what needs an answer (with bodies,
 # under .items), Ready, a merge conflict and the latest Land and Sync markers.
+# It awaits review when it is idle, this session is not working on it, and
+# the human has not approved its head; review_base is the head of the
+# human's last review.
 # A thread is named by its first comment's id, the one `reply` answers.
 pr_json() {
   local pr="$1" number comments threads review_comments reviews timeline result
@@ -635,7 +647,7 @@ pr_json() {
   review_comments="$(list_of "repos/$REPO/pulls/$number/comments?per_page=100" \
     | jq -c 'map({id, body, user: {login: .user.login, type: .user.type}})')"
   reviews="$(list_of "repos/$REPO/pulls/$number/reviews?per_page=100" \
-    | jq -c 'map({id, body, user: {login: .user.login, type: .user.type}})')"
+    | jq -c 'map({id, body, state, commit_id, user: {login: .user.login, type: .user.type}})')"
   timeline="$(list_of "repos/$REPO/issues/$number/timeline?per_page=100" \
     | jq -c '[.[] | select(.event == "ready_for_review" or .event == "committed") | .event]')"
   result="$(jq -nc --slurpfile p "$(json_file "$pr")" --slurpfile c "$(json_file "$comments")" --argjson w "$(winner_of "$comments")" \
@@ -683,7 +695,11 @@ pr_json() {
                   elif $land == "on" and ($p.isDraft | not) and $ready > 0 then "ready"
                   elif $any and ($p.isDraft or $land == "off") then "needs-review"
                   elif $conflicted and $sync != $p.headRefOid then "conflicted"
-                  else "idle" end)')"
+                  else "idle" end)
+      | ([$rv[] | select(human_review)] | last) as $last_review
+      | .review_base = ($last_review.commit_id // null)
+      | .awaiting_review = (.class == "idle" and (.held | not)
+          and ((($last_review.state // "") == "APPROVED" and $last_review.commit_id == $p.headRefOid) | not))')"
   printf '%s\n' "$result"
 }
 
@@ -797,7 +813,7 @@ cmd_status() {
 
   synced=null
   if [ "$SYNC_LABELS" -eq 1 ]; then
-    sync_labels "$issues" "$results"
+    sync_labels "$issues" "$results" "$prs" "$pr_results"
     synced="$SYNCED"
   fi
 
@@ -823,20 +839,24 @@ blockers_unmoved() {
 }
 
 # The derived labels: <answer_label> on every issue waiting on the human,
-# <blocked_label> on every blocked one, and neither anywhere else. Both are
-# recomputed from this pass's classification and never read to decide a
-# state, so a label a human adds or removes by hand is put right here. An
-# issue another session holds is left to that session. Sets $SYNCED to
+# <blocked_label> on every blocked one, <review_label> on every delegated PR
+# awaiting the human's review, and none anywhere else. All are recomputed
+# from this pass's classification and never read to decide a state, so a
+# label a human adds or removes by hand is put right here. An item another
+# session holds is left to that session. Sets $SYNCED to
 # {<label>: {added: [n], removed: [n]}}; call it directly, not in $(...).
 SYNCED="{}"
 sync_labels() {
-  local issues="$1" results="$2" ops op n name created=" "
-  ops="$(jq -nc --argjson i "$issues" --argjson r "$results" --arg a "$ANSWER_LABEL" --arg bl "$BLOCKED_LABEL" '
-    ($i | map({key: (.number | tostring), value: [.labels[].name]}) | from_entries) as $has
-    | [ $r[] | select(.state != "claimed") | .number as $n | ($has[$n | tostring] // []) as $l
-        | ({label: $a, want: (.reason != null)}, {label: $bl, want: ((.blocked_by // []) != [])})
-        | select(. as $x | $x.want != ($l | index($x.label) != null))
-        | {number: $n, label, op: (if .want then "add" else "remove" end)} ]')"
+  local issues="$1" results="$2" prs="$3" pr_results="$4" ops op n name created=" "
+  ops="$(jq -nc --argjson i "$issues" --argjson r "$results" --argjson p "$prs" --argjson pr "$pr_results" \
+      --arg a "$ANSWER_LABEL" --arg bl "$BLOCKED_LABEL" --arg rl "$REVIEW_LABEL" '
+    ($i + $p | map({key: (.number | tostring), value: [.labels[].name]}) | from_entries) as $has
+    | [ ( $r[] | select(.state != "claimed") | .number as $n | ($has[$n | tostring] // []) as $l
+          | ({label: $a, want: (.reason != null)}, {label: $bl, want: ((.blocked_by // []) != [])})
+          | {number: $n, label, want, l: $l} ),
+        ( $pr[] | select(.holder == null) | .number as $n
+          | {number: $n, label: $rl, want: .awaiting_review, l: ($has[$n | tostring] // [])} ) ]
+    | map(select(. as $x | $x.want != ($x.l | index($x.label) != null)) | {number, label, op: (if .want then "add" else "remove" end)})')"
   while IFS= read -r op; do
     [ -n "$op" ] || continue
     n="$(printf '%s' "$op" | jq '.number')"
@@ -847,6 +867,8 @@ sync_labels() {
         *)
           if [ "$name" = "$ANSWER_LABEL" ]; then
             ensure_label "$name" D93F0B "Delegator is waiting on a human reply"
+          elif [ "$name" = "$REVIEW_LABEL" ]; then
+            ensure_label "$name" 0E8A16 "A delegated PR is ready for your review"
           else
             ensure_label "$name" 5319E7 "Waiting on an open issue or PR"
           fi
@@ -857,8 +879,8 @@ sync_labels() {
       remove_label "$n" "$name"
     fi
   done < <(printf '%s' "$ops" | jq -c '.[]')
-  SYNCED="$(jq -nc --argjson o "$ops" --arg a "$ANSWER_LABEL" --arg bl "$BLOCKED_LABEL" '
-    [$a, $bl] | map(. as $l | {key: $l, value: {
+  SYNCED="$(jq -nc --argjson o "$ops" --arg a "$ANSWER_LABEL" --arg bl "$BLOCKED_LABEL" --arg rl "$REVIEW_LABEL" '
+    [$a, $bl, $rl] | map(. as $l | {key: $l, value: {
       added: [$o[] | select(.label == $l and .op == "add") | .number],
       removed: [$o[] | select(.label == $l and .op == "remove") | .number]}}) | from_entries')"
 }
@@ -940,6 +962,34 @@ cmd_pr_edit() {
   [ "${#args[@]}" -gt 0 ] || die "pr-edit takes --title <title> or --body-file <file>" 2
   gh_json api -X PATCH "repos/$REPO/pulls/${POSITIONAL[1]}" "${args[@]}" \
     | jq -c '{item: .number, result: "edited", url: .html_url}'
+}
+
+# After a Review round: one line at the top of the PR body saying the PR is
+# ready for the human again, the round, how many comments it addressed, the
+# head, and a link to the changes since the human's last review. GitHub
+# never notifies the human of the delegator's work, which runs on their own
+# login, so the line is where they see it. A later round replaces the line.
+cmd_review_status() {
+  need_args 2
+  [ -n "$ADDRESSED" ] || die "review-status takes --addressed <n>" 2
+  local n="${POSITIONAL[1]}" pull reviews tmp round
+  pull="$(gh_json api "repos/$REPO/pulls/$n")"
+  reviews="$(list_of "repos/$REPO/pulls/$n/reviews?per_page=100")"
+  tmp="$(mktemp "$JSON_DIR/body.XXXXXX")"
+  jq -nr --slurpfile p "$(json_file "$pull")" --slurpfile rv "$(json_file "$reviews")" --argjson k "$ADDRESSED" "$JQ_DEFS"'
+    $p[0] as $p | $p.head.sha as $head
+    | ([$rv[0][] | select(human_review)] | last | .commit_id // null) as $base
+    | ($p.body // "" | gsub("\r"; "") | split("\n")) as $lines
+    | (([$lines[] | select(contains("<!-- delegator:status ")) | capture("round=(?<r>[0-9]+)").r | tonumber] | max // 0) + 1) as $round
+    | ([$lines[] | select(contains("<!-- delegator:status ") | not)] | join("\n") | sub("^\\s+"; "")) as $rest
+    | ($p.html_url // "" | sub("/pull/[0-9]+$"; "")) as $web
+    | "**Ready for re-review (round \($round)):** addressed \($k) comment\(if $k == 1 then "" else "s" end) in `\($head[0:7])`."
+      + (if $base != null and $base != $head then " [Changes since your last review](\($web)/compare/\($base)...\($head))" else "" end)
+      + " <!-- delegator:status round=\($round) -->"
+      + (if $rest == "" then "" else "\n\n" + $rest end)' > "$tmp"
+  round="$(head -n 1 "$tmp" | sed -n 's/.*delegator:status round=\([0-9]*\).*/\1/p')"
+  gh_json api -X PATCH "repos/$REPO/pulls/$n" -F body=@"$tmp" > /dev/null
+  jq -nc --argjson n "$n" --argjson r "$round" '{item: $n, result: "noted", round: $r}'
 }
 
 # Returns a PR to draft: the only draft-state change the delegator makes.
@@ -1266,6 +1316,7 @@ case "$COMMAND" in
   issue-create) cmd_issue_create ;;
   pr-create) cmd_pr_create ;;
   pr-edit) cmd_pr_edit ;;
+  review-status) cmd_review_status ;;
   to-draft) cmd_to_draft ;;
   merge) cmd_merge ;;
   checks) cmd_checks ;;
