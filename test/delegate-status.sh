@@ -790,6 +790,151 @@ out="$(run status --cache "$CACHE")"
 check_called "issues/61/comments" "the human's reply moves updatedAt, so the cached question is re-read"
 check "an answered question frees the issue on the next pass" "$out" "$(issue 61) | .state == \"free\" and .criteria == \"body\""
 
+# ---------------------------------------------------------------- blocked
+
+# An issue that depends on an open issue or PR is blocked: Pick skips it until
+# every blocker has closed or merged. Blockers come from GitHub's native
+# "blocked by" dependencies and from the body: a `## Dependencies` section or
+# `Blocked by #N` lines. Only the blockers still open are listed.
+blocker() { # number, state, [pull_request json]
+  jq -n --argjson n "$1" --arg s "$2" --argjson pr "${3:-null}" \
+    '{number: $n, title: "Blocker \($n)", state: $s, labels: [], created_at: "2026-09-01T09:00:00Z", updated_at: "2026-09-01T09:00:00Z", body: ""}
+     + (if $pr == null then {} else {pull_request: $pr} end)' > "$FAKE_STATE/issue-$1.json"
+}
+blockers() {
+  blocker 80 open
+  blocker 81 closed
+  blocker 82 closed '{"merged_at": "2026-09-20T09:00:00Z"}'
+  blocker 83 open '{"merged_at": null}'
+}
+CLAIM_OTHER='{"id": 5, "body": "Claimed by delegator session `'"$OTHER"'`.\n<!-- delegator claim: '"$OTHER"' -->", "created_at": "2026-10-02T11:00:00Z", "updated_at": "2026-10-02T11:00:00Z", "user": {"login": "rich"}}'
+CLAIM_OURS='{"id": 5, "body": "Claimed by delegator session `'"$OURS"'`.\n<!-- delegator claim: '"$OURS"' -->", "created_at": "2026-10-02T11:00:00Z", "updated_at": "2026-10-02T11:00:00Z", "user": {"login": "rich"}}'
+
+use status
+blockers
+question_case 71 'Fix it.\n\nBlocked by #80' '[]'
+check "an open blocker blocks the issue" "$(run issue 71 || true)" '.state == "blocked" and .blocked_by == [80]'
+question_case 72 'Fix it.\n\nBlocked by #81' '[]'
+check "a closed blocker does not block" "$(run issue 72 || true)" '.state == "free" and .criteria == "none" and (has("blocked_by") | not)'
+question_case 73 'Fix it.\n\nblocked by #80\nBLOCKED BY #81\n' '[]'
+check "only the open blockers are listed" "$(run issue 73 || true)" '.state == "blocked" and .blocked_by == [80]'
+question_case 74 'Fix it.\n\nBlocked by #82' '[]'
+check "a merged PR does not block" "$(run issue 74 || true)" '.state == "free"'
+question_case 75 'Fix it.\n\nBlocked by PR #83 and #80' '[]'
+check "an open PR blocks, and one line may name several blockers" "$(run issue 75 || true)" '.state == "blocked" and .blocked_by == [80, 83]'
+question_case 76 'Fix it.\n\n## Dependencies\n\n- #81\n- #83 (the API)\n\n## Notes\n\nSee #80 for history.\n' '[]'
+check "a Dependencies section lists blockers, and a mention elsewhere does not" "$(run issue 76 || true)" '.state == "blocked" and .blocked_by == [83]'
+question_case 77 'Fix it. Related to #80, see acme/other#80.' '[]'
+check "an issue with neither source has no blockers" "$(run issue 77 || true)" '.state == "free" and (has("blocked_by") | not)'
+question_case 78 'Fix it.' '[]'
+jq -s '.' "$FAKE_STATE/issue-80.json" > "$FAKE_STATE/blocked-by-78.json"
+check "a native blocked-by dependency blocks" "$(run issue 78 || true)" '.state == "blocked" and .blocked_by == [80]'
+question_case 79 'Fix it.\n\nBlocked by #80' "[$CLAIM_OTHER]"
+check "a live claim on a blocked issue still reads as claimed" "$(run issue 79 || true)" '.state == "claimed" and .holder == "'"$OTHER"'"'
+question_case 69 'Fix it.\n\nBlocked by #80' "[$CLAIM_OURS]"
+check "a held blocked issue names its blockers and no criteria" "$(run issue 69 || true)" '.state == "held" and .blocked_by == [80] and (has("criteria") | not)'
+question_case 70 "$CRITERIA_BODY"'\nBlocked by #80' "[$QUESTION]"
+check "blocked outranks an open question and body criteria" "$(run issue 70 || true)" '.state == "blocked" and (has("reason") | not)'
+check_called "repos/acme/widgets/issues/70/dependencies/blocked_by" "native dependencies are read over REST"
+
+use status
+blockers
+touch "$FAKE_STATE/deps-404"
+question_case 71 'Fix it.\n\nBlocked by #80' '[]'
+check "without the native API, the body still blocks" "$(run issue 71 || true)" '.state == "blocked" and .blocked_by == [80]'
+
+# status: blocked is counted, skipped by Pick, and the native route is asked
+# once per pass when it answers 404.
+use status
+blockers
+touch "$FAKE_STATE/deps-404"
+question_case 71 "$CRITERIA_BODY"'\nBlocked by #80' '[]'
+question_case 72 "$CRITERIA_BODY"'\nBlocked by #83' '[]'
+jq --slurpfile a "$FAKE_STATE/issue-71.json" --slurpfile b "$FAKE_STATE/issue-72.json" \
+  '[$a[0] + {labels: [{name: "agent-ready"}, {name: "p1"}], created_at: "2026-08-01T00:00:00Z"}, $b[0]] + .' \
+  "$FAKE_STATE/issues.json" > "$FAKE_STATE/issues.tmp" && mv "$FAKE_STATE/issues.tmp" "$FAKE_STATE/issues.json"
+CACHE="$FAKE_STATE/pick-cache.json"
+out="$(run status --cache "$CACHE")"
+check "status classifies a blocked issue" "$out" "$(issue 71) | .state == \"blocked\" and .blocked_by == [80]"
+check "Pick skips a blocked issue" "$out" '.pick.number == 31'
+check "counts tallies blocked issues" "$out" '.counts.blocked == 2'
+if [ "$(grep -c "dependencies/blocked_by" "$FAKE_STATE/calls.log")" -eq 1 ]; then
+  pass "a 404 from the native route is asked once per pass"
+else
+  fail "a 404 from the native route is asked once per pass"
+fi
+check "a blocked issue is cached with its blockers" "$(cat "$CACHE")" \
+  'any(.[]; .number == 71 and .reason == "blocked" and .blocked_by == [80])'
+
+: > "$FAKE_STATE/calls.log"
+out="$(run status --cache "$CACHE")"
+check_not_called "issues/71/comments" "a blocked issue whose blockers have not moved is not re-read"
+check "a cached blocked issue keeps its blockers" "$out" "$(issue 71) | .state == \"blocked\" and .blocked_by == [80] and .cached == true"
+
+jq '.state = "closed" | .updated_at = "2026-10-02T11:30:00Z"' "$FAKE_STATE/issue-80.json" > "$FAKE_STATE/i.tmp" && mv "$FAKE_STATE/i.tmp" "$FAKE_STATE/issue-80.json"
+: > "$FAKE_STATE/calls.log"
+out="$(run status --cache "$CACHE")"
+check_called "issues/71/comments" "a blocker closing re-checks the issue though its own updatedAt did not move"
+check "the issue frees itself once its blocker closes" "$out" "$(issue 71) | .state == \"free\" and .criteria == \"body\""
+check "a freed blocked issue is picked in its turn" "$out" '.pick.number == 71'
+
+# ---------------------------------------------------------------- derived labels
+
+# With --sync-labels, status recomputes needs-answer (waiting on the human)
+# and blocked from the classification on every pass, and never reads either
+# label to decide a state.
+use status
+blockers
+question_case 71 'Fix it.\n\nBlocked by #80' '[]'
+jq --slurpfile a "$FAKE_STATE/issue-71.json" '. + $a' "$FAKE_STATE/issues.json" > "$FAKE_STATE/issues.tmp" && mv "$FAKE_STATE/issues.tmp" "$FAKE_STATE/issues.json"
+# 31 is free but a human put both labels on it; 35 already carries
+# needs-answer; 36 is another session's; 32 and 71 lack theirs.
+jq 'map(if .number == 31 then .labels += [{name: "needs-answer"}, {name: "blocked"}]
+        elif .number == 35 or .number == 36 then .labels += [{name: "needs-answer"}] else . end)' \
+  "$FAKE_STATE/issues.json" > "$FAKE_STATE/issues.tmp" && mv "$FAKE_STATE/issues.tmp" "$FAKE_STATE/issues.json"
+out="$(run status --sync-labels)"
+check "the labels never decide state: a free issue carrying them stays free" "$out" "$(issue 31) | .state == \"free\""
+check "a waiting issue without needs-answer gets it" "$out" '.labels_synced["needs-answer"].added == [32]'
+check_called "-X POST repos/acme/widgets/issues/32/labels -f labels[]=needs-answer" "needs-answer is added over REST"
+check_not_called "issues/35/labels" "an issue already labelled correctly is not written"
+check_not_called "issues/36/labels" "another session's claimed issue is left alone"
+check "a free issue loses needs-answer, even one a human added" "$out" '.labels_synced["needs-answer"].removed == [31]'
+check_called "-X DELETE repos/acme/widgets/issues/31/labels/needs-answer" "needs-answer is removed over REST"
+check "a blocked issue gets the blocked label and a free one loses it" "$out" \
+  '.labels_synced.blocked == {"added": [71], "removed": [31]}'
+check_not_called "-X POST repos/acme/widgets/issues/71/labels -f labels[]=needs-answer" "a blocked issue is not also asking the human"
+if [ "$(grep -c -- "-X POST repos/acme/widgets/labels -f name=needs-answer" "$FAKE_STATE/calls.log")" -eq 1 ]; then
+  pass "a missing needs-answer label is created once"
+else
+  fail "a missing needs-answer label is created once"
+fi
+check_called "-X POST repos/acme/widgets/labels -f name=blocked" "a missing blocked label is created"
+: > "$FAKE_STATE/calls.log"
+run status --sync-labels > /dev/null
+check_not_called "-X POST repos/acme/widgets/labels " "a label that exists is not created again"
+
+use status
+out="$(run status --sync-labels --answer-label waiting-on-you --blocked-label on-hold)"
+check "the label names are parameters" "$out" '.labels_synced | has("waiting-on-you") and has("on-hold")'
+check_called "issues/32/labels -f labels[]=waiting-on-you" "--answer-label names the label written"
+
+use status
+check "status without --sync-labels reports no label sync" "$(run status)" 'has("labels_synced") | not'
+if grep -E -- '-X (POST|PATCH|DELETE)' "$FAKE_STATE/calls.log" > /dev/null; then
+  fail "status without --sync-labels writes nothing"
+else
+  pass "status without --sync-labels writes nothing"
+fi
+
+# The derived labels are the delegator's own writes, so the Watch digest
+# ignores them: syncing them must not make the next pass look changed.
+use status
+DIGEST="$FAKE_STATE/digest.json"
+run watch-digest --state "$DIGEST" --record > /dev/null
+jq 'map(if .number == 32 then .labels += [{name: "needs-answer"}, {name: "blocked"}] else . end)' \
+  "$FAKE_STATE/issues.json" > "$FAKE_STATE/issues.tmp" && mv "$FAKE_STATE/issues.tmp" "$FAKE_STATE/issues.json"
+check "the digest ignores the derived labels" "$(run watch-digest --state "$DIGEST" || true)" '.changed == false'
+
 # ---------------------------------------------------------------- Pick skip cache
 
 use status

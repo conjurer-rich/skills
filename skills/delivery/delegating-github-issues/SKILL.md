@@ -5,7 +5,7 @@ description: Take a triaged GitHub issue end-to-end to a reviewable pull request
 
 # Delegating GitHub issues
 
-You are the delegator. You do not write production code. You decide eligibility, budget, claims, acceptance criteria, the size check and tier, and deferrals, and you write the PR body and commit message files. Bootstrap, implementation, the independent checks, the walkthrough and evidence pushes are subagents' jobs under the **Hand-back contract**; you read their verdicts, not their output. Commit, push, PR creation and the CI wait are fixed commands you run yourself, output to a file. You never enter a worktree. A human reviews. With `land` on, the delegator also merges, but only a PR the human marked Ready for review, only through **Land**.
+You are the delegator. You do not write production code. You decide eligibility, budget, claims, acceptance criteria, the size check and tier, and deferrals, and write the PR body and commit message files. Subagents bootstrap, implement, run the checks and the walkthrough, and push evidence under the **Hand-back contract**; you read their verdicts, not their output. You run commit, push, PR creation and the CI wait yourself, output to a file. A human reviews. With `land` on, the delegator also merges, but only a PR the human marked Ready for review, only through **Land**.
 
 ## Parameters
 
@@ -15,7 +15,7 @@ The calling command supplies these; defaults apply when it does not, and keep th
 |---|---|---|
 | `label` | `agent-ready` | Only issues with this label are eligible |
 | `rank_labels` | `p1`, `p2` | Higher rank first; unranked last |
-| `max_worktrees` | 1 | Active `<branch_prefix>` worktrees. Parallelism comes from running several `/loop /delegate` sessions, each claiming its own issue; it does not come from one session working several issues. |
+| `max_worktrees` | 1 | Active `<branch_prefix>` worktrees. |
 | `max_open_prs` | 6 | Open PRs in the repository, all authors |
 | `branch_prefix` | `delegated/` | Prefix of every delegated branch |
 | `pre_pr_gate` | the project's gate, else `mutation-testing`'s `pr-readiness.md` | The implementer runs it before the PR |
@@ -35,6 +35,7 @@ The calling command supplies these; defaults apply when it does not, and keep th
 | `land` | off | When on, Work opens drafts, and **Land** may merge a PR the human marked Ready for review |
 | `claim_ttl` | 45 minutes | A claim with no heartbeat for this long lapses, and another session may take the item |
 | `progress_label` | `in-progress` | Carried by an item while a session holds a live claim on it, so a human sees an agent is on it |
+| `answer_label`, `blocked_label` | `needs-answer`, `blocked` | Derived: waiting on the human; blocked |
 
 A **Verification scope** section in the project's delegation file replaces the `pre_pr_gate`'s complete-suite rule (`references/tiers.md`).
 
@@ -52,7 +53,7 @@ Several delegator sessions can run at once through one `gh` login, so a session 
 
 **`delegate-status`.** `scripts/delegate-status`, in this skill's directory, runs the claims and every fixed query and prints one JSON line. Run it from the main checkout with `--repo <owner>/<repo> --session <session>` and each parameter the project changed (`--label`, `--rank-labels`, `--prefix`, `--progress-label`, `--claim-ttl <seconds>`, `--max-worktrees`, `--max-open-prs`, `--land on`). Keep claim ids in `claims.json` in the run's scratch directory. On a non-zero exit, report its last line and stop.
 
-- **Claim.** `claim <n>` prints `won` with the `id` (and `open_pr` when a delegated PR is open for the issue). When another session holds a live claim, it posts nothing, prints `lost` with the `holder` and exits 4; in a race, the loser deletes its own claim comment and exits 4. On exit 4, stop work on the item, never retry or take over; a human-started entry point says `#<n> is claimed by delegator session <holder>`. It reuses this session's live claim, so a session never claims an item twice. The winner adds the label, creating it if missing; Never `--force`.
+- **Claim.** `claim <n>` prints `won` with the `id` (and `open_pr` when a delegated PR is open for the issue). When another session holds a live claim, it posts nothing, prints `lost` with the `holder` and exits 4; in a race, the loser deletes its own claim comment and exits 4. On exit 4, stop work on the item, never retry or take over. It reuses this session's live claim, so a session never claims an item twice. The winner adds the label, creating it if missing; Never `--force`.
 - **Heartbeat.** After a won claim, run `heartbeat <n> <id>` as a background task until you release. It renews every 15 minutes; when it exits 4 the claim is lost, so stop work on the item.
 - **Confirm.** `confirm <n> <id>` prints `live` or `lost`. Confirm before any push, PR creation or merge. On `lost`, write nothing more to the item, report it lost to the holder, and leave staged work in the worktree.
 - **Renew.** `renew <n> <id>` confirms, then rewrites the claim's first line to end `renewed <UTC time>`. A lapsed claim keeps its low id, so renewing it blindly would take the item back from the session that claimed it since: a lapsed claim prints `lost` and nothing is written. Renew in place of Confirm before every push and before a hand-off; without a heartbeat, also before each long step (Work steps 6–9, Review step 5, Land steps 5 and 7, Sync steps 3 and 4).
@@ -61,6 +62,8 @@ Several delegator sessions can run at once through one `gh` login, so a session 
 A Land waiting on a background task has not stopped: its claim, heartbeat and label hold. Review steps inside Land use Land's claim. The human frees a claim by deleting it.
 
 **Stale label.** `stale_label` marks an item that carries `<progress_label>` with no live claim, left by a crashed session. Pick and Watch remove it with `clear-label <n>`, which refuses while a claim is live, then treat the item as free.
+
+**Derived labels.** Only `status --sync-labels` writes `<answer_label>` and `<blocked_label>`; a hand edit decides nothing.
 
 ## Stop rule
 
@@ -122,7 +125,7 @@ End with the project's PR footer. `delegate-status cost-note` then appends the c
 - `git stash`, `git commit --amend` on a pushed branch, or `git branch -D`.
 - Re-run, or hand to another agent, a command that a subagent's own permission system refused: a refusal is an answer, not an obstacle.
 - Put a model identifier in anything pushed: commit messages, PR titles or bodies, comments or code.
-- Put `<progress_label>` on an item without holding a live claim on it, or leave it on one you released.
+- Put `<progress_label>` on an item without holding a live claim on it, or leave it on one you released. Set `<answer_label>` or `<blocked_label>` yourself, or read them as state.
 - Run the full test suite locally unless `local_full_suite` is on or the diff touches a `full_suite_paths` glob, and never at the repository root in the foreground or to check a single change.
 - Point a browser at a deployed preview URL.
 - Continue after an ambiguous review comment without the human's answer.

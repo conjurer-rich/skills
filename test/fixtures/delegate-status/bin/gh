@@ -7,6 +7,7 @@
 #
 # A `ccr-404` file in the scenario makes the /ccr/ routes answer 404, as
 # github.com does for the CLI, so the GraphQL fallbacks can be tested. A
+# `deps-404` file does the same for the native issue-dependencies route. A
 # `<fixture>.next` file replaces its fixture after the fixture is first read,
 # so a poll sees a change.
 #
@@ -101,6 +102,9 @@ if [ "${args[0]:-}" = api ]; then
       fi
       not_found ;;
     POST\ repos/*/labels)
+      [ -f "$state/labels.json" ] || echo '[]' > "$state/labels.json"
+      jq --arg n "$(field name)" '. + [{name: $n}]' "$state/labels.json" > "$state/labels.tmp"
+      mv "$state/labels.tmp" "$state/labels.json"
       jq -n --arg n "$(field name)" '{name: $n}'; exit 0 ;;
     GET\ repos/*/pulls)
       head="$(query_param head)"
@@ -181,6 +185,10 @@ if [ "${args[0]:-}" = api ]; then
       [ -n "$f" ] || not_found
       n="$(basename "$f" .json)"; n="${n#comments-}"
       jq --argjson id "$id" --arg n "$n" '.[] | select(.id == $id) | .issue_url = "https://api.github.com/repos/acme/widgets/issues/\($n)"' "$f"; exit 0 ;;
+    GET\ repos/*/issues/*/dependencies/blocked_by)
+      [ -f "$state/deps-404" ] && not_found
+      n="${path%/dependencies/blocked_by}"; n="${n##*/}"
+      serve "blocked-by-$n.json"; exit 0 ;;
     GET\ repos/*/issues/*/comments)
       n="${path%/comments}"; n="${n##*/}"
       serve "comments-$n.json"; exit 0 ;;

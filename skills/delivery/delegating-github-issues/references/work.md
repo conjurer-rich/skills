@@ -1,6 +1,6 @@
 # Work `#N`
 
-1. **Eligibility.** `delegate-status issue N`. If it prints `not-eligible`, the issue is closed or lacks the label: reply in chat "Issue #N is not labelled `<label>`; add the label to make it eligible" and stop. Keep its output for step 3, and read the title and body with `gh api repos/<owner>/<repo>/issues/N --jq '{title, body}'`.
+1. **Eligibility.** `delegate-status issue N`. If it prints `not-eligible`, the issue is closed or lacks the label: reply in chat "Issue #N is not labelled `<label>`; add the label to make it eligible" and stop. If it prints `blocked`, reply in chat "Issue #N is blocked by #<each `blocked_by` entry>; it frees itself once they close or merge", post nothing, and stop; a `held` issue with `blocked_by` is the same, after releasing the claim with `--delete`. Keep its output for step 3, and read the title and body with `gh api repos/<owner>/<repo>/issues/N --jq '{title, body}'`.
 2. **Budget.** Run `delegate-status budget` (Pick's status already holds it). Reclaim finished worktrees first, then count.
 
    **Reclaim.** Reclaim each `worktrees.reclaim` entry as `references/reclaim.md` says, and name each `worktrees.keep` entry in the report.
@@ -9,7 +9,7 @@
 
    > Delegation paused: <k> delegated worktrees active (limit <max_worktrees>) and <m> open PRs (limit <max_open_prs>). Retry when one closes.
 
-   **Claim.** `delegate-status claim N` (**Claims**). If it exits 4 (`lost`), another session holds the issue: stop. If it prints `won` with an `open_pr`, a session opened a PR from a `<branch_prefix>N-` branch and released its claim since Pick looked: once claimed an open PR from a `<branch_prefix>N-` branch now exists, so release with `--delete` and stop. When Pick started this Work, return to Pick's next candidate instead of stopping. Every stop from here on releases the claim. Once the claim is yours, set the **Session title** to `#N <issue title>`. Then start its heartbeat and write `item_start_calls` to `run-state.json`.
+   **Claim.** `delegate-status claim N` (**Claims**). If it exits 4 (`lost`), another session holds the issue: stop; a human-started Work says `#<n> is claimed by delegator session <holder>`. If it prints `won` with an `open_pr`, a session opened a PR from a `<branch_prefix>N-` branch and released its claim since Pick looked: once claimed an open PR from a `<branch_prefix>N-` branch now exists, so release with `--delete` and stop. When Pick started this Work, return to Pick's next candidate instead of stopping. Every stop from here on releases the claim. Once the claim is yours, set the **Session title** to `#N <issue title>`. Then start its heartbeat and write `item_start_calls` to `run-state.json`.
 
 3. **Acceptance criteria.** Step 1's output says which case holds, the first that applies in this order (a `held` issue carries the same `criteria` or `reason`):
    - `waiting-on-human` with `question-unanswered`: a delegator question (it starts with `**Question before delegation**`) has no later comment from the human: one that contains neither `<!-- delegator` nor the Claude Code footer and whose author is not a bot. An open question wins over any criteria, in the body or confirmed, because the delegator is waiting on its answer. Only a reply answers it: an edit to the issue body does not, since REST gives no time for the last body edit.
