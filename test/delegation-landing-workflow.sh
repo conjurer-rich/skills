@@ -537,6 +537,17 @@ require_script '<!-- delegator sync: conflict ' "the script reads the sync marke
 require_text 'When step 4 returned `conflict`, the line `<!-- delegator sync: conflict <sha> -->`' "a Land bail-out on a conflict stops Sync retrying it"
 require_script 'mergeable: .mergeable' "the script reads mergeability"
 
+# Questions shape the questions after them, so a design conversation needs
+# rounds, not one question per pass; a human in the session answers them in
+# minutes, an issue in hours. Whatever the channel, the outcome lands on the
+# issue, because state comes from GitHub alone.
+require_text 'load `grilling` and run it in the chat' "a human-started Work grills in chat"
+require_text 'A Work that **Pick** or **Run** started never grills in the chat' "an unattended Work keeps its questions on the issue"
+require_text 'every question that depends on no unanswered one, each with your recommended answer' "a question comment carries a whole round with recommendations"
+require_text 'post the decisions and the derived criteria' "chat decisions land on the issue"
+# Confirmed criteria move into the body so they sit at the top of the issue.
+require_text 'delegate-status promote-criteria N <comment id>' "confirmed criteria are promoted into the body"
+require_script 'cmd_promote_criteria' "the script promotes criteria"
 # Progressive disclosure. Every mode loaded the whole 35-50 KB skill, a quiet
 # Watch pass included. The core keeps what every mode needs; each entry point
 # lives in its own reference file, which the core's index names.

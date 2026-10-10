@@ -212,6 +212,11 @@ if [ "${args[0]:-}" = api ]; then
         'map(if .id == $id then .body = $body | .updated_at = $at else . end)' "$f" > "$f.tmp"
       mv "$f.tmp" "$f"
       jq -n --argjson id "$id" '{id: $id}'; exit 0 ;;
+    PATCH\ repos/*/issues/*)
+      n="${path##*/}"
+      jq --arg b "$(field body)" '.body = $b' "$state/issue-$n.json" > "$state/issue-$n.tmp"
+      mv "$state/issue-$n.tmp" "$state/issue-$n.json"
+      jq -n --argjson n "$n" '{number: $n, html_url: "https://github.com/acme/widgets/issues/\($n)"}'; exit 0 ;;
     DELETE\ repos/*/issues/comments/*)
       id="${path##*/}"
       f="$(comments_file_holding "$id")"
