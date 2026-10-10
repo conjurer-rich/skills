@@ -48,12 +48,16 @@
 #                            renew, heartbeat, release and cost-note
 #   --label agent-ready      --rank-labels p1,p2      --prefix delegated/
 #   --progress-label in-progress                       --claim-ttl 2700 (seconds)
+#   --answer-label needs-answer                        --blocked-label blocked
 #   --max-worktrees 1        --max-open-prs 6          --land off|on
 #   --cache <file>           status and next-action: Pick's skip cache, read and rewritten
+#   --sync-labels            status only: add or remove the derived answer and blocked
+#                            labels to match each issue's classification
 #   --from <file>            next-action only: classify this status output instead of reading GitHub
 #
-# Run it from the main checkout. status, next-action, budget, issue, pr, checks,
-# watch-digest, cost and merged-sizes write nothing to GitHub. Exit status:
+# Run it from the main checkout. status (without --sync-labels), next-action,
+# budget, issue, pr, checks, watch-digest, cost and merged-sizes write nothing
+# to GitHub. Exit status:
 # 0 done, 1 a gh or git call failed, 2 usage, 3 refused (the comment is
 # another session's, or a live claim backs the label), 4 another session
 # holds a live claim on the item (claim, heartbeat): stop, never retry.
@@ -82,6 +86,9 @@ LABEL="agent-ready"
 RANK_LABELS="p1,p2"
 PREFIX="delegated/"
 PROGRESS_LABEL="in-progress"
+ANSWER_LABEL="needs-answer"
+BLOCKED_LABEL="blocked"
+SYNC_LABELS=0
 CLAIM_TTL=2700
 MAX_WORKTREES=1
 MAX_OPEN_PRS=6
@@ -120,6 +127,9 @@ while [ $# -gt 0 ]; do
     --rank-labels) RANK_LABELS="${2:-}"; shift 2 ;;
     --prefix) PREFIX="${2:-}"; shift 2 ;;
     --progress-label) PROGRESS_LABEL="${2:-}"; shift 2 ;;
+    --answer-label) ANSWER_LABEL="${2:-}"; shift 2 ;;
+    --blocked-label) BLOCKED_LABEL="${2:-}"; shift 2 ;;
+    --sync-labels) SYNC_LABELS=1; shift ;;
     --claim-ttl) CLAIM_TTL="${2:-}"; shift 2 ;;
     --max-worktrees) MAX_WORKTREES="${2:-}"; shift 2 ;;
     --max-open-prs) MAX_OPEN_PRS="${2:-}"; shift 2 ;;
@@ -164,7 +174,9 @@ case "$LAND" in on|off) ;; *) die "--land takes on or off" 2 ;; esac
 
 NOW="${DELEGATE_STATUS_NOW:-$(date +%s)}"
 NOW_ISO="$(jq -nr --argjson n "$NOW" '$n | todate')"
-LABEL_PATH="$(jq -nr --arg l "$PROGRESS_LABEL" '$l | @uri')"
+uri() {
+  jq -nr --arg v "$1" '$v | @uri'
+}
 
 # Shared jq definitions. A claim is live while it was updated within the TTL;
 # the live claim with the lowest comment id wins. A comment needs an answer
@@ -191,6 +203,14 @@ def pr_norm:
     createdAt: .created_at, labels: [.labels[]? | {name}], mergeable: .mergeable };
 def pr_state:
   if .merged_at != null then "MERGED" elif .state == "open" then "OPEN" else "CLOSED" end;
+def body_blockers:
+  (.body // "" | gsub("\r"; "") | split("\n")) as $lines
+  | [ foreach $lines[] as $l ({in: false, line: null};
+        if ($l | test("^ {0,3}#{1,6}\\s")) then {in: ($l | test("^ {0,3}#{1,6}\\s+dependencies\\s*#*\\s*$"; "i")), line: null}
+        else .line = (if .in then $l else null end) end;
+        .line // empty),
+      ($lines[] | select(test("blocked by"; "i")) | sub("^.*?blocked by"; ""; "i")) ]
+  | [.[] | scan("(?<![\\w/&])#([0-9]+)\\b") | .[0] | tonumber] | unique;
 def issue_norm:
   { number, title, labels: [.labels[]? | {name}], createdAt: .created_at,
     updatedAt: .updated_at, body, state: (.state | ascii_upcase) };
@@ -269,21 +289,24 @@ ttl_text() {
   fi
 }
 
-# Remove the progress label; a label that is already gone is not an error.
+# Remove a label (the progress label by default) from item <n>; a label that
+# is already gone is not an error.
 remove_label() {
-  local err
-  if ! err="$(gh api -X DELETE "repos/$REPO/issues/$1/labels/$LABEL_PATH" 2>&1 > /dev/null)"; then
-    case "$err" in *404*) ;; *) die "removing $PROGRESS_LABEL from #$1 failed: $err" ;; esac
+  local name="${2:-$PROGRESS_LABEL}" err
+  if ! err="$(gh api -X DELETE "repos/$REPO/issues/$1/labels/$(uri "$name")" 2>&1 > /dev/null)"; then
+    case "$err" in *404*) ;; *) die "removing $name from #$1 failed: $err" ;; esac
   fi
 }
 
+# Create a label (the progress label by default) when the repository lacks it.
 ensure_label() {
-  if gh_try api "repos/$REPO/labels/$LABEL_PATH" > /dev/null; then
+  local name="${1:-$PROGRESS_LABEL}" color="${2:-FBCA04}" description="${3:-A delegator session is working on this}"
+  if gh_try api "repos/$REPO/labels/$(uri "$name")" > /dev/null; then
     return
   fi
-  case "$GH_ERR" in *404*) ;; *) die "reading label $PROGRESS_LABEL failed: $GH_ERR" ;; esac
-  gh api -X POST "repos/$REPO/labels" -f name="$PROGRESS_LABEL" -f color=FBCA04 \
-    -f description='A delegator session is working on this' > /dev/null || die "creating label $PROGRESS_LABEL failed"
+  case "$GH_ERR" in *404*) ;; *) die "reading label $name failed: $GH_ERR" ;; esac
+  gh api -X POST "repos/$REPO/labels" -f name="$name" -f color="$color" \
+    -f description="$description" > /dev/null || die "creating label $name failed"
 }
 
 # Every open PR in the repository, all authors, in the shape the classifiers read.
@@ -500,25 +523,70 @@ worktrees_json() {
   jq -nc --argjson r "$reclaim" --argjson k "$keep" '{reclaim: $r, keep: $k}'
 }
 
-# Classify one issue from its comments: held, claimed, or free / waiting on
-# the human, with how its acceptance criteria stand. An open delegator
-# question comes first: the delegator is waiting on its answer whatever
+# Every issue or PR item <n> depends on, as [{ref, path, open, updatedAt}]
+# in $BLOCKERS: GitHub's native "blocked by" dependencies, then the `#N`
+# references of a `## Dependencies` section or a `Blocked by #N` line in the
+# body. `ref` is the number, or owner/repo#n for another repository. A merged
+# PR is closed. Where the native route answers 404 it is not asked again this
+# run. Call it directly, not in $(...), or the variables stay in the subshell.
+NATIVE_DEPS=unknown
+BLOCKERS="[]"
+BLOCKER_SEEN="{}"
+blockers_of() {
+  local issue="$1" n native="[]" refs ref found="[]" seen
+  n="$(printf '%s' "$issue" | jq '.number')"
+  if [ "$NATIVE_DEPS" != no ]; then
+    if gh_try api --paginate "repos/$REPO/issues/$n/dependencies/blocked_by"; then
+      NATIVE_DEPS=yes
+      native="$(printf '%s' "$GH_OUT" | jq -sc --arg r "$REPO" 'add // [] | map(
+        ((.repository_url // "" | capture("repos/(?<r>[^/]+/[^/]+)$").r) // $r) as $repo
+        | {ref: (if $repo == $r then .number else "\($repo)#\(.number)" end), path: "repos/\($repo)/issues/\(.number)",
+           open: (.state == "open"), updatedAt: .updated_at})')"
+    else
+      case "$GH_ERR" in *404*) NATIVE_DEPS=no ;; *) die "reading the dependencies of #$n failed: $GH_ERR" ;; esac
+    fi
+  fi
+  refs="$(printf '%s' "$issue" | jq -r --argjson nat "$native" "$JQ_DEFS"'.number as $n | [body_blockers[] | select(. != $n)] - [$nat[].ref] | .[]')"
+  for ref in $refs; do
+    # Each blocker is read once per run, however many issues name it.
+    seen="$(printf '%s' "$BLOCKER_SEEN" | jq -c --arg r "$ref" '.[$r] // "unread"')"
+    if [ "$seen" = '"unread"' ]; then
+      if gh_try api "repos/$REPO/issues/$ref"; then
+        seen="$(printf '%s' "$GH_OUT" | jq -c --arg p "repos/$REPO/issues/$ref" '{ref: .number, path: $p, open: (.state == "open"), updatedAt: .updated_at}')"
+      else
+        # A reference to an issue that does not exist blocks nothing.
+        case "$GH_ERR" in *404*|*410*) seen=false ;; *) die "reading blocker #$ref of #$n failed: $GH_ERR" ;; esac
+      fi
+      BLOCKER_SEEN="$(printf '%s' "$BLOCKER_SEEN" | jq -c --arg r "$ref" --argjson b "$seen" '.[$r] = $b')"
+    fi
+    found="$(jq -c --argjson b "$seen" 'if $b == false then . else . + [$b] end' <<< "$found")"
+  done
+  BLOCKERS="$(jq -nc --argjson a "$native" --argjson b "$found" '$a + $b')"
+}
+
+# Classify one issue from its comments and its blockers (blockers_of): held,
+# claimed, blocked, or free / waiting on the human, with how its acceptance
+# criteria stand. A live claim comes first; then an open blocker, so an issue
+# stuck on a dependency is not also asking the human for anything; then an
+# open delegator question: the delegator is waiting on its answer whatever
 # criteria the body or a derived comment holds. Only a human comment after
 # the question answers it; an edit to the body does not (REST exposes no
 # time for the last body edit).
 issue_from_comments() {
-  local issue="$1" comments="$2" login="$3" winner derived reactions confirmed=false
+  local issue="$1" comments="$2" login="$3" blockers="${4:-[]}" winner derived reactions confirmed=false
   winner="$(winner_of "$comments")"
   derived="$(printf '%s' "$comments" | jq '[.[] | select(.body // "" | startswith("**Acceptance criteria (derived by the delegator"))] | last | .id // null')"
   if [ "$derived" != null ] \
+    && ! printf '%s' "$blockers" | jq -e 'any(.[]; .open)' > /dev/null \
     && ! printf '%s' "$issue" | jq -e '.body // "" | gsub("\r"; "")
       | test("(^|\n) {0,3}#{1,6}[^\n]*acceptance criteria[^\n]*\n(\\s*\n)*\\s*([-*+]|[0-9]+[.)])\\s"; "i")' > /dev/null; then
     reactions="$(gh_json api --paginate "repos/$REPO/issues/comments/$derived/reactions" | jq -s 'add // []')"
     confirmed="$(printf '%s' "$reactions" | jq --arg l "$login" 'any(.[]; .content == "+1" and .user.login == $l)')"
   fi
   jq -nc --slurpfile i "$(json_file "$issue")" --slurpfile c "$(json_file "$comments")" --argjson w "$winner" --arg s "$SESSION" \
-    --arg pl "$PROGRESS_LABEL" --argjson derived "$derived" --argjson confirmed "$confirmed" "$JQ_DEFS"'
+    --arg pl "$PROGRESS_LABEL" --argjson derived "$derived" --argjson confirmed "$confirmed" --argjson b "$blockers" "$JQ_DEFS"'
     $i[0] as $i | $c[0] as $c
+    | [$b[] | select(.open) | .ref] as $open_blockers
     | ($i.body // "" | gsub("\r"; "")
       | test("(^|\n) {0,3}#{1,6}[^\n]*acceptance criteria[^\n]*\n(\\s*\n)*\\s*([-*+]|[0-9]+[.)])\\s"; "i")) as $in_body
     | ([$c | to_entries[] | select(.value.body // "" | startswith("**Question before delegation**")) | .key] | last) as $q
@@ -526,7 +594,8 @@ issue_from_comments() {
        else ($c[$q + 1:] | any(.[]; human_reply)) | not end) as $question_open
     | { number: $i.number, title: $i.title,
         stale_label: ($w == null and any($i.labels[]; .name == $pl)) }
-    | (if $question_open then {state: "waiting-on-human", reason: "question-unanswered"}
+    | (if $open_blockers != [] then {state: "blocked", blocked_by: $open_blockers}
+       elif $question_open then {state: "waiting-on-human", reason: "question-unanswered"}
        elif $in_body then {state: "free", criteria: "body"}
        elif $derived != null and $confirmed then {state: "free", criteria: "confirmed"}
        elif $derived != null then {state: "waiting-on-human", reason: "criteria-unconfirmed"}
@@ -646,7 +715,8 @@ cmd_issue() {
     printf '%s' "$issue" | jq -c --argjson pr "$pr" '{number, title, eligible: true, state: "delegated", pr: $pr, stale_label: false}'
     return
   fi
-  issue_from_comments "$issue" "$(comments_of "${POSITIONAL[1]}")" "$(gh_json api user | jq -r '.login')" \
+  blockers_of "$issue"
+  issue_from_comments "$issue" "$(comments_of "${POSITIONAL[1]}")" "$(gh_json api user | jq -r '.login')" "$BLOCKERS" \
     | jq -c '{number, title, eligible: true} + .'
 }
 
@@ -659,7 +729,7 @@ cmd_pr() {
 
 cmd_status() {
   local worktrees prs issues login cache="[]" new_cache="[]" results="[]" pr_results="[]"
-  local issue number cached result pr comments budget
+  local issue number cached result pr comments budget synced
   worktrees="$(worktrees_json)"
   prs="$(open_prs)"
   issues="$(list_of "repos/$REPO/issues?state=open&per_page=100&labels=$(jq -nr --arg l "$LABEL" '$l | @uri')" \
@@ -685,17 +755,26 @@ cmd_status() {
           elif ($i.updatedAt | fromdateiso8601) > (.updatedAt | fromdateiso8601) then null
           elif .reason == "claimed" and ($now - (.checkedAt | fromdateiso8601)) >= $ttl then null
           else . end')"
+      # A blocked issue frees itself when a blocker closes, which does not
+      # move the issue's own updatedAt: re-read it when any blocker moved.
+      if [ "$cached" != null ] && [ "$(printf '%s' "$cached" | jq -r '.reason')" = blocked ] && ! blockers_unmoved "$cached"; then
+        cached=null
+      fi
       if [ "$cached" != null ]; then
         result="$(jq -nc --argjson i "$issue" --argjson c "$cached" '
           {number: $i.number, title: $i.title, cached: true, stale_label: false}
           + if $c.reason == "claimed" then {state: "claimed", holder: $c.holder}
+            elif $c.reason == "blocked" then {state: "blocked", blocked_by: $c.blocked_by}
             else {state: "waiting-on-human", reason: $c.detail} end')"
         new_cache="$(jq -c --argjson c "$cached" '. + [$c]' <<< "$new_cache")"
       else
         comments="$(comments_of "$number")"
-        result="$(issue_from_comments "$issue" "$comments" "$login")"
-        new_cache="$(jq -c --argjson i "$issue" --argjson r "$result" --arg at "$NOW_ISO" '
+        blockers_of "$issue"
+        result="$(issue_from_comments "$issue" "$comments" "$login" "$BLOCKERS")"
+        new_cache="$(jq -c --argjson i "$issue" --argjson r "$result" --argjson b "$BLOCKERS" --arg at "$NOW_ISO" '
           if $r.state == "claimed" then . + [{number: $i.number, reason: "claimed", holder: $r.holder, updatedAt: $i.updatedAt, checkedAt: $at}]
+          elif $r.state == "blocked" then . + [{number: $i.number, reason: "blocked", blocked_by: $r.blocked_by,
+            blockers: [$b[] | {path, updatedAt}], updatedAt: $i.updatedAt, checkedAt: $at}]
           elif $r.state == "waiting-on-human" and $r.reason != "criteria-unconfirmed" then . + [{number: $i.number, reason: "waiting-on-human", detail: $r.reason, updatedAt: $i.updatedAt, checkedAt: $at}]
           else . end' <<< "$new_cache")"
       fi
@@ -716,11 +795,72 @@ cmd_status() {
 
   budget="$(budget_json "$worktrees" "$prs")"
 
-  jq -nc --argjson w "$worktrees" --argjson b "$budget" --argjson i "$results" --argjson p "$pr_results" \
+  synced=null
+  if [ "$SYNC_LABELS" -eq 1 ]; then
+    sync_labels "$issues" "$results"
+    synced="$SYNCED"
+  fi
+
+  jq -nc --argjson w "$worktrees" --argjson b "$budget" --argjson i "$results" --argjson p "$pr_results" --argjson s "$synced" \
     '{worktrees: $w, budget: $b, issues: $i, prs: $p,
       pick: ((first($i[] | select(.state == "free" or (.state == "held" and .criteria != null and .reason == null)))
               | {number, title}) // null),
-      counts: ($i | group_by(.state) | map({(.[0].state): length}) | add // {})}'
+      counts: ($i | group_by(.state) | map({(.[0].state): length}) | add // {})}
+     + if $s == null then {} else {labels_synced: $s} end'
+}
+
+# True when every blocker of a cached blocked issue still has the updatedAt
+# the cache recorded.
+blockers_unmoved() {
+  local blocker path at
+  while IFS= read -r blocker; do
+    [ -n "$blocker" ] || continue
+    path="$(printf '%s' "$blocker" | jq -r '.path')"
+    gh_try api "$path" || return 1
+    at="$(printf '%s' "$GH_OUT" | jq -r '.updated_at')"
+    [ "$at" = "$(printf '%s' "$blocker" | jq -r '.updatedAt')" ] || return 1
+  done < <(printf '%s' "$1" | jq -c '.blockers // [] | .[]')
+}
+
+# The derived labels: <answer_label> on every issue waiting on the human,
+# <blocked_label> on every blocked one, and neither anywhere else. Both are
+# recomputed from this pass's classification and never read to decide a
+# state, so a label a human adds or removes by hand is put right here. An
+# issue another session holds is left to that session. Sets $SYNCED to
+# {<label>: {added: [n], removed: [n]}}; call it directly, not in $(...).
+SYNCED="{}"
+sync_labels() {
+  local issues="$1" results="$2" ops op n name created=" "
+  ops="$(jq -nc --argjson i "$issues" --argjson r "$results" --arg a "$ANSWER_LABEL" --arg bl "$BLOCKED_LABEL" '
+    ($i | map({key: (.number | tostring), value: [.labels[].name]}) | from_entries) as $has
+    | [ $r[] | select(.state != "claimed") | .number as $n | ($has[$n | tostring] // []) as $l
+        | ({label: $a, want: (.reason != null)}, {label: $bl, want: ((.blocked_by // []) != [])})
+        | select(. as $x | $x.want != ($l | index($x.label) != null))
+        | {number: $n, label, op: (if .want then "add" else "remove" end)} ]')"
+  while IFS= read -r op; do
+    [ -n "$op" ] || continue
+    n="$(printf '%s' "$op" | jq '.number')"
+    name="$(printf '%s' "$op" | jq -r '.label')"
+    if [ "$(printf '%s' "$op" | jq -r '.op')" = add ]; then
+      case "$created" in
+        *" $name "*) ;;
+        *)
+          if [ "$name" = "$ANSWER_LABEL" ]; then
+            ensure_label "$name" D93F0B "Delegator is waiting on a human reply"
+          else
+            ensure_label "$name" 5319E7 "Waiting on an open issue or PR"
+          fi
+          created="$created$name " ;;
+      esac
+      gh_json api -X POST "repos/$REPO/issues/$n/labels" -f "labels[]=$name" > /dev/null
+    else
+      remove_label "$n" "$name"
+    fi
+  done < <(printf '%s' "$ops" | jq -c '.[]')
+  SYNCED="$(jq -nc --argjson o "$ops" --arg a "$ANSWER_LABEL" --arg bl "$BLOCKED_LABEL" '
+    [$a, $bl] | map(. as $l | {key: $l, value: {
+      added: [$o[] | select(.label == $l and .op == "add") | .number],
+      removed: [$o[] | select(.label == $l and .op == "remove") | .number]}}) | from_entries')"
 }
 
 # What one Run pass would do, without a model: the gate a harness-neutral
@@ -949,8 +1089,8 @@ digest_json() {
   done < <(open_prs | jq -r --arg p "$PREFIX" '.[] | select(.headRefName | startswith($p)) | .number')
   if [ "$prs_only" -eq 0 ]; then
     issues="$(list_of "repos/$REPO/issues?state=open&per_page=100&labels=$(jq -nr --arg l "$LABEL" '$l | @uri')" \
-      | jq -c 'map(select(has("pull_request") | not)
-                   | {key: (.number | tostring), value: {comments: (.comments // 0), labels: ([.labels[]?.name] | sort), body: (.body // "" | length)}})
+      | jq -c --arg a "$ANSWER_LABEL" --arg bl "$BLOCKED_LABEL" 'map(select(has("pull_request") | not)
+                   | {key: (.number | tostring), value: {comments: (.comments // 0), labels: ([.labels[]?.name] - [$a, $bl] | sort), body: (.body // "" | length)}})
                | from_entries')"
   fi
   jq -nc --argjson p "$prs" --argjson i "$issues" '{prs: $p, issues: $i}'
