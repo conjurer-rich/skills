@@ -185,7 +185,7 @@ def needs_answer:
     and ((.type // "") != "Bot")
     and ($b | contains("<!-- preview-") | not);
 def human_reply:
-  (.body // "") | (contains("<!-- delegator") or contains("[Claude Code](https://claude.")) | not;
+  {body, login: (.user.login // ""), type: (.user.type // "")} | needs_answer;
 def pr_norm:
   { number, title, isDraft: (.draft // false), headRefName: .head.ref, headRefOid: .head.sha,
     createdAt: .created_at, labels: [.labels[]? | {name}], mergeable: .mergeable };
@@ -501,7 +501,11 @@ worktrees_json() {
 }
 
 # Classify one issue from its comments: held, claimed, or free / waiting on
-# the human, with how its acceptance criteria stand.
+# the human, with how its acceptance criteria stand. An open delegator
+# question comes first: the delegator is waiting on its answer whatever
+# criteria the body or a derived comment holds. Only a human comment after
+# the question answers it; an edit to the body does not (REST exposes no
+# time for the last body edit).
 issue_from_comments() {
   local issue="$1" comments="$2" login="$3" winner derived reactions confirmed=false
   winner="$(winner_of "$comments")"
@@ -522,10 +526,10 @@ issue_from_comments() {
        else ($c[$q + 1:] | any(.[]; human_reply)) | not end) as $question_open
     | { number: $i.number, title: $i.title,
         stale_label: ($w == null and any($i.labels[]; .name == $pl)) }
-    | (if $in_body then {state: "free", criteria: "body"}
+    | (if $question_open then {state: "waiting-on-human", reason: "question-unanswered"}
+       elif $in_body then {state: "free", criteria: "body"}
        elif $derived != null and $confirmed then {state: "free", criteria: "confirmed"}
        elif $derived != null then {state: "waiting-on-human", reason: "criteria-unconfirmed"}
-       elif $question_open then {state: "waiting-on-human", reason: "question-unanswered"}
        else {state: "free", criteria: "none"} end) as $criteria
     | . + if $w != null and $w.session != $s then {state: "claimed", holder: $w.session}
           elif $w != null then $criteria + {state: "held"}
