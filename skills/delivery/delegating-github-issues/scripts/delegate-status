@@ -27,6 +27,7 @@
 #   delegate-status heartbeat   <n> <id> [--every 900]                 [options]
 #   delegate-status release     <n> <id> (--reason <text> | --delete) [options]
 #   delegate-status clear-label <n>            [options]
+#   delegate-status promote-criteria <n> <comment id>                  [options]
 #   delegate-status comment     <n> --body-file <f>                    [options]
 #   delegate-status reply       <pr> <comment id> --body-file <f>      [options]
 #   delegate-status issue-create --title <t> --body-file <f> [--labels follow-up]
@@ -203,6 +204,9 @@ def pr_norm:
     createdAt: .created_at, labels: [.labels[]? | {name}], mergeable: .mergeable };
 def pr_state:
   if .merged_at != null then "MERGED" elif .state == "open" then "OPEN" else "CLOSED" end;
+def body_criteria:
+  .body // "" | gsub("\r"; "")
+  | test("(^|\n) {0,3}#{1,6}[^\n]*acceptance criteria[^\n]*\n(\\s*\n)*\\s*([-*+]|[0-9]+[.)])\\s"; "i");
 def body_blockers:
   (.body // "" | gsub("\r"; "") | split("\n")) as $lines
   | [ foreach $lines[] as $l ({in: false, line: null};
@@ -469,6 +473,44 @@ cmd_clear_label() {
   jq -nc --argjson n "$n" '{item: $n, result: "cleared"}'
 }
 
+# Appends confirmed derived criteria to the issue body, under an
+# `## Acceptance criteria` heading tagged with the comment's id, so they sit
+# at the top of the issue and later passes read them as `criteria: body`.
+# The human's text is kept, the comment stays, and a body that already has
+# criteria is left alone. It refuses (exit 3) a comment that is not this
+# issue's derived criteria, or that lacks the authenticated login's 👍.
+cmd_promote_criteria() {
+  need_args 3
+  local n="${POSITIONAL[1]}" id="${POSITIONAL[2]}" comment login issue tmp
+  comment="$(gh_json api "repos/$REPO/issues/comments/$id")"
+  case "$(printf '%s' "$comment" | jq -r '.issue_url // ""')" in
+    */issues/"$n") ;;
+    *) die "comment $id is not on #$n; refusing to promote it" 3 ;;
+  esac
+  printf '%s' "$comment" | jq -e '.body // "" | startswith("**Acceptance criteria (derived by the delegator")' > /dev/null \
+    || die "comment $id is not a derived-criteria comment; refusing to promote it" 3
+  login="$(gh_json api user | jq -r '.login')"
+  gh_json api --paginate "repos/$REPO/issues/comments/$id/reactions" \
+    | jq -se --arg l "$login" 'add // [] | any(.[]; .content == "+1" and .user.login == $l)' > /dev/null \
+    || die "comment $id has no 👍 from $login; criteria are promoted only once confirmed" 3
+  # Read the body as late as possible: REST has no conditional write, so a
+  # human edit between this read and the write below would be lost.
+  issue="$(gh_json api "repos/$REPO/issues/$n")"
+  if printf '%s' "$issue" | jq -e "$JQ_DEFS"'body_criteria' > /dev/null; then
+    jq -nc --argjson n "$n" --argjson id "$id" '{item: $n, result: "exists", comment: $id}'
+    return
+  fi
+  tmp="$(mktemp "$JSON_DIR/body.XXXXXX")"
+  jq -nr --argjson i "$issue" --argjson c "$comment" --argjson id "$id" '
+    ($c.body | gsub("\r"; "") | split("\n")[1:] | map(select(contains("<!-- delegator") | not))
+      | join("\n") | sub("^\\s+"; "") | sub("\\s+$"; "")) as $list
+    | ($i.body // "" | gsub("\r"; "") | sub("\\s+$"; "")) as $body
+    | (if $body == "" then "" else $body + "\n\n" end)
+      + "## Acceptance criteria\n\n" + $list + "\n\n<!-- delegator: criteria from comment \($id) -->"' > "$tmp"
+  gh_json api -X PATCH "repos/$REPO/issues/$n" -F body=@"$tmp" > /dev/null
+  jq -nc --argjson n "$n" --argjson id "$id" '{item: $n, result: "promoted", comment: $id}'
+}
+
 # ---------------------------------------------------------------- status
 
 # Untracked agent scratch in a worktree's `git status --porcelain`.
@@ -578,8 +620,7 @@ issue_from_comments() {
   derived="$(printf '%s' "$comments" | jq '[.[] | select(.body // "" | startswith("**Acceptance criteria (derived by the delegator"))] | last | .id // null')"
   if [ "$derived" != null ] \
     && ! printf '%s' "$blockers" | jq -e 'any(.[]; .open)' > /dev/null \
-    && ! printf '%s' "$issue" | jq -e '.body // "" | gsub("\r"; "")
-      | test("(^|\n) {0,3}#{1,6}[^\n]*acceptance criteria[^\n]*\n(\\s*\n)*\\s*([-*+]|[0-9]+[.)])\\s"; "i")' > /dev/null; then
+    && ! printf '%s' "$issue" | jq -e "$JQ_DEFS"'body_criteria' > /dev/null; then
     reactions="$(gh_json api --paginate "repos/$REPO/issues/comments/$derived/reactions" | jq -s 'add // []')"
     confirmed="$(printf '%s' "$reactions" | jq --arg l "$login" 'any(.[]; .content == "+1" and .user.login == $l)')"
   fi
@@ -587,8 +628,7 @@ issue_from_comments() {
     --arg pl "$PROGRESS_LABEL" --argjson derived "$derived" --argjson confirmed "$confirmed" --argjson b "$blockers" "$JQ_DEFS"'
     $i[0] as $i | $c[0] as $c
     | [$b[] | select(.open) | .ref] as $open_blockers
-    | ($i.body // "" | gsub("\r"; "")
-      | test("(^|\n) {0,3}#{1,6}[^\n]*acceptance criteria[^\n]*\n(\\s*\n)*\\s*([-*+]|[0-9]+[.)])\\s"; "i")) as $in_body
+    | ($i | body_criteria) as $in_body
     | ([$c | to_entries[] | select(.value.body // "" | startswith("**Question before delegation**")) | .key] | last) as $q
     | (if $q == null then false
        else ($c[$q + 1:] | any(.[]; human_reply)) | not end) as $question_open
@@ -1261,6 +1301,7 @@ case "$COMMAND" in
   heartbeat) cmd_heartbeat ;;
   release) cmd_release ;;
   clear-label) cmd_clear_label ;;
+  promote-criteria) cmd_promote_criteria ;;
   comment) cmd_comment ;;
   reply) cmd_reply ;;
   issue-create) cmd_issue_create ;;

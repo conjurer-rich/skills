@@ -935,6 +935,46 @@ jq 'map(if .number == 32 then .labels += [{name: "needs-answer"}, {name: "blocke
   "$FAKE_STATE/issues.json" > "$FAKE_STATE/issues.tmp" && mv "$FAKE_STATE/issues.tmp" "$FAKE_STATE/issues.json"
 check "the digest ignores the derived labels" "$(run watch-digest --state "$DIGEST" || true)" '.changed == false'
 
+# ---------------------------------------------------------------- promote-criteria
+
+# Confirmed derived criteria are appended to the issue body, so they sit at
+# the top of the issue; the human's text is kept and the comment stays.
+use status
+question_case 62 'Fix the import.\n\nIt is slow.' "[$DERIVED]" confirmed
+out="$(run promote-criteria 62 6202)"
+check "promote-criteria appends confirmed criteria to the body" "$out" '.item == 62 and .result == "promoted" and .comment == 6202'
+check_called "-X PATCH repos/acme/widgets/issues/62 " "the body is written over REST"
+body="$(jq -r '.body' "$FAKE_STATE/issue-62.json")"
+check "the human's text is kept and the criteria follow it, tagged with their comment" "$(jq -n --arg b "$body" '$b')" \
+  '. == "Fix the import.\n\nIt is slow.\n\n## Acceptance criteria\n\n1. It works\n\n<!-- delegator: criteria from comment 6202 -->"'
+check "the issue then reads as criteria in the body" "$(run issue 62 || true)" '.state == "free" and .criteria == "body"'
+check_not_called "-X DELETE repos/acme/widgets/issues/comments/6202" "the criteria comment stays"
+
+use status
+question_case 61 "$CRITERIA_BODY" "[$DERIVED]" confirmed
+out="$(run promote-criteria 61 6102)"
+check "a body that already has criteria is left alone" "$out" '.result == "exists"'
+check_not_called "-X PATCH" "nothing is written over existing criteria"
+
+use status
+question_case 63 'Fix it.' "[$DERIVED]"
+status=0
+run promote-criteria 63 6302 > /dev/null 2>&1 || status=$?
+if [ "$status" -eq 3 ]; then pass "unconfirmed criteria are refused (exit 3)"; else fail "unconfirmed criteria are refused (exit 3, got $status)"; fi
+check_not_called "-X PATCH" "unconfirmed criteria are never written to the body"
+
+use status
+question_case 62 'Fix it.' "[$DERIVED]" confirmed
+question_case 64 'Fix it.' '[]'
+status=0
+run promote-criteria 64 6202 > /dev/null 2>&1 || status=$?
+if [ "$status" -eq 3 ]; then pass "a criteria comment from another issue is refused"; else fail "a criteria comment from another issue is refused (got $status)"; fi
+question_case 65 'Fix it.' "[$QUESTION]"
+status=0
+run promote-criteria 65 6501 > /dev/null 2>&1 || status=$?
+if [ "$status" -eq 3 ]; then pass "a comment that is not derived criteria is refused"; else fail "a comment that is not derived criteria is refused (got $status)"; fi
+check_not_called "-X PATCH" "a refused promotion writes nothing"
+
 # ---------------------------------------------------------------- Pick skip cache
 
 use status
