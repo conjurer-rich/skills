@@ -35,7 +35,7 @@ The calling command supplies these; defaults apply when it does not, and keep th
 | `land` | off | When on, Work opens drafts, and **Land** may merge a PR the human marked Ready for review |
 | `claim_ttl` | 45 minutes | A claim with no heartbeat for this long lapses, and another session may take the item |
 | `progress_label` | `in-progress` | Carried by an item while a session holds a live claim on it, so a human sees an agent is on it |
-| `answer_label`, `blocked_label` | `needs-answer`, `blocked` | Derived: waiting on the human; blocked |
+| `answer_label`, `blocked_label`, `review_label` | `needs-answer`, `blocked`, `awaiting-review` | Derived: human must answer; blocked; PR to review |
 
 A **Verification scope** section in the project's delegation file replaces the `pre_pr_gate`'s complete-suite rule (`references/tiers.md`).
 
@@ -63,7 +63,7 @@ A Land waiting on a background task has not stopped: its claim, heartbeat and la
 
 **Stale label.** `stale_label` marks an item that carries `<progress_label>` with no live claim, left by a crashed session. Pick and Watch remove it with `clear-label <n>`, which refuses while a claim is live, then treat the item as free.
 
-**Derived labels.** Only `status --sync-labels` writes `<answer_label>` and `<blocked_label>`; a hand edit decides nothing.
+**Derived labels.** Only `status --sync-labels` writes the derived labels; a hand edit decides nothing.
 
 ## Stop rule
 
@@ -125,7 +125,7 @@ End with the project's PR footer. `delegate-status cost-note` then appends the c
 - `git stash`, `git commit --amend` on a pushed branch, or `git branch -D`.
 - Re-run, or hand to another agent, a command that a subagent's own permission system refused: a refusal is an answer, not an obstacle.
 - Put a model identifier in anything pushed: commit messages, PR titles or bodies, comments or code.
-- Put `<progress_label>` on an item without holding a live claim on it, or leave it on one you released. Set `<answer_label>` or `<blocked_label>` yourself, or read them as state.
+- Put `<progress_label>` on an item without holding a live claim on it, or leave it on one you released. Set a derived label yourself, or read one as state.
 - Run the full test suite locally unless `local_full_suite` is on or the diff touches a `full_suite_paths` glob, and never at the repository root in the foreground or to check a single change.
 - Point a browser at a deployed preview URL.
 - Continue after an ambiguous review comment without the human's answer.

@@ -537,6 +537,12 @@ require_script '<!-- delegator sync: conflict ' "the script reads the sync marke
 require_text 'When step 4 returned `conflict`, the line `<!-- delegator sync: conflict <sha> -->`' "a Land bail-out on a conflict stops Sync retrying it"
 require_script 'mergeable: .mergeable' "the script reads mergeability"
 
+# The delegator works through the human's login, so GitHub never notifies
+# them that a PR is ready again; the PR itself has to say so.
+require_text 'delegate-status review-status <PR> --addressed <n>' "Review marks a PR ready again at the top of its body"
+require_text 'GitHub never notifies the human of work done through their own login' "the docs say why the signal lives on the PR"
+require_text '`<review_label>` on each delegated PR awaiting the human' "awaiting review is a derived PR label"
+require_script 'cmd_review_status' "the script writes the review status line"
 # Questions shape the questions after them, so a design conversation needs
 # rounds, not one question per pass; a human in the session answers them in
 # minutes, an issue in hours. Whatever the channel, the outcome lands on the

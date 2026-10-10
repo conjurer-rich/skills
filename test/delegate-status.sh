@@ -935,6 +935,73 @@ jq 'map(if .number == 32 then .labels += [{name: "needs-answer"}, {name: "blocke
   "$FAKE_STATE/issues.json" > "$FAKE_STATE/issues.tmp" && mv "$FAKE_STATE/issues.tmp" "$FAKE_STATE/issues.json"
 check "the digest ignores the derived labels" "$(run watch-digest --state "$DIGEST" || true)" '.changed == false'
 
+# ---------------------------------------------------------------- awaiting review
+
+# The delegator posts and pushes through the human's login, so GitHub never
+# tells the human a delegated PR is ready for them again. A PR awaits review
+# when nothing on it waits on the delegator: no session holds it, nothing
+# needs an answer, it is not Ready for Land, and the human has not approved
+# its current head.
+use status
+pr() { printf '.prs[] | select(.number == %s)' "$1"; }
+out="$(run status --land on)"
+check "an idle delegated PR awaits review" "$out" "$(pr 22) | .awaiting_review == true"
+check "a PR with a comment to answer does not await review" "$out" "$(pr 20) | .awaiting_review == false"
+check "a Ready PR waits on Land, not on review" "$out" "$(pr 21) | .awaiting_review == false"
+check "a PR another session holds does not await review" "$out" "$(pr 23) | .awaiting_review == false"
+check "a PR never reviewed has no review base" "$out" "$(pr 22) | .review_base == null"
+
+echo '[{"id": 801, "state": "APPROVED", "commit_id": "h22", "body": "", "user": {"login": "rich", "type": "User"}}]' > "$FAKE_STATE/reviews-22.json"
+check "a PR the human approved at its head does not await review" "$(run status --land on)" "$(pr 22) | .awaiting_review == false"
+echo '[{"id": 801, "state": "APPROVED", "commit_id": "h21old", "body": "", "user": {"login": "rich", "type": "User"}},
+       {"id": 802, "state": "COMMENTED", "commit_id": "bot1", "body": "LGTM", "user": {"login": "copilot[bot]", "type": "Bot"}}]' > "$FAKE_STATE/reviews-22.json"
+out="$(run status --land on)"
+check "a push after the approval makes the PR await review again" "$out" "$(pr 22) | .awaiting_review == true"
+check "the review base is the head of the human's last review, not a bot's" "$out" "$(pr 22) | .review_base == \"h21old\""
+
+use status
+jq --argjson c "$CLAIM_OURS" '. + [$c | .id = 2205]' "$FAKE_STATE/comments-22.json" > "$FAKE_STATE/c.tmp" && mv "$FAKE_STATE/c.tmp" "$FAKE_STATE/comments-22.json"
+check "a PR this session is working on does not await review" "$(run status --land on)" "$(pr 22) | .held and .awaiting_review == false"
+
+# --sync-labels keeps <review_label> on exactly the PRs awaiting review.
+use status
+jq 'map(if .number == 20 or .number == 23 then .labels += [{name: "awaiting-review"}] else . end)' \
+  "$FAKE_STATE/prs.json" > "$FAKE_STATE/prs.tmp" && mv "$FAKE_STATE/prs.tmp" "$FAKE_STATE/prs.json"
+out="$(run status --land on --sync-labels)"
+check "awaiting-review is added to PRs awaiting review and removed from the rest" "$out" \
+  '.labels_synced["awaiting-review"] == {"added": [22, 24], "removed": [20]}'
+check_called "-X POST repos/acme/widgets/issues/22/labels -f labels[]=awaiting-review" "the PR label is added over REST"
+check_called "-X POST repos/acme/widgets/labels -f name=awaiting-review" "a missing awaiting-review label is created"
+check_not_called "issues/23/labels" "another session's PR keeps its labels"
+check_not_called "repos/acme/widgets/issues/25/labels" "a PR the delegator did not open is never labelled"
+use status
+check "--review-label names the PR label" "$(run status --land on --sync-labels --review-label ready-for-rich)" \
+  '.labels_synced | has("ready-for-rich")'
+
+# ---------------------------------------------------------------- review-status
+
+# After a Review round, one line at the top of the PR body says the PR is
+# ready again and links the changes since the human's last review.
+use status
+jq '.body = "## Summary\n\nFixes it.\n\nDelegation cost: 1 session. <!-- delegator:cost a=1/0 -->"' "$FAKE_STATE/pull-20.json" > "$FAKE_STATE/p.tmp" && mv "$FAKE_STATE/p.tmp" "$FAKE_STATE/pull-20.json"
+jq 'map(if .id == 703 then .commit_id = "c19" else . end)' "$FAKE_STATE/reviews-20.json" > "$FAKE_STATE/r.tmp" && mv "$FAKE_STATE/r.tmp" "$FAKE_STATE/reviews-20.json"
+out="$(run review-status 20 --addressed 4)"
+check "review-status reports the round" "$out" '.item == 20 and .result == "noted" and .round == 1'
+body="$(jq -r '.body' "$FAKE_STATE/pull-20.json")"
+check "the status line opens the body and links the changes since the last review" "$(jq -n --arg b "$body" '$b')" \
+  'split("\n")[0] == "**Ready for re-review (round 1):** addressed 4 comments in `h20`. [Changes since your last review](https://github.com/acme/widgets/compare/c19...h20) <!-- delegator:status round=1 -->"'
+check "the rest of the body, cost line included, is kept" "$(jq -n --arg b "$body" '$b')" \
+  'split("\n")[2:] | join("\n") == "## Summary\n\nFixes it.\n\nDelegation cost: 1 session. <!-- delegator:cost a=1/0 -->"'
+run review-status 20 --addressed 1 > /dev/null
+body="$(jq -r '.body' "$FAKE_STATE/pull-20.json")"
+check "a second round replaces the line and counts up" "$(jq -n --arg b "$body" '$b')" \
+  '(split("\n")[0] | startswith("**Ready for re-review (round 2):** addressed 1 comment in `h20`.")) and ([scan("delegator:status")] | length) == 1'
+
+out="$(run review-status 22 --addressed 2)"
+body="$(jq -r '.body' "$FAKE_STATE/pull-22.json")"
+check "with no earlier review there is no compare link" "$(jq -n --arg b "$body" '$b')" \
+  '. == "**Ready for re-review (round 1):** addressed 2 comments in `h22`. <!-- delegator:status round=1 -->"'
+if run review-status 20 > /dev/null 2>&1; then fail "review-status without --addressed is a usage error"; else pass "review-status without --addressed is a usage error"; fi
 # ---------------------------------------------------------------- promote-criteria
 
 # Confirmed derived criteria are appended to the issue body, so they sit at
