@@ -11,13 +11,16 @@
 
    **Claim.** `delegate-status claim N` (**Claims**). If it exits 4 (`lost`), another session holds the issue: stop. If it prints `won` with an `open_pr`, a session opened a PR from a `<branch_prefix>N-` branch and released its claim since Pick looked: once claimed an open PR from a `<branch_prefix>N-` branch now exists, so release with `--delete` and stop. When Pick started this Work, return to Pick's next candidate instead of stopping. Every stop from here on releases the claim. Once the claim is yours, set the **Session title** to `#N <issue title>`. Then start its heartbeat and write `item_start_calls` to `run-state.json`.
 
-3. **Acceptance criteria.** Step 1's output says which case holds (a `held` issue carries the same `criteria` or `reason`):
+3. **Acceptance criteria.** Step 1's output says which case holds, the first that applies in this order (a `held` issue carries the same `criteria` or `reason`):
+   - `waiting-on-human` with `question-unanswered`: a delegator question (it starts with `**Question before delegation**`) has no later comment from the human: one that contains neither `<!-- delegator` nor the Claude Code footer and whose author is not a bot. An open question wins over any criteria, in the body or confirmed, because the delegator is waiting on its answer. Only a reply answers it: an edit to the issue body does not, since REST gives no time for the last body edit.
    - `criteria: body`: the body has a heading matching `/acceptance criteria/i` followed by a numbered or bulleted list. Use them for the rest of the run.
    - `criteria: confirmed`: a derived-criteria comment (it starts with `**Acceptance criteria (derived by the delegator`) carries the 👍 of the authenticated login. Only that login's reaction counts, because anyone can react on a public repository; the delegator never reacts, so that login's 👍 is the human's. Read the comment (the last one starting with that heading in `gh api --paginate repos/<owner>/<repo>/issues/N/comments`) and use its current text, including any edits, for the rest of the run.
-   - `waiting-on-human`: a derived-criteria comment without that 👍 (`criteria-unconfirmed`), or a delegator question (it starts with `**Question before delegation**`) with no later comment from the human, one containing neither `<!-- delegator` nor the Claude Code footer (`question-unanswered`). Say in chat that issue #N is waiting on the human, post nothing, and stop.
+   - `waiting-on-human` with `criteria-unconfirmed`: a derived-criteria comment without that 👍.
    - `criteria: none`: there are none yet.
 
-   Otherwise derive the criteria and stop. First load `find-gaps` on the issue body and every human comment, including answers to earlier questions. If the intent has two plausible readings, or the gaps leave no observable outcome, post one question as a comment that starts with `**Question before delegation**`, names the readings or gaps, and ends with the delegator marker, then stop. Otherwise derive 2–6 criteria, each observable and testable, and post them as a comment ending with the delegator marker:
+   On either `waiting-on-human` reason, say in chat that issue #N is waiting on the human, post nothing, and stop.
+
+   On `criteria: none`, derive the criteria and stop. First load `find-gaps` on the issue body and every human comment, including answers to earlier questions. If the intent has two plausible readings, or the gaps leave no observable outcome, post one question as a comment that starts with `**Question before delegation**`, names the readings or gaps, and ends with the delegator marker, then stop. Otherwise derive 2–6 criteria, each observable and testable, and post them as a comment ending with the delegator marker:
 
    > **Acceptance criteria (derived by the delegator; edit this comment to change them, then react 👍 to confirm)**
    > 1. …

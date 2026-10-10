@@ -722,6 +722,74 @@ check "cost sums the newest merged delegated PRs' notes" "$out" \
 check "merged-sizes reads the newest merged PRs' sizes" "$(run merged-sizes || true)" \
   '.prs == [{"number": 19, "additions": 190, "deletions": 19, "changedFiles": 3}, {"number": 17, "additions": 170, "deletions": 17, "changedFiles": 3}]'
 
+# ---------------------------------------------------------------- an open question wins
+
+# A delegator question with no human reply after it waits on the human,
+# whatever criteria the issue has: the delegator itself is waiting on the
+# answer. Each case is one eligible issue and its comments.
+CRITERIA_BODY='Fix it.\n\n## Acceptance criteria\n\n1. It works\n'
+QUESTION='{"id": 1, "body": "**Question before delegation**\nA or B?\n<!-- delegator -->", "created_at": "2026-09-20T09:00:00Z", "updated_at": "2026-09-20T09:00:00Z", "user": {"login": "rich"}}'
+DERIVED='{"id": 2, "body": "**Acceptance criteria (derived by the delegator; edit this comment to change them, then react 👍 to confirm)**\n1. It works\n<!-- delegator -->", "created_at": "2026-09-19T09:00:00Z", "updated_at": "2026-09-19T09:00:00Z", "user": {"login": "rich"}}'
+reply_by() { # login, type, body -> a comment after the question
+  jq -nc --arg l "$1" --arg t "$2" --arg b "$3" \
+    '{id: 3, body: $b, created_at: "2026-09-21T09:00:00Z", updated_at: "2026-09-21T09:00:00Z", user: {login: $l, type: $t}}'
+}
+# question_case <n> <body> <comments json array> [confirmed]: writes issue <n>
+# and its comments into the scenario; ids are prefixed with <n>.
+question_case() {
+  local n="$1"
+  jq -n --argjson n "$n" --arg b "$(printf '%b' "$2")" \
+    '{number: $n, title: "Issue \($n)", state: "open", labels: [{name: "agent-ready"}],
+      created_at: "2026-09-01T09:00:00Z", updated_at: "2026-09-21T09:00:00Z", body: $b}' > "$FAKE_STATE/issue-$n.json"
+  jq --argjson n "$n" 'map(.id = $n * 100 + .id)' <<< "$3" > "$FAKE_STATE/comments-$n.json"
+  if [ "${4:-}" = confirmed ]; then
+    echo '[{"content": "+1", "user": {"login": "rich"}}]' > "$FAKE_STATE/reactions-$((n * 100 + 2)).json"
+  fi
+}
+
+use status
+question_case 61 "$CRITERIA_BODY" "[$QUESTION]"
+check "body criteria do not free an issue with an open question" "$(run issue 61 || true)" \
+  '.state == "waiting-on-human" and .reason == "question-unanswered"'
+question_case 62 'Fix it.' "[$DERIVED, $QUESTION]" confirmed
+check "confirmed derived criteria do not free an issue with an open question" "$(run issue 62 || true)" \
+  '.state == "waiting-on-human" and .reason == "question-unanswered"'
+question_case 63 'Fix it.' "[$DERIVED, $QUESTION]"
+check "an open question outranks unconfirmed derived criteria" "$(run issue 63 || true)" \
+  '.state == "waiting-on-human" and .reason == "question-unanswered"'
+question_case 64 'Fix it.' "[$QUESTION]"
+check "an open question alone waits on the human" "$(run issue 64 || true)" \
+  '.state == "waiting-on-human" and .reason == "question-unanswered"'
+question_case 65 "$CRITERIA_BODY" "[$QUESTION, $(reply_by rich User 'A, please.')]"
+check "a human reply after the question leaves the body criteria in force" "$(run issue 65 || true)" \
+  '.state == "free" and .criteria == "body"'
+question_case 66 'Fix it.' "[$QUESTION, $(reply_by github-actions[bot] Bot 'Preview deployed.')]"
+check "a bot comment after the question is no answer" "$(run issue 66 || true)" \
+  '.state == "waiting-on-human" and .reason == "question-unanswered"'
+question_case 67 'Fix it.' "[$QUESTION, $(reply_by renovate Bot 'Dependency dashboard.')]"
+check "a Bot-typed author after the question is no answer" "$(run issue 67 || true)" \
+  '.state == "waiting-on-human" and .reason == "question-unanswered"'
+question_case 68 'Fix it.' "[$QUESTION, $(reply_by rich User 'Still looking.\n<!-- delegator -->')]"
+check "a delegator-marked comment after the question is no answer" "$(run issue 68 || true)" \
+  '.state == "waiting-on-human" and .reason == "question-unanswered"'
+
+# Pick's skip cache keeps an issue with an open question, and the human's
+# reply moves its updatedAt, so the next pass re-reads it and frees it.
+use status
+question_case 61 "$CRITERIA_BODY" "[$QUESTION]"
+jq --slurpfile i "$FAKE_STATE/issue-61.json" '. + $i' "$FAKE_STATE/issues.json" > "$FAKE_STATE/issues.tmp" && mv "$FAKE_STATE/issues.tmp" "$FAKE_STATE/issues.json"
+CACHE="$FAKE_STATE/pick-cache.json"
+out="$(run status --cache "$CACHE")"
+check "status skips an issue with body criteria and an open question" "$out" \
+  "$(issue 61) | .state == \"waiting-on-human\" and .reason == \"question-unanswered\""
+check "the open question is cached as a skip" "$(cat "$CACHE")" 'any(.[]; .number == 61 and .detail == "question-unanswered")'
+jq --argjson r "$(reply_by rich User 'A, please.' | jq '.id = 6103')" '. + [$r]' "$FAKE_STATE/comments-61.json" > "$FAKE_STATE/c.tmp" && mv "$FAKE_STATE/c.tmp" "$FAKE_STATE/comments-61.json"
+jq 'map(if .number == 61 then .updated_at = "2026-10-02T11:00:00Z" else . end)' "$FAKE_STATE/issues.json" > "$FAKE_STATE/issues.tmp" && mv "$FAKE_STATE/issues.tmp" "$FAKE_STATE/issues.json"
+: > "$FAKE_STATE/calls.log"
+out="$(run status --cache "$CACHE")"
+check_called "issues/61/comments" "the human's reply moves updatedAt, so the cached question is re-read"
+check "an answered question frees the issue on the next pass" "$out" "$(issue 61) | .state == \"free\" and .criteria == \"body\""
+
 # ---------------------------------------------------------------- Pick skip cache
 
 use status
