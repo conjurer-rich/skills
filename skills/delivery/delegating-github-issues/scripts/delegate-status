@@ -905,13 +905,11 @@ sync_labels() {
       case "$created" in
         *" $name "*) ;;
         *)
-          if [ "$name" = "$ANSWER_LABEL" ]; then
-            ensure_label "$name" D93F0B "Delegator is waiting on a human reply"
-          elif [ "$name" = "$REVIEW_LABEL" ]; then
-            ensure_label "$name" 0E8A16 "A delegated PR is ready for your review"
-          else
-            ensure_label "$name" 5319E7 "Waiting on an open issue or PR"
-          fi
+          case "$name" in
+            "$ANSWER_LABEL") ensure_label "$name" D93F0B "Delegator is waiting on a human reply" ;;
+            "$REVIEW_LABEL") ensure_label "$name" 0E8A16 "A delegated PR is ready for your review" ;;
+            *) ensure_label "$name" 5319E7 "Waiting on an open issue or PR" ;;
+          esac
           created="$created$name " ;;
       esac
       gh_json api -X POST "repos/$REPO/issues/$n/labels" -f "labels[]=$name" > /dev/null
