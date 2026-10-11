@@ -344,8 +344,9 @@ require_text 'Cancel a pending `next_pass_trigger` reminder as **Watch** step 1 
 require_text 'That is why the loop schedules its next pass with `send_later`' "the cloud advice says why the loop uses send_later"
 # Hand-off sessions landed under "Other" in the sidebar: create_session with
 # only source_url records no outcome repository, which the sidebar groups by.
-require_text '`outcome_branch` the branch in `ccr-outcome-branch`' "the next session is grouped under its repository"
-require_text 'write its first outcome branch to `ccr-outcome-branch`' "the outcome branch is kept with the session id"
+require_text '`outcome_branch` a fresh `claude/delegate-handoff-<8 hex>` that is absent from `origin`' "the next session is grouped under its repository by a fresh outcome branch"
+require_text 'Do not reuse `ccr-outcome-branch` or a fixed name' "the outcome branch never reuses a name the harness hook compares against"
+require_text 'Pass `environment_id` when the parameter is set' "the hand-off carries a chosen environment"
 # A stopped session looked like any other in the sidebar, so the human could
 # not tell which sessions had handed their loop on, or to whom.
 require_text '| **Hand-off** step 3, once the next session starts | `[handed off → <id>] <title>` |' "a handed-off session says so in its title"
