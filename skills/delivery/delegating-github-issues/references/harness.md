@@ -19,8 +19,6 @@ brief, under the **Hand-back contract**.
   per brief from the main checkout (`codex exec "<brief>"` or
   `claude -p "<brief>"`), or else carry out the brief yourself. Either way, the
   brief writes its report file and you read back only the verdict.
-  - "Send the implementer one message" becomes a fresh dispatch with the same
-    brief, plus the findings and the earlier report's path.
   - "Run in the background" becomes running in the foreground and reading the
     result when it returns.
 
