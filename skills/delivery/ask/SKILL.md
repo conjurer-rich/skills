@@ -45,7 +45,10 @@ underneath.
    - **Hand it off instead:** label the issue and run `/delegate` (the
      `delegating-github-issues` skill) to take it from issue to reviewable PR
      in its own worktree, with `browser-ux-walkthrough` for UI changes
-     *(Claude Code)*.
+     *(Claude Code)*. It dispatches its subagents as narrow agents
+     (`delegate-implementer` for code; `delegate-reviewer` for the checks;
+     `delegate-walkthrough` for the browser walk; `delegate-mechanical` for
+     fixed commands) *(Claude Code)*.
      In Codex or OpenCode, run the skill's `scripts/delegate-loop` instead:
      a shell loop that starts one fresh agent pass whenever there is work.
 6. **Check it before the PR.** `mutation-testing` runs once, at PR

@@ -11,10 +11,19 @@ step is skipped.
 A **dispatch** starts a subagent with a fresh context and a self-contained
 brief, under the **Hand-back contract**.
 
-- **Claude Code:** the Agent tool, with `subagent_type: general-purpose`, the
-  step's `model`, and `run_in_background` as the step says. `SendMessage`
-  continues a running subagent; a background task's exit wakes the session.
+- **Claude Code:** the Agent tool, with the step's `craft:delegate-*`
+  `subagent_type` (the **Hand-back contract** maps each role to one), the
+  step's `model`, and `run_in_background` as the step says. Where the craft
+  plugin's agents are not installed, fall back to
+  `subagent_type: general-purpose` with the same brief and model.
+  `SendMessage` continues a running subagent; a background task's exit wakes
+  the session.
 - **Codex:** spawn a subagent, if the harness has them.
+- **Without the agent types:** a harness that cannot name an agent type starts
+  its default subagent with the same brief. The brief carries the role: the
+  worktree, the files it may write and the commands to run, so a reviewer told
+  to change nothing and write only its report stays read-only. Only the narrow
+  tool list, and the tokens it saves, is lost.
 - **Fallback:** where the harness has no subagents, start one headless process
   per brief from the main checkout (`codex exec "<brief>"` or
   `claude -p "<brief>"`), or else carry out the brief yourself. Either way, the
