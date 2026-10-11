@@ -12,6 +12,8 @@ The contract applies to every subagent this skill dispatches: bootstrap, impleme
 
 **Scratch layout.** One directory per run, `<scratchpad>/delegator/<session name>/`: `run-state.json` (the **Stop rule** counters and the **Session title** state), `claims.json` (**Claims**), `pick-cache.json` (**Pick**), `ccr-session-id` (**Session title**), `subscribed.json` (**Watch**), and per issue `<N>/implementer.md`, `<N>/checks/<check>.md`, `<N>/walkthrough.md`, `<N>/commit-message.md`, `<N>/pr-body.md`, `<N>/ship.log`, and screenshots at `<N>/<surface>-<theme>-<before|after>.png`. The Watch digest baseline, `<scratchpad>/delegator/watch-digest.json`, sits one level up so every run of the session shares it. Every brief names the files it must write. A subagent that writes to GitHub is briefed with `delegate-status`'s absolute path and `--repo`, and makes every write outside git through it.
 
+**Before a full-suite run.** A subagent that is about to run a full suite checks first that the stack the suite needs (database, services, dev server) is up. If it isn't, it returns `blocked` with the reason and does not run the suite against it.
+
 **Shipping inline.** Commit, push, PR creation and the CI wait are fixed commands, so the delegator runs them itself, from the main checkout, each with its output appended to `<scratch>/<N>/ship.log` so a hook's or a server's chatter never lands in the main context. Each is one command on its own, with no `echo`, loop or pipe, so the command's allowed tools cover it unattended. The tool result's exit status is the verdict; on a failure, read only the last lines of the log (`tail -n 5 <scratch>/<N>/ship.log`):
 
 ```bash
