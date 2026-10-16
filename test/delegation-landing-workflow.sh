@@ -133,7 +133,7 @@ reject_regex 'search "head:' "Watch filters branches locally, not by fuzzy searc
 
 # Dry run 2 findings (#1708, #1710)
 # Land's review took 24 minutes; a foreground subagent froze the watcher.
-require_text 'with `subagent_type: general-purpose`, `model: <review_model>`, `run_in_background: true`' "Land's review runs in the background"
+require_text 'with `subagent_type: craft:delegate-implementer`, `model: <review_model>`, `run_in_background: true`' "Land's review runs in the background"
 require_text 'A review interrupted by a restart leaves staged changes' "a restarted Land discards a dead review's changes"
 # Another agent session answered a thread without the marker, and the watcher
 # treated its reply as the human's.
@@ -257,7 +257,7 @@ require_text 'It never returns a diff, a screenshot, a browser snapshot, a test 
 require_text 'The delegator never runs `git diff` itself' "the delegator never reads a diff"
 require_text 'Write to `<scratch>/<N>/implementer.md`: (a) the list of files changed' "the implementer report goes to a file"
 require_text 'its full report goes to `<scratch>/<N>/checks/<process|acceptance|whole-diff>.md`' "the three checks report to files"
-require_text '     - **Process.** The project'"'"'s `tdd-guardian` agent, or else a subagent that loads the `tdd-guardian` skill.' "the tdd-guardian check is unchanged"
+require_text '     - **Process.** The project'"'"'s `tdd-guardian` agent, or else a `craft:delegate-reviewer` subagent that loads the `tdd-guardian` skill.' "the tdd-guardian check runs as a delegate-reviewer"
 require_text 'dispatch one walkthrough subagent' "the walkthrough runs in a subagent"
 require_text 'The delegator never runs `agent-browser`' "the delegator never drives the browser"
 require_text 'The re-walk never runs in the main session.' "the repair-round re-walk runs in a subagent"
@@ -268,12 +268,12 @@ require_text 'The re-walk never runs in the main session.' "the repair-round re-
 require_text '**Shipping inline.** Commit, push, PR creation and the CI wait are fixed commands, so the delegator runs them itself' "commit, push, PR and CI wait run inline"
 require_text 'each with its output appended to `<scratch>/<N>/ship.log`' "shipping output goes to a log, not the context"
 require_text 'with no `echo`, loop or pipe' "the inline commands need no extra permission"
-require_text 'If the environment refuses `git -C` (an isolation guard), do not rephrase it: dispatch one ship subagent on `model: <mechanical_model>` instead' "a refused git -C falls back to a mechanical-model ship subagent"
+require_text 'If the environment refuses `git -C` (an isolation guard), do not rephrase it: dispatch one ship subagent (`craft:delegate-mechanical`, `model: <mechanical_model>`) instead' "a refused git -C falls back to a mechanical-model ship subagent"
 require_text '**Self-contained briefs.** A subagent starts from its brief alone. Never fork the conversation into it' "subagents never inherit the conversation"
 require_text 'Fork the conversation into a subagent; every brief is self-contained.' "the Never list forbids forking the conversation"
 require_text '**Cheapest model that can do the step.** Mechanical steps, where the brief names every command, run on `model: <mechanical_model>` (default `haiku`)' "mechanical steps run on the cheapest model"
 require_text 'The delegator commits only from the message file and runs nothing else in the worktree.' "the delegator commits only from the message file"
-require_text '11. **Evidence.** If there are screenshots under `<scratch>/<N>/`, dispatch one evidence subagent on `model: <mechanical_model>`' "evidence is pushed by a mechanical-model subagent"
+require_text '11. **Evidence.** If there are screenshots under `<scratch>/<N>/`, dispatch one evidence subagent (`craft:delegate-mechanical`, `model: <mechanical_model>`)' "evidence is pushed by a mechanical-model subagent"
 require_text 'with the proposed message shown, **before** you ship' "a hand-started Work asks for commit approval before shipping"
 require_text 'Push whatever is staged as a draft PR, inline as the **Hand-back contract** ships' "Blocked ships inline too"
 # C. Claims bookkeeping goes to one subagent, renewed less often.
@@ -289,7 +289,7 @@ require_text 'Otherwise renew the claim, then dispatch a fresh implementer' "Wor
 require_text 'The brief is the step 6 brief, plus every blocking finding' "the repair brief reuses the step 6 brief"
 require_text 'never a step down' "the repair implementer keeps an escalated model"
 require_text 'Renew the claim, then hand the actionable threads' "Review renews before its handoff"
-require_text 'Renew the claim, then dispatch one subagent with `subagent_type: general-purpose`, `model: <review_model>`, `run_in_background: true`' "Land renews before its review wait"
+require_text 'Renew the claim, then dispatch one subagent with `subagent_type: craft:delegate-implementer`, `model: <review_model>`, `run_in_background: true`' "Land renews before its review wait"
 require_text '**Wait for CI.** Renew the claim, then run' "Land renews before its CI wait"
 # D. Pick caches skips across loop passes.
 require_script 'updatedAt: .updated_at' "Pick lists updatedAt"
@@ -326,7 +326,8 @@ require_text 'the `create_session` tool of the `claude-code-remote` MCP server' 
 require_text 'set to the exact `/loop` command this session was started with' "the next session runs the same loop"
 require_text 'and trips the context or tool-call rule before finishing one pass' "a hand-off chain cannot loop forever"
 require_text 'call `ScheduleWakeup` with `stop: true`' "the stopped session ends its own loop"
-require_text 'unsubscribe every PR in `subscribed.json`' "the stopped session stops taking PR events"
+require_text 'unsubscribe only the PRs it holds' "the stopped session stops taking PR events for the PRs it claimed"
+require_text 'subscribe PRs #<a>, #<b>.' "the hand-off system prompt carries the held PR numbers"
 require_text 'Do not archive this session' "the stopped session keeps its staged worktree"
 require_text 'A stop on isolation-guard refusals never hands off' "a guard-refusal stop ends the loop"
 # Only a /loop run handed off, so a /delegate #<n> that hit the context or
@@ -475,7 +476,7 @@ require_text 'also run `<correctness_review>` on the conflict resolution only' "
 reject_regex 'Run `/code-review` at medium effort and `/simplify` on the diff' "Land no longer re-reviews the approved diff"
 require_text 'Apply only changes that preserve behaviour; do not change any test'"'"'s assertions.' "Land's changes still preserve behaviour"
 require_text 'Do not fix anything that needs a behaviour change: return it instead.' "Land still returns behaviour-changing findings"
-require_text 'If test files changed, run the project'"'"'s `tdd-guardian` agent (else a subagent that loads the `tdd-guardian` skill) on the staged diff' "Land runs tdd-guardian only when tests changed"
+require_text 'If test files changed, run the project'"'"'s `tdd-guardian` agent (else a `craft:delegate-reviewer` subagent that loads the `tdd-guardian` skill) on the staged diff' "Land runs tdd-guardian only when tests changed"
 
 # The walkthrough booted Docker, auth and the dev servers for test-only and
 # data-layer diffs under the UI root, graded every item in both themes, and
@@ -522,7 +523,11 @@ reject_regex 'Work\*\* step 2'"'"'s Reclaim' "nothing sends a pass to work.md fo
 require_text 'Call `get_session` once per session, not once per run' "the cloud session id is fetched once per session"
 require_text 'write the id to `ccr-session-id` in the session'"'"'s scratch directory' "the cloud session id survives /loop passes"
 # On the web, PR events wake the session instead of a minute-by-minute poll.
-require_text 'subscribe each delegated PR once' "Watch subscribes delegated PRs where the tool exists"
+require_text 'subscribe only to the PRs this session holds' "Watch subscribes only claimed PRs where the tool exists"
+require_text 'never because a pass listed it' "a listed PR is not subscribed"
+require_text 'when it stops holding it, and when it merges or closes' "Watch unsubscribes a PR on release, merge and close"
+require_text 'a PR named in the `subscribe PRs` line' "Watch subscribes the PRs a hand-off names"
+require_text 'subscribe the PR as **Watch** step 6 says' "Review, Land and Sync subscribe the PR they claim"
 require_text 'Otherwise leave a background poll running between passes' "the CLI keeps the background poll"
 require_text 'with `gh api` REST calls only' "the poll runs over REST"
 require_text 'Subscribe the PR as **Watch** step 6 says' "Work subscribes the PR it opens"
