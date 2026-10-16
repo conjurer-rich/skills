@@ -326,7 +326,8 @@ require_text 'the `create_session` tool of the `claude-code-remote` MCP server' 
 require_text 'set to the exact `/loop` command this session was started with' "the next session runs the same loop"
 require_text 'and trips the context or tool-call rule before finishing one pass' "a hand-off chain cannot loop forever"
 require_text 'call `ScheduleWakeup` with `stop: true`' "the stopped session ends its own loop"
-require_text 'unsubscribe every PR in `subscribed.json`' "the stopped session stops taking PR events"
+require_text 'unsubscribe only the PRs it holds' "the stopped session stops taking PR events for the PRs it claimed"
+require_text 'subscribe PRs #<a>, #<b>.' "the hand-off system prompt carries the held PR numbers"
 require_text 'Do not archive this session' "the stopped session keeps its staged worktree"
 require_text 'A stop on isolation-guard refusals never hands off' "a guard-refusal stop ends the loop"
 # Only a /loop run handed off, so a /delegate #<n> that hit the context or
@@ -521,7 +522,11 @@ reject_regex 'Work\*\* step 2'"'"'s Reclaim' "nothing sends a pass to work.md fo
 require_text 'Call `get_session` once per session, not once per run' "the cloud session id is fetched once per session"
 require_text 'write the id to `ccr-session-id` in the session'"'"'s scratch directory' "the cloud session id survives /loop passes"
 # On the web, PR events wake the session instead of a minute-by-minute poll.
-require_text 'subscribe each delegated PR once' "Watch subscribes delegated PRs where the tool exists"
+require_text 'subscribe only to the PRs this session holds' "Watch subscribes only claimed PRs where the tool exists"
+require_text 'never because a pass listed it' "a listed PR is not subscribed"
+require_text 'when it stops holding it, and when it merges or closes' "Watch unsubscribes a PR on release, merge and close"
+require_text 'a PR named in the `subscribe PRs` line' "Watch subscribes the PRs a hand-off names"
+require_text 'subscribe the PR as **Watch** step 6 says' "Review, Land and Sync subscribe the PR they claim"
 require_text 'Otherwise leave a background poll running between passes' "the CLI keeps the background poll"
 require_text 'with `gh api` REST calls only' "the poll runs over REST"
 require_text 'Subscribe the PR as **Watch** step 6 says' "Work subscribes the PR it opens"
