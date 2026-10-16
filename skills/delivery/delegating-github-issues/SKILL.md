@@ -26,8 +26,9 @@ The calling command supplies these; defaults apply when it does not, and keep th
 | `implementer_model_small` | `sonnet` | Implementer for expected tier S |
 | `implementer_model_large` | `opus` | Implementer otherwise |
 | `review_model`, `mechanical_model` | `opus`, `haiku` | Land's review and Sync's check; mechanical steps |
+| `acceptance_model` | `sonnet` | The Acceptance check |
 | `correctness_review`, `simplify` | `/code-review` (medium), `/simplify` | The bug review a check runs; Land's clean-up |
-| `full_suite_paths` | none | Globs that, when a diff touches one, make the implementer run the complete suite locally |
+| `full_suite_paths` | none | Globs that, when a diff touches one, make the implementer run the full suite locally |
 | `local_full_suite` | off | When on, the implementer also runs the full suite locally; off, CI runs it on the PR |
 | `preflight` | none | The project's drift fixers (a `preflight:` line); run before a PR's first push |
 | `walkthrough`, `walkthrough_model` | off, `sonnet` | When on, run `browser-ux-walkthrough`, on that model, for a diff matching `walkthrough_paths` |
@@ -38,7 +39,7 @@ The calling command supplies these; defaults apply when it does not, and keep th
 | `progress_label` | `in-progress` | Carried by an item while a session holds a live claim on it, so a human sees an agent is on it |
 | `answer_label`, `blocked_label`, `review_label` | `needs-answer`, `blocked`, `awaiting-review` | Derived: human must answer; blocked; PR to review |
 
-A **Verification scope** section in the project's delegation file replaces the `pre_pr_gate`'s complete-suite rule (`references/tiers.md`).
+A project's **Verification scope** section replaces the `pre_pr_gate`'s complete-suite rule (`references/tiers.md`).
 
 ## Delegator marker
 
@@ -64,7 +65,7 @@ A Land waiting on a background task has not stopped: its claim, heartbeat and la
 
 **Stale label.** `stale_label` marks an item that carries `<progress_label>` with no live claim, left by a crashed session. Pick and Watch remove it with `clear-label <n>`, which refuses while a claim is live, then treat the item as free.
 
-**Derived labels.** Only `status --sync-labels` writes the derived labels; a hand edit decides nothing.
+**Derived labels.** Only `status --sync-labels` writes them; a hand edit decides nothing.
 
 ## Stop rule
 
@@ -77,7 +78,7 @@ Either way, follow `references/handoff.md`. It then follows **Hand-off**, under 
 
 ## Entry points
 
-Read only the reference files for the entry point you are running. Paths are relative to this skill's directory.
+Read only the reference files for the entry point you run. Paths are relative to this skill's directory.
 
 | Entry point | Read |
 |---|---|

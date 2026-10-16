@@ -1,0 +1,174 @@
+#!/usr/bin/env bash
+#
+# review-pack: write one review round's shared pack for the
+# delegating-github-issues reviewers (Work step 7, Land step 5, Sync step 4).
+#
+#   review-pack --worktree <path> --implementer <report> --out <file>
+#   review-pack --worktree <path> [--base <ref>] [--merge] --out <file>
+#
+# With neither --base nor --merge, the pack holds the worktree's staged diff,
+# its diffstat and the implementer's summary (--implementer is required).
+# --base <ref> holds the branch's diff `<ref>...HEAD` instead (Land).
+# --merge adds the staged conflict resolution of an in-progress merge: each
+# file that differs from both sides, compared with HEAD and with MERGE_HEAD.
+# --implementer is optional with either. Every reviewer reads the pack instead
+# of running `git diff`. Prints one line, `<file>: <shortstat>`, and never the
+# diff itself.
+#
+# Exit codes: 0 written; 2 usage or a missing implementer report; 3 nothing
+# to review: nothing staged, an empty range, or no merge resolution (no pack
+# is written); git's own code when the worktree is not a repository.
+#
+
+set -euo pipefail
+
+usage() {
+  echo "usage: review-pack --worktree <path> [--implementer <report>] [--base <ref>] [--merge] --out <file>" >&2
+  exit 2
+}
+
+worktree=""
+implementer=""
+out=""
+base=""
+merge=0
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --worktree) [ $# -ge 2 ] || usage; worktree="$2"; shift 2 ;;
+    --implementer) [ $# -ge 2 ] || usage; implementer="$2"; shift 2 ;;
+    --out) [ $# -ge 2 ] || usage; out="$2"; shift 2 ;;
+    --base) [ $# -ge 2 ] || usage; base="$2"; shift 2 ;;
+    --merge) merge=1; shift ;;
+    -h|--help) usage ;;
+    *) echo "review-pack: unknown argument: $1" >&2; usage ;;
+  esac
+done
+
+[ -n "$worktree" ] && [ -n "$out" ] || usage
+staged_mode=0
+if [ -z "$base" ] && [ "$merge" -eq 0 ]; then
+  staged_mode=1
+  [ -n "$implementer" ] || usage
+fi
+
+if [ -n "$implementer" ] && [ ! -f "$implementer" ]; then
+  echo "review-pack: no implementer report at $implementer" >&2
+  exit 2
+fi
+
+gitw() {
+  git -C "$worktree" -c core.quotepath=false "$@"
+}
+
+nothing() {
+  echo "review-pack: $1" >&2
+  exit 3
+}
+
+# The primary diff: what the Diffstat section and the printed line measure.
+resolved=()
+if [ -n "$base" ]; then
+  primary=("$base...HEAD")
+elif [ "$staged_mode" -eq 1 ]; then
+  primary=(--cached)
+fi
+if [ "$merge" -eq 1 ]; then
+  gitw rev-parse -q --verify MERGE_HEAD > /dev/null || nothing "no merge in progress in $worktree"
+  while IFS= read -r f; do resolved+=("$f"); done < <(
+    comm -12 <(gitw diff --cached --name-only | sort) \
+             <(gitw diff --cached --name-only MERGE_HEAD | sort))
+  [ "${#resolved[@]}" -gt 0 ] || nothing "no merge resolution staged in $worktree"
+  [ -n "$base" ] || primary=(--cached -- "${resolved[@]}")
+fi
+
+shortstat="$(gitw diff --shortstat "${primary[@]}" | sed 's/^ *//')"
+[ -n "$shortstat" ] || nothing "nothing to review in $worktree"
+
+head_sha="$(gitw rev-parse --verify -q HEAD || echo "none")"
+diff_file="$(mktemp)"
+ours_file="$(mktemp)"
+theirs_file="$(mktemp)"
+tmp_out=""
+trap 'rm -f "$diff_file" "$ours_file" "$theirs_file" ${tmp_out:+"$tmp_out"}' EXIT
+
+if [ -n "$base" ] || [ "$staged_mode" -eq 1 ]; then
+  gitw diff --no-color --no-ext-diff "${primary[@]}" > "$diff_file"
+fi
+if [ "$merge" -eq 1 ]; then
+  gitw diff --cached --no-color --no-ext-diff -- "${resolved[@]}" > "$ours_file"
+  gitw diff --cached --no-color --no-ext-diff MERGE_HEAD -- "${resolved[@]}" > "$theirs_file"
+fi
+
+# A fence one backtick longer than the longest run inside any diff, so a
+# Markdown file's own code fence cannot close it early; three at least.
+longest="$({ cat "$diff_file" "$ours_file" "$theirs_file" | grep -o '`\+' || true; } \
+  | awk '{ if (length($0) > n) n = length($0) } END { print n + 0 }')"
+fence_len=$((longest >= 3 ? longest + 1 : 3))
+fence="$(printf '%*s' "$fence_len" '' | tr ' ' '`')"
+
+fenced() {
+  echo "${fence}diff"
+  cat "$1"
+  echo "$fence"
+}
+
+mkdir -p "$(dirname "$out")"
+tmp_out="$(mktemp "$(dirname "$out")/.review-pack.XXXXXX")"
+
+{
+  echo "# Review pack"
+  echo
+  echo "Worktree: \`$worktree\`"
+  if [ -n "$base" ]; then
+    echo "Branch diff \`$base...HEAD\`, \`HEAD\` $head_sha."
+  else
+    echo "Staged changes against \`HEAD\` $head_sha."
+  fi
+  echo
+  echo "Every reviewer reads this file for the diff; do not run \`git diff\` again."
+  echo
+  echo "## Diffstat"
+  echo
+  echo "$shortstat"
+  echo
+  echo '```text'
+  gitw diff --no-color --stat=200 "${primary[@]}"
+  echo '```'
+  if [ -n "$implementer" ]; then
+    echo
+    echo "## Implementer summary"
+    echo
+    cat "$implementer"
+  fi
+  if [ -n "$base" ]; then
+    echo
+    echo "## Branch diff"
+    echo
+    fenced "$diff_file"
+  elif [ "$staged_mode" -eq 1 ]; then
+    echo
+    echo "## Staged diff"
+    echo
+    fenced "$diff_file"
+  fi
+  if [ "$merge" -eq 1 ]; then
+    echo
+    echo "## Merge resolution"
+    echo
+    echo "Resolved files: ${resolved[*]}"
+    echo
+    echo "### Against HEAD (this branch)"
+    echo
+    fenced "$ours_file"
+    echo
+    echo "### Against MERGE_HEAD (the merged branch)"
+    echo
+    fenced "$theirs_file"
+  fi
+} > "$tmp_out"
+
+mv "$tmp_out" "$out"
+tmp_out=""
+
+echo "$out: $shortstat"
