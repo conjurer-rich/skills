@@ -651,6 +651,27 @@ require_text '`scripts/review-pack --worktree <worktree path> --merge --out <scr
 require_text 'Read the merge resolution from <scratch>/pr-<PR>/review-pack.md: the resolved files, compared with both sides of the merge; do not run git diff.' "Sync's resolution check reads the pack, not git diff"
 reject_regex 'git diff (--cached -- <files>|MERGE_HEAD)' "no reviewer brief runs git diff on a merge resolution"
 
+# A [blocked] PR listed its findings and stopped, so the human had to ask
+# "what do you recommend?" before a one-line reply could unblock it (#49,
+# #50). The session that hit the block now writes numbered fix options with
+# a recommendation, and a reply naming option ids is actionable.
+BLOCKED_REF="$SKILL_DIR/references/blocked-and-oracle.md"
+if grep -Fxq '### Fix options' "$BLOCKED_REF"; then
+  pass "blocked-and-oracle.md defines the Fix options format once"
+else
+  fail "blocked-and-oracle.md defines the Fix options format once"
+fi
+require_text 'numbered options (`1a`, `1b`, …), each with a one-line trade-off, and exactly one marked **(recommended)**' "each remaining finding carries numbered options with one recommended"
+require_text '`single fix: <the fix>` in place of options when only one sensible fix exists' "a finding with one sensible fix says single fix"
+require_text 'Never offer it for an unmet acceptance criterion or a `tdd-guardian` finding.' "deferral is never offered for unmet criteria or tdd-guardian findings"
+require_text 'End the list with a suggested reply built from the recommended options and single fixes' "the findings list ends with a ready-to-paste reply"
+require_text 'with the findings in the **Verification** section, each written as **Fix options** in `references/blocked-and-oracle.md`' "Work step 9 writes the remaining findings as fix options"
+require_text 'A reply that names option ids from a **Fix options** list' "Review step 4 treats a reply naming option ids as actionable"
+require_text 'or "fix all" when every finding in that list is a single fix' "fix all is actionable only when every finding is single-fix"
+require_text 'copy the chosen options verbatim into the implementer brief' "the chosen options reach the implementer verbatim"
+require_text 'reply with the findings that remain, written as **Fix options**' "a failed repair round under Watch or Land replies with fix options"
+reject_regex 'with the failure in one sentence, and stop' "a failed repair round no longer replies with a one-sentence failure"
+
 echo ""
 
 if [ "$FAILURES" -gt 0 ]; then
