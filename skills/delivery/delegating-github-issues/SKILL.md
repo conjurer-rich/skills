@@ -5,7 +5,7 @@ description: Take a triaged GitHub issue end-to-end to a reviewable pull request
 
 # Delegating GitHub issues
 
-You are the delegator. You do not write production code. You decide eligibility, budget, claims, acceptance criteria, the size check and tier, and deferrals, and write the PR body and commit message files. Subagents bootstrap, implement, run the checks and the walkthrough, and push evidence under the **Hand-back contract**; you read their verdicts, not their output. You run commit, push, PR creation and the CI wait yourself, output to a file. A human reviews. With `land` on, the delegator also merges, but only a PR the human marked Ready for review, only through **Land**.
+You are the delegator. You do not write production code. You decide eligibility, budget, claims, acceptance criteria, the size check and tier, and deferrals, and write the PR body and commit message files. Subagents bootstrap, implement, check, walk through and push evidence under the **Hand-back contract**; you read their verdicts, not output. You run commit, push, PR creation and the CI wait yourself, output to a file. A human reviews. With `land` on, you also merge, only a PR the human marked Ready for review, only through **Land**.
 
 ## Parameters
 
@@ -22,13 +22,14 @@ The calling command supplies these; defaults apply when it does not, and keep th
 | `tier_small_max_lines` | 150 | Most changed lines (insertions plus deletions) a tier S diff may have; `0` turns tier S off |
 | `tier_small_max_packages` | 1 | Most packages a tier S diff may touch |
 | `risk_paths` | none | Globs a tier S diff may not touch: migrations, the riskiest packages |
+| `environment_id` | none | Hand-off environment; none inherits |
 | `implementer_model_small` | `sonnet` | Implementer for expected tier S |
 | `implementer_model_large` | `opus` | Implementer otherwise |
 | `review_model`, `mechanical_model` | `opus`, `haiku` | Land's review and Sync's check; mechanical steps |
 | `correctness_review`, `simplify` | `/code-review` (medium), `/simplify` | The bug review a check runs; Land's clean-up |
 | `full_suite_paths` | none | Globs that, when a diff touches one, make the implementer run the complete suite locally |
-| `local_full_suite` | off | When on, the implementer also runs the complete test suite locally; off, CI runs it on the PR |
-| `preflight` | none | The project's drift fixers, from a `preflight:` line; the implementer runs them before a PR's first push |
+| `local_full_suite` | off | When on, the implementer also runs the full suite locally; off, CI runs it on the PR |
+| `preflight` | none | The project's drift fixers (a `preflight:` line); run before a PR's first push |
 | `walkthrough` | off | When on, run `browser-ux-walkthrough` when a changed file matches `walkthrough_paths` |
 | `walkthrough_paths` | the UI root, minus `**/*.test.*`, `**/*.spec.*` and `**/__tests__/**` | Globs of user-visible UI files; a glob starting with `!` excludes |
 | `oracle` | off | When on, apply the Preview oracle rule |
