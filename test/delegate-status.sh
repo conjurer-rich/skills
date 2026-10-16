@@ -1241,6 +1241,16 @@ status=0
 run lease release 100 > /dev/null 2>&1 || status=$?
 if [ "$status" -eq 3 ]; then pass "lease release refuses another chain's slot"; else fail "lease release refuses another chain's slot (got $status)"; fi
 check_not_called "-X DELETE" "another chain's slot is never deleted"
+# This session's own claim on an item is not a slot: release names the
+# tracking issue, so a claim id from claims.json on another issue is refused.
+use lease
+slots "$(slot_comment 300 "$OURS" "$LIVE_AT")"
+slot_comment 310 "$OURS" "$LIVE_AT" | jq -s '.' > "$FAKE_STATE/comments-9.json"
+status=0
+run lease release 310 > /dev/null 2>&1 || status=$?
+if [ "$status" -eq 3 ]; then pass "lease release refuses this session's claim on another issue"; else fail "lease release refuses this session's claim on another issue (got $status)"; fi
+check "this session's claim on another issue is kept" "$(cat "$FAKE_STATE/comments-9.json")" 'map(.id) == [310]'
+check_not_called "-X DELETE" "a claim on another issue is never deleted"
 
 # hand-over: the slot passes to a named successor, keeping its comment id
 use lease
@@ -1279,6 +1289,16 @@ check_called "-f labels[]=delegator-lease" "the tracking issue carries the lease
 : > "$FAKE_STATE/calls.log"
 run lease take > /dev/null || true
 check_not_called "-X POST repos/acme/widgets/issues " "an existing tracking issue is reused"
+# Two sessions that find no tracking issue both open one; each re-lists and
+# settles on the lower number, so both take slots on the same issue.
+use lease
+echo '[]' > "$FAKE_STATE/issues.json"
+jq '.[0].number = 76' "$FIXTURES/lease/issues.json" > "$FAKE_STATE/issues.json.next"
+touch "$FAKE_STATE/issues-grow"
+out="$(run lease take || true)"
+check "racing to open the tracking issue settles on the lower-numbered one" "$out" '.lease == 76 and .result == "won"'
+check_called "-X POST repos/acme/widgets/issues/76/comments" "the slot is claimed on the lower-numbered tracking issue"
+check_not_called "issues/77/comments" "the higher-numbered tracking issue gets no slot"
 use lease
 jq '. + [{number: 95, title: "Delegator chain lease", state: "open", labels: [{name: "delegator-lease"}], created_at: "2026-09-02T09:00:00Z", updated_at: "2026-09-02T09:00:00Z", body: ""}]' \
   "$FAKE_STATE/issues.json" > "$FAKE_STATE/issues.tmp" && mv "$FAKE_STATE/issues.tmp" "$FAKE_STATE/issues.json"
