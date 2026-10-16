@@ -118,6 +118,12 @@ from the main checkout with `git -C <worktree> commit` and
 `git -C <worktree> push`; a project that narrows `Bash(git:*)` allows those two
 as well.
 
+Running `/loop /delegate` in Claude Code on the web needs an environment set up
+first: only the GitHub connector, network access to `api.github.com`, a setup
+script that checks the tools `delegate-status` needs, and a GitHub access check.
+[`cloud-environment.md`](skills/delivery/delegating-github-issues/references/cloud-environment.md)
+walks through each.
+
 Settings a project can add to `.claude/delegation.md` to keep delegated runs
 cheap, each optional:
 
