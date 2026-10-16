@@ -30,7 +30,7 @@ The calling command supplies these; defaults apply when it does not, and keep th
 | `full_suite_paths` | none | Globs that, when a diff touches one, make the implementer run the complete suite locally |
 | `local_full_suite` | off | When on, the implementer also runs the full suite locally; off, CI runs it on the PR |
 | `preflight` | none | The project's drift fixers (a `preflight:` line); run before a PR's first push |
-| `walkthrough` | off | When on, run `browser-ux-walkthrough` when a changed file matches `walkthrough_paths` |
+| `walkthrough`, `walkthrough_model` | off, `sonnet` | When on, run `browser-ux-walkthrough`, on that model, for a diff matching `walkthrough_paths` |
 | `walkthrough_paths` | the UI root, minus `**/*.test.*`, `**/*.spec.*` and `**/__tests__/**` | Globs of user-visible UI files; a glob starting with `!` excludes |
 | `oracle` | off | When on, apply the Preview oracle rule |
 | `land` | off | When on, Work opens drafts, and **Land** may merge a PR the human marked Ready for review |
@@ -83,7 +83,7 @@ Read only the reference files for the entry point you are running. Paths are rel
 |---|---|
 | **Pick** | `references/pick.md` |
 | **Work** `#N` | `references/work.md` and `references/tiers.md` |
-| **Review** `#PR` | `references/review.md`, `references/tiers.md` and `references/work.md` (its steps 5–10: bootstrap, handoff, checks, walkthrough, repair round, ship) |
+| **Review** `#PR` | `references/review.md`, `references/tiers.md` and `references/work.md` (its steps 5–10, bootstrap to ship) |
 | **Watch** | `references/watch-digest.md`, `references/watch.md` and `references/reclaim.md`, then the files for any Review, Land or Sync it runs |
 | **Run** | `references/run.md`, `references/watch-digest.md`, `references/watch.md`, `references/reclaim.md` and `references/pick.md`; `references/work.md` once Pick finds one |
 | **Land** `#PR` | `references/land.md`, `references/review.md` (its step 2, and steps 4–6 when step 3 has review to answer), `references/reclaim.md` and `references/work.md` (its steps 5, 6 and 10) |

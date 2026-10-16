@@ -41,6 +41,7 @@ A step names a role, and the parameters below map each role to a model:
 | Implementer, otherwise | `implementer_model_large` | `opus` |
 | Land's review and Sync's resolution check | `review_model` | `opus` |
 | Mechanical steps: bootstrap, evidence, ship, cleanup | `mechanical_model` | `haiku` |
+| UX walkthrough (Work step 8) | `walkthrough_model` | `sonnet` |
 
 The defaults are Claude Code model aliases. In another harness, set each
 parameter to that harness's model names. Where a dispatch cannot choose its
