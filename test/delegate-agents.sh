@@ -125,10 +125,8 @@ fi
 # Every mention of general-purpose in the skill or the /delegate command is
 # fallback wording, on its own line or the line before (prose wraps).
 FALLBACK_WORDING='\*\*Fallback\.\*\*|fall back to|isn.t available|not available|not installed'
-mentions=0
 while IFS=: read -r file line _; do
   [ -n "$file" ] || continue
-  mentions=$((mentions + 1))
   start=$((line > 1 ? line - 1 : 1))
   where="${file#"$REPO_ROOT"/}:$line"
   if sed -n "${start},${line}p" "$file" | grep -qiE "$FALLBACK_WORDING"; then
