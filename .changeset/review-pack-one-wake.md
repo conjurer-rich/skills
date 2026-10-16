@@ -1,5 +1,0 @@
----
-"@conjurer-rich/skills": minor
----
-
-delegating-github-issues: a review round costs the delegator one wake. Work step 7 dispatches its checks (and the walkthrough) together in the foreground and resumes once, when all have returned, and the skill sets no wakeup or reminder while a foreground subagent runs. A new `scripts/review-pack` writes the staged diff, the diffstat and the implementer's summary once to `<scratch>/<N>/review-pack.md`, and every reviewer reads that file instead of running `git diff`; `--base` packs a branch's diff for Land's review and `--merge` a conflict resolution against both sides for Land's and Sync's checks, and the Whole diff check applies `<correctness_review>`'s recipe to the pack rather than recomputing the diff. The Acceptance check runs on a new `acceptance_model` parameter, default `sonnet`. The delegator never waits in a polling or `sleep` loop: suite, mutation-gate, CI and Preview oracle waits go to a background task that wakes it on exit, or to a runner subagent at `mechanical_model` that returns pass or fail with the failing lines.
