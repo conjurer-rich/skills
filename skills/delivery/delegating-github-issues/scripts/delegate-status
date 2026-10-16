@@ -516,8 +516,7 @@ lease_issue() {
     return
   fi
   list="repos/$REPO/issues?state=open&per_page=100&labels=$(uri "$LEASE_LABEL")"
-  n="$(list_of "$list")"
-  n="$(printf '%s' "$n" | lease_issue_of)"
+  n="$(list_of "$list" | lease_issue_of)"
   if [ -z "$n" ] && [ "${1:-}" != open ]; then
     die "no open $LEASE_LABEL issue; lease take opens one"
   fi
