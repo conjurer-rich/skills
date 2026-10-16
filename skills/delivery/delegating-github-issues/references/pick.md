@@ -1,5 +1,7 @@
 # Pick
 
+A **Run** whose chain holds an open `ticket` never runs Pick: it resumes its ticket instead (**Ticket** in `references/run.md`).
+
 1. Run `delegate-status status --cache <scratch>/pick-cache.json --sync-labels`. Its `issues` are every open `<label>` issue in the skill's order: issues with the first rank label, then the second, then unranked; oldest `createdAt` first within each group. Each carries a `state`, `counts` tallies them by state, and `pick` names the issue step 2 takes (`{number, title}`, or `null`):
    - `delegated`: an open PR from a `<branch_prefix><n>-` branch exists (`pr`). Skip an issue that has an open PR from a `<branch_prefix><n>-` branch: it is already delegated.
    - `claimed`: another session holds a live claim on it (`holder`): skip an issue another session holds a live claim on.

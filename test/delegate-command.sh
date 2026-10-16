@@ -121,6 +121,7 @@ require_text "$COMMAND" '`tier_small_max_lines` 150, `tier_small_max_packages` 1
 require_text "$COMMAND" '## Idle pass' "the command has an idle-pass check"
 require_text "$COMMAND" 'watch-digest --repo <owner>/<repo> --state <scratchpad>/delegator/watch-digest.json' "the idle check runs the digest"
 require_text "$COMMAND" 'end the pass without loading the skill' "an unchanged pass never loads the skill"
+require_text "$COMMAND" 'When it holds a `ticket`, schedule nothing' "an idle pass with an open ticket sets no wakeup"
 require_text "$COMMAND" 'Skip this section when the **Bookkeeping script** line reads `none`' "without the script the pass runs in full"
 require_text "$COMMAND" 'Bash(tail:*)' "reading a ship log's tail needs no permission prompt"
 require_text "$COMMAND" 'A `preflight:` line in the settings file sets `preflight`' "the command reads preflight from the settings"

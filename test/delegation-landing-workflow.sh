@@ -318,6 +318,21 @@ require_text '- **Traps:**' "the hand-off names traps hit"
 require_text 'reads it before its first step and does not re-derive what it says' "the next session reads the hand-off instead of re-deriving"
 require_text '`run-state.json`' "the stop counters live in run-state.json"
 require_text 'The new session starts a fresh Run, not the stopped Work.' "a stopped run's successor starts fresh"
+# A chain owns one ticket until it is complete (#37). After a hand-off the
+# next session picked again as soon as the PR opened, so one chain held up to
+# max_worktrees tickets and paid Watch, Sync and rework on each.
+require_text 'The ticket is `ticket` in `run-state.json`, `{issue, pr}`' "the chain's ticket is recorded in run-state"
+require_text 'While `ticket` is set, the chain never runs Pick' "a chain with an open ticket never picks"
+require_text 'ticket #<issue> PR #<pr>;' "the hand-off line carries the ticket"
+require_text 'writes it to `run-state.json` as `ticket` and resumes that ticket' "the session a hand-off creates resumes the ticket"
+require_text 'act only on the ticket'"'"'s PR' "Watch reviews, lands and syncs only the ticket's PR"
+require_text 'A chain with an open ticket holds only the ticket'"'"'s PR' "a chain subscribes only to its ticket's PR"
+require_text 'it merged or closed. Clear `ticket`' "a merged or closed PR ends the ticket"
+require_text 'which is how the human releases a ticket. Clear `ticket`' "the human can release the ticket"
+require_text 'it was never startable. Clear `ticket`; Pick skips it as before' "a blocked ticket goes back to Pick's rules"
+require_text 'hands off before it waits' "a chain hands off before waiting on the human or CI"
+require_text 'schedule no next pass and set no reminder' "a waiting chain sets no scheduled wakeup"
+require_text 'A **Run** whose chain holds an open `ticket` never runs Pick' "Pick is never reached while a ticket is open"
 # A /loop wakeup is a new turn in the same session, so a run that stopped at
 # the context limit tripped the rule again on every later pass and the loop died.
 # A cloud session hands the loop to a new session with an empty context.
