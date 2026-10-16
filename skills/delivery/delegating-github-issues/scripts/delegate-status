@@ -26,6 +26,7 @@
 #   delegate-status renew       <n> <id>       [options]
 #   delegate-status heartbeat   <n> <id> [--every 900]                 [options]
 #   delegate-status release     <n> <id> (--reason <text> | --delete) [options]
+#   delegate-status lease       take | renew <id> | heartbeat <id> [--every 900] | release <id> | hand <id> --to <session>
 #   delegate-status clear-label <n>            [options]
 #   delegate-status promote-criteria <n> <comment id>                  [options]
 #   delegate-status comment     <n> --body-file <f>                    [options]
@@ -47,12 +48,14 @@
 # Options (defaults are the skill's):
 #   --repo <owner/repo>      required
 #   --session <name>         this session's claim name; required for claim, confirm,
-#                            renew, heartbeat, release and cost-note
+#                            renew, heartbeat, release, lease and cost-note
 #   --label agent-ready      --rank-labels p1,p2      --prefix delegated/
 #   --progress-label in-progress                       --claim-ttl 2700 (seconds)
 #   --answer-label needs-answer                        --blocked-label blocked
 #   --review-label awaiting-review
 #   --max-worktrees 1        --max-open-prs 6          --land off|on
+#   --max-chains 1           lease only: the slots, so the delegator chains that run at once
+#   --lease-label delegator-lease                      --lease-issue <n> (skips the label lookup)
 #   --cache <file>           status and next-action: Pick's skip cache, read and rewritten
 #   --sync-labels            status only: add or remove the derived answer, blocked and
 #                            review labels to match each issue's and PR's classification
@@ -63,7 +66,8 @@
 # to GitHub. Exit status:
 # 0 done, 1 a gh or git call failed, 2 usage, 3 refused (the comment is
 # another session's, or a live claim backs the label), 4 another session
-# holds a live claim on the item (claim, heartbeat): stop, never retry.
+# holds a live claim on the item (claim, heartbeat, lease heartbeat and hand),
+# 5 every lease slot is held by a live chain (lease take): exit, never retry.
 #
 # DELEGATE_STATUS_NOW (epoch seconds) overrides the clock, DELEGATE_STATUS_POLL
 # (seconds, default 30) the checks --wait interval and the heartbeat interval,
@@ -97,6 +101,10 @@ SYNC_LABELS=0
 CLAIM_TTL=2700
 MAX_WORKTREES=1
 MAX_OPEN_PRS=6
+MAX_CHAINS=1
+LEASE_LABEL="delegator-lease"
+LEASE_ISSUE=""
+TO=""
 LAND="off"
 CACHE=""
 REASON=""
@@ -140,6 +148,10 @@ while [ $# -gt 0 ]; do
     --claim-ttl) CLAIM_TTL="${2:-}"; shift 2 ;;
     --max-worktrees) MAX_WORKTREES="${2:-}"; shift 2 ;;
     --max-open-prs) MAX_OPEN_PRS="${2:-}"; shift 2 ;;
+    --max-chains) MAX_CHAINS="${2:-}"; shift 2 ;;
+    --lease-label) LEASE_LABEL="${2:-}"; shift 2 ;;
+    --lease-issue) LEASE_ISSUE="${2:-}"; shift 2 ;;
+    --to) TO="${2:-}"; shift 2 ;;
     --land) LAND="${2:-}"; shift 2 ;;
     --cache) CACHE="${2:-}"; shift 2 ;;
     --reason) REASON="${2:-}"; shift 2 ;;
@@ -174,8 +186,8 @@ done
 [ "${#POSITIONAL[@]}" -gt 0 ] || usage
 COMMAND="${POSITIONAL[0]}"
 [ -n "$REPO" ] || die "--repo <owner/repo> is required" 2
-case "$CLAIM_TTL$MAX_WORKTREES$MAX_OPEN_PRS$WAIT$LIMIT$EVERY$INTERVAL$MAX_INTERVAL$TOOL_CALLS$ADDRESSED" in
-  *[!0-9]*) die "--claim-ttl, --max-worktrees, --max-open-prs, --wait, --limit, --every, --interval, --max-interval, --tool-calls and --addressed take whole numbers" 2 ;;
+case "$CLAIM_TTL$MAX_WORKTREES$MAX_OPEN_PRS$MAX_CHAINS$LEASE_ISSUE$WAIT$LIMIT$EVERY$INTERVAL$MAX_INTERVAL$TOOL_CALLS$ADDRESSED" in
+  *[!0-9]*) die "--claim-ttl, --max-worktrees, --max-open-prs, --max-chains, --lease-issue, --wait, --limit, --every, --interval, --max-interval, --tool-calls and --addressed take whole numbers" 2 ;;
 esac
 case "$LAND" in on|off) ;; *) die "--land takes on or off" 2 ;; esac
 
@@ -372,15 +384,18 @@ cmd_claim() {
     '{item: $n, result: "won", id: $id, open_pr: $pr}'
 }
 
-# Prints live or lost for claim <id> on item <n>.
+# Prints live or lost for claim <id> on item <n>. An item has one holder; the
+# lease has $SLOTS, the first live claims by id.
+SLOTS=1
 confirm_json() {
-  local n="$1" id="$2" comments winner
+  local n="$1" id="$2" comments
   comments="$(comments_of "$n")"
-  winner="$(winner_of "$comments")"
-  jq -nc --argjson n "$n" --argjson id "$id" --argjson w "$winner" --arg s "$SESSION" '
-    if $w != null and $w.id == $id and $w.session == $s
-    then {item: $n, result: "live", id: $id}
-    else {item: $n, result: "lost", id: $id, holder: ($w.session // null)} end'
+  printf '%s' "$comments" | jq -c --argjson now "$NOW" --argjson ttl "$CLAIM_TTL" --argjson k "$SLOTS" \
+    --argjson n "$n" --argjson id "$id" --arg s "$SESSION" "$JQ_DEFS"'
+    live_claims($now; $ttl)[:$k] as $held
+    | if any($held[]; .id == $id and .session == $s)
+      then {item: $n, result: "live", id: $id}
+      else {item: $n, result: "lost", id: $id, holder: ($held[0].session // null)} end'
 }
 
 cmd_confirm() {
@@ -413,19 +428,18 @@ cmd_renew() {
 # Renews the claim now and then every --every seconds, as a background task
 # held for as long as the claim is: a claim lapses claim_ttl after its last
 # heartbeat, so a crashed session frees its item quickly while a long
-# implementer step keeps it. Exits 4 the moment the claim is lost.
-cmd_heartbeat() {
-  need_session
-  need_args 3
-  local n="${POSITIONAL[1]}" id="${POSITIONAL[2]}" state beats=0
+# implementer step keeps it. Exits 4 the moment the claim is lost. Each line
+# is printed through the jq filter $3.
+heartbeat_loop() {
+  local n="$1" id="$2" out="$3" what="$4" state beats=0
   [ "$EVERY" -lt "$CLAIM_TTL" ] || die "--every must be shorter than --claim-ttl" 2
   while :; do
     NOW="${DELEGATE_STATUS_NOW:-$(date +%s)}"
     NOW_ISO="$(jq -nr --argjson n "$NOW" '$n | todate')"
     state="$(renew_json "$n" "$id")"
-    printf '%s\n' "$state"
+    printf '%s\n' "$state" | jq -c "$out"
     if [ "$(printf '%s' "$state" | jq -r .result)" != renewed ]; then
-      printf 'delegate-status: the claim on #%s is lost; stop work on it\n' "$n" >&2
+      printf 'delegate-status: the %s is lost; stop work on it\n' "$what" >&2
       exit 4
     fi
     beats=$((beats + 1))
@@ -434,6 +448,12 @@ cmd_heartbeat() {
     fi
     sleep "${DELEGATE_STATUS_POLL:-$EVERY}"
   done
+}
+
+cmd_heartbeat() {
+  need_session
+  need_args 3
+  heartbeat_loop "${POSITIONAL[1]}" "${POSITIONAL[2]}" '.' "claim on #${POSITIONAL[1]}"
 }
 
 cmd_release() {
@@ -468,6 +488,147 @@ cmd_release() {
   fi
   jq -nc --argjson n "$n" --argjson id "$id" --argjson deleted "$DELETE" \
     '{item: $n, result: "released", id: $id, deleted: ($deleted == 1)}'
+}
+
+# ---------------------------------------------------------------- lease
+#
+# The chain lease caps the delegator chains (a Run and the sessions it hands
+# off to) that run at once. It is the claim protocol on one tracking issue,
+# the lowest-numbered open issue labelled --lease-label (opened when there is
+# none), or --lease-issue: each claim comment is one slot, and the first
+# --max-chains live claims by id hold the slots. A slot lapses, renews and
+# heartbeats as a claim does, and `hand` rewrites it to name the successor
+# session, keeping its id and so its rank: no third session can take it
+# between the hand-off and the successor's first renewal.
+
+LEASE_OUT='{lease: .item} + del(.item)'
+
+lease_issue_of() {
+  jq -r '[.[] | select(has("pull_request") | not) | .number] | min // empty'
+}
+
+# The tracking issue's number. Only `take` (with "open") opens one when there
+# is none; every other action needs one to exist.
+lease_issue() {
+  local list n body
+  if [ -n "$LEASE_ISSUE" ]; then
+    printf '%s' "$LEASE_ISSUE"
+    return
+  fi
+  list="repos/$REPO/issues?state=open&per_page=100&labels=$(uri "$LEASE_LABEL")"
+  n="$(list_of "$list" | lease_issue_of)"
+  if [ -z "$n" ] && [ "${1:-}" != open ]; then
+    die "no open $LEASE_LABEL issue; lease take opens one"
+  fi
+  if [ -z "$n" ]; then
+    ensure_label "$LEASE_LABEL" BFD4F2 "Each live claim on this issue is one running delegator chain"
+    body="Each live \`<!-- delegator claim: <session> -->\` comment on this issue holds one delegator chain slot. \`delegate-status lease\` writes them; delete one to free its slot."
+    gh_json api -X POST "repos/$REPO/issues" -f title="Delegator chain lease" -f body="$body" \
+      -f "labels[]=$LEASE_LABEL" > /dev/null
+    # Two sessions that open one at once both settle on the lower number.
+    n="$(list_of "$list" | lease_issue_of)"
+    [ -n "$n" ] || die "the lease issue opened but is not listed"
+  fi
+  printf '%s' "$n"
+}
+
+# Prints full with the holders and exits 5.
+lease_full() {
+  local n="$1" comments="$2"
+  printf '%s' "$comments" | jq -c --argjson now "$NOW" --argjson ttl "$CLAIM_TTL" --argjson k "$SLOTS" --argjson n "$n" "$JQ_DEFS"'
+    {lease: $n, result: "full", holders: [live_claims($now; $ttl)[:$k][].session], slots: $k}'
+  printf 'delegate-status: all %s delegator chain slots are held; exit, do not retry\n' "$SLOTS" >&2
+  exit 5
+}
+
+# This session's rank (1-based) among the live claims, then its claim id;
+# empty when it holds none.
+lease_mine() {
+  printf '%s' "$1" | jq -r --argjson now "$NOW" --argjson ttl "$CLAIM_TTL" --arg s "$SESSION" "$JQ_DEFS"'
+    [live_claims($now; $ttl) | to_entries[] | select(.value.session == $s)] | first // empty
+    | "\(.key + 1) \(.value.id)"'
+}
+
+lease_take() {
+  local n comments mine rank id body
+  n="$(lease_issue open)"
+  comments="$(comments_of "$n")"
+  mine="$(lease_mine "$comments")"
+  if [ -z "$mine" ]; then
+    if printf '%s' "$comments" | jq -e --argjson now "$NOW" --argjson ttl "$CLAIM_TTL" --argjson k "$SLOTS" \
+      "$JQ_DEFS"'live_claims($now; $ttl) | length >= $k' > /dev/null; then
+      lease_full "$n" "$comments"
+    fi
+    body="Chain slot held by delegator session \`$SESSION\` until released, or $(ttl_text) without a heartbeat.
+<!-- delegator claim: $SESSION -->"
+    gh_json api -X POST "repos/$REPO/issues/$n/comments" -f body="$body" > /dev/null
+    comments="$(comments_of "$n")"
+    mine="$(lease_mine "$comments")"
+    [ -n "$mine" ] || die "the slot claim on #$n was posted but is not listed"
+  fi
+  rank="${mine%% *}"
+  id="${mine#* }"
+  if [ "$rank" -gt "$SLOTS" ]; then
+    gh_json api -X DELETE "repos/$REPO/issues/comments/$id" > /dev/null
+    lease_full "$n" "$(comments_of "$n")"
+  fi
+  jq -nc --argjson n "$n" --argjson id "$id" --argjson r "$rank" --argjson k "$SLOTS" \
+    '{lease: $n, result: "won", id: $id, slot: $r, slots: $k}'
+}
+
+lease_release() {
+  local n="$1" id="$2" comment
+  comment="$(gh_json api "repos/$REPO/issues/comments/$id")"
+  case "$(printf '%s' "$comment" | jq -r '.issue_url // ""')" in
+    */issues/"$n") ;;
+    *) die "comment $id is not on lease issue #$n; refusing to touch it" 3 ;;
+  esac
+  case "$(printf '%s' "$comment" | jq -r '.body // ""')" in
+    *"<!-- delegator claim: $SESSION -->"*) ;;
+    *) die "comment $id is not a slot of session $SESSION; refusing to touch it" 3 ;;
+  esac
+  gh_json api -X DELETE "repos/$REPO/issues/comments/$id" > /dev/null
+  jq -nc --argjson n "$n" --argjson id "$id" '{lease: $n, result: "released", id: $id}'
+}
+
+lease_hand() {
+  local n="$1" id="$2" state body
+  state="$(confirm_json "$n" "$id")"
+  if [ "$(printf '%s' "$state" | jq -r .result)" != live ]; then
+    printf '%s\n' "$state" | jq -c "$LEASE_OUT"
+    printf 'delegate-status: this session holds no slot %s on #%s; nothing to hand over\n' "$id" "$n" >&2
+    exit 4
+  fi
+  body="Chain slot handed to delegator session \`$TO\` by \`$SESSION\`; renewed $NOW_ISO
+<!-- delegator claim: $TO -->"
+  gh_json api -X PATCH "repos/$REPO/issues/comments/$id" -f body="$body" > /dev/null
+  jq -nc --argjson n "$n" --argjson id "$id" --arg to "$TO" '{lease: $n, result: "handed", id: $id, to: $to}'
+}
+
+cmd_lease() {
+  need_session
+  local action="${POSITIONAL[1]:-}" id="${POSITIONAL[2]:-}"
+  [ "$MAX_CHAINS" -ge 1 ] || die "--max-chains takes 1 or more" 2
+  SLOTS="$MAX_CHAINS"
+  case "$action" in
+    take) lease_take; return ;;
+    renew|heartbeat|release|hand) ;;
+    *) usage ;;
+  esac
+  case "$id" in *[!0-9]*|'') die "lease $action takes the slot's claim id" 2 ;; esac
+  if [ "$action" = hand ]; then
+    case "$TO" in
+      ''|*[!0-9A-Za-z_-]*) die "lease hand takes --to <successor session>, of letters, digits, _ and -" 2 ;;
+    esac
+  fi
+  local n
+  n="$(lease_issue)"
+  case "$action" in
+    renew) renew_json "$n" "$id" | jq -c "$LEASE_OUT" ;;
+    heartbeat) heartbeat_loop "$n" "$id" "$LEASE_OUT" "lease slot $id on #$n" ;;
+    release) lease_release "$n" "$id" ;;
+    hand) lease_hand "$n" "$id" ;;
+  esac
 }
 
 cmd_clear_label() {
@@ -1348,6 +1509,7 @@ case "$COMMAND" in
   renew) cmd_renew ;;
   heartbeat) cmd_heartbeat ;;
   release) cmd_release ;;
+  lease) cmd_lease ;;
   clear-label) cmd_clear_label ;;
   promote-criteria) cmd_promote_criteria ;;
   comment) cmd_comment ;;

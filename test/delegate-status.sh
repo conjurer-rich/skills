@@ -16,8 +16,8 @@
 # reclaim with agent scratch, the needs-an-answer rules (marker, Claude Code
 # footer, [bot] and Bot authors, preview stickies, reply-to), PR
 # classification, Land markers, hand-off comments, CI checks pinned to a head
-# SHA, the Watch digest and its backoff, follow-up issues, cost notes and the
-# Pick skip cache.
+# SHA, the Watch digest and its backoff, follow-up issues, cost notes, the
+# Pick skip cache and the chain lease (take, full, lapsed, release, hand-over).
 #
 
 set -e
@@ -164,6 +164,15 @@ use claims
 check "confirm: our live, lowest claim is live" "$(run confirm 9 300)" '.result == "live"'
 check "confirm: a claim outranked by a lower live claim is lost" "$(run confirm 7 99)" '.result == "lost"'
 check "confirm: a lapsed claim is lost" "$(run confirm 10 400)" '.result == "lost" and .holder == "'"$OTHER"'"'
+use claims
+touch "$FAKE_STATE/comments-9.json.fail"
+status=0
+out="$(run confirm 9 300 2> /dev/null)" || status=$?
+if [ "$status" -ne 0 ] && [ -z "$out" ]; then
+  pass "confirm: a failed gh call exits non-zero and prints no result"
+else
+  fail "confirm: a failed gh call exits non-zero and prints no result (got $status: $out)"
+fi
 
 use claims
 out="$(run renew 10 400)"
@@ -1108,6 +1117,231 @@ if run next-action --from "$TMP/missing.json" > /dev/null 2>&1; then
 else
   pass "next-action --from a missing file is a usage error"
 fi
+
+# ---------------------------------------------------------------- lease
+#
+# The chain lease: max_chains slots, each one claim comment on the tracking
+# issue (the lowest-numbered open issue labelled delegator-lease). The first
+# max_chains live claims by comment id hold the slots, so the claim TTL,
+# renewal and heartbeat work as they do on an item.
+NEXT=c9d0e1f2
+run_as() { # session, args -> run as that session
+  local who="$1"; shift
+  PATH="$FIXTURES/bin:$PATH" DELEGATE_STATUS_NOW="${RUN_NOW:-$NOW}" "$STATUS" "$@" \
+    --repo acme/widgets --claim-ttl 14400 --session "$who"
+}
+# slot_comment <id> <session> <updated_at> -> one claim comment
+slot_comment() {
+  jq -nc --argjson id "$1" --arg s "$2" --arg at "$3" \
+    '{id: $id, body: "Claimed by delegator session `\($s)` until released, or 4 hours without a heartbeat.\n<!-- delegator claim: \($s) -->",
+      created_at: $at, updated_at: $at, user: {login: "rich"}}'
+}
+slots() { # comment json objects -> comments-90.json
+  jq -s '.' <<< "$*" > "$FAKE_STATE/comments-90.json"
+}
+LIVE_AT=2026-10-02T11:00:00Z
+LAPSED_AT=2026-10-02T06:00:00Z
+
+use lease
+out="$(run lease take || true)"
+check "lease take: a free slot is won" "$out" '.lease == 90 and .result == "won" and .id == 900 and .slot == 1 and .slots == 1'
+check_called "-X POST repos/acme/widgets/issues/90/comments" "lease take posts a claim on the tracking issue"
+check_called "repos/acme/widgets/issues?state=open&per_page=100&labels=delegator-lease" "lease finds the tracking issue by its label"
+check_not_called "issues/90/labels" "lease take adds no progress label"
+check "lease take: the slot is an ordinary claim comment" "$(cat "$FAKE_STATE/comments-90.json")" \
+  '.[0].body | endswith("<!-- delegator claim: '"$OURS"' -->")'
+
+use lease
+slots "$(slot_comment 300 "$OURS" "$LIVE_AT")"
+out="$(run lease take || true)"
+check "lease take: a slot this session holds is reused" "$out" '.result == "won" and .id == 300'
+check_not_called "-X POST" "reusing a held slot posts nothing"
+
+# full: every slot held by a live chain
+use lease
+slots "$(slot_comment 100 "$OTHER" "$LIVE_AT")"
+status=0
+out="$(run lease take 2> "$FAKE_STATE/stderr")" || status=$?
+check "lease take: all slots held is full, with the holders" "$out" '.result == "full" and .holders == ["'"$OTHER"'"] and .slots == 1'
+if [ "$status" -eq 5 ]; then pass "lease take: all slots held exits 5"; else fail "lease take: all slots held exits 5 (got $status)"; fi
+check_not_called "-X POST" "a full lease posts nothing"
+
+use lease
+slots "$(slot_comment 100 "$OTHER" "$LIVE_AT")"
+out="$(run lease take --max-chains 2 || true)"
+check "lease take: max_chains 2 leaves a second slot" "$out" '.result == "won" and .slot == 2 and .slots == 2'
+
+use lease
+slots "$(slot_comment 100 "$OTHER" "$LIVE_AT")" "$(slot_comment 101 "$NEXT" "$LIVE_AT")"
+status=0
+out="$(run lease take --max-chains 2 2> /dev/null)" || status=$?
+check "lease take: two live chains fill two slots" "$out" '.result == "full" and .holders == ["'"$OTHER"'", "'"$NEXT"'"]'
+if [ "$status" -eq 5 ]; then pass "lease take: a full lease of two exits 5"; else fail "lease take: a full lease of two exits 5 (got $status)"; fi
+
+# lapsed: a slot whose heartbeat lapsed past claim_ttl is free
+use lease
+slots "$(slot_comment 100 "$OTHER" "$LAPSED_AT")"
+out="$(run lease take || true)"
+check "lease take: a slot lapsed past claim_ttl can be taken" "$out" '.result == "won" and .id == 900 and .slot == 1'
+check_not_called "comments/100" "the lapsed slot's comment is not touched"
+use lease
+slots "$(slot_comment 100 "$OTHER" "$LIVE_AT")"
+out="$(RUN_NOW=$((NOW + 10800)) run lease take || true)"
+check "lease take: a slot exactly claim_ttl old is lapsed" "$out" '.result == "won"'
+
+# race: two chains take the last slot at once; the lower id keeps it
+use lease
+slot_comment 100 "$OTHER" "$LIVE_AT" | jq -s '.' > "$FAKE_STATE/comments-90.json.next"
+status=0
+out="$(run lease take 2> /dev/null)" || status=$?
+check "lease take: a chain that loses the race for the last slot is full" "$out" '.result == "full" and .holders == ["'"$OTHER"'"]'
+if [ "$status" -eq 5 ]; then pass "lease take: losing the race exits 5"; else fail "lease take: losing the race exits 5 (got $status)"; fi
+check_called "-X DELETE repos/acme/widgets/issues/comments/900" "the losing chain deletes its own claim"
+
+# renew and heartbeat
+use lease
+slots "$(slot_comment 100 "$OTHER" "$LIVE_AT")" "$(slot_comment 300 "$OURS" "$LIVE_AT")"
+out="$(run lease renew 300 --max-chains 2 || true)"
+check "lease renew: the second of two slots renews" "$out" '.lease == 90 and .result == "renewed" and .id == 300'
+check "lease renew: the slot's first line carries the renewal time" "$(cat "$FAKE_STATE/comments-90.json")" \
+  '.[] | select(.id == 300) | .body | split("\n")[0] | endswith("renewed 2026-10-02T12:00:00Z")'
+out="$(run lease renew 300 || true)"
+check "lease renew: a claim beyond max_chains holds no slot" "$out" '.result == "lost"'
+use lease
+slots "$(slot_comment 100 "$OURS" "$LAPSED_AT")" "$(slot_comment 200 "$OTHER" "$LIVE_AT")"
+out="$(run lease renew 100 || true)"
+check "lease renew: a lapsed slot another chain has since taken is lost" "$out" '.result == "lost"'
+check_not_called "-X PATCH" "renewing a lost slot writes nothing"
+use lease
+slots "$(slot_comment 300 "$OURS" "$LIVE_AT")"
+out="$(DELEGATE_STATUS_BEATS=2 DELEGATE_STATUS_POLL=0 run lease heartbeat 300 --every 600 || true)"
+check "lease heartbeat renews the slot" "$out" '.result == "renewed" and .lease == 90'
+if [ "$(grep -c -- "-X PATCH repos/acme/widgets/issues/comments/300" "$FAKE_STATE/calls.log")" -eq 2 ]; then
+  pass "lease heartbeat renews once per beat"
+else
+  fail "lease heartbeat renews once per beat"
+fi
+use lease
+slots "$(slot_comment 100 "$OURS" "$LAPSED_AT")" "$(slot_comment 200 "$OTHER" "$LIVE_AT")"
+status=0
+DELEGATE_STATUS_BEATS=2 DELEGATE_STATUS_POLL=0 run lease heartbeat 100 > /dev/null 2>&1 || status=$?
+if [ "$status" -eq 4 ]; then pass "lease heartbeat exits 4 when the slot is lost"; else fail "lease heartbeat exits 4 when the slot is lost (got $status)"; fi
+
+# release
+use lease
+slots "$(slot_comment 300 "$OURS" "$LIVE_AT")"
+out="$(run lease release 300 || true)"
+check "lease release frees the slot" "$out" '.lease == 90 and .result == "released" and .id == 300'
+check "lease release deletes the slot's claim" "$(cat "$FAKE_STATE/comments-90.json")" '. == []'
+check_not_called "issues/90/labels" "lease release touches no label"
+check "a released slot can be taken" "$(run_as "$OTHER" lease take || true)" '.result == "won"'
+use lease
+slots "$(slot_comment 100 "$OTHER" "$LIVE_AT")"
+status=0
+run lease release 100 > /dev/null 2>&1 || status=$?
+if [ "$status" -eq 3 ]; then pass "lease release refuses another chain's slot"; else fail "lease release refuses another chain's slot (got $status)"; fi
+check_not_called "-X DELETE" "another chain's slot is never deleted"
+# This session's own claim on an item is not a slot: release names the
+# tracking issue, so a claim id from claims.json on another issue is refused.
+use lease
+slots "$(slot_comment 300 "$OURS" "$LIVE_AT")"
+slot_comment 310 "$OURS" "$LIVE_AT" | jq -s '.' > "$FAKE_STATE/comments-9.json"
+status=0
+run lease release 310 > /dev/null 2>&1 || status=$?
+if [ "$status" -eq 3 ]; then pass "lease release refuses this session's claim on another issue"; else fail "lease release refuses this session's claim on another issue (got $status)"; fi
+check "this session's claim on another issue is kept" "$(cat "$FAKE_STATE/comments-9.json")" 'map(.id) == [310]'
+check_not_called "-X DELETE" "a claim on another issue is never deleted"
+
+# hand-over: the slot passes to a named successor, keeping its comment id
+use lease
+slots "$(slot_comment 300 "$OURS" "$LIVE_AT")"
+out="$(run lease hand 300 --to "$NEXT" || true)"
+check "lease hand passes the slot to the successor" "$out" '.lease == 90 and .result == "handed" and .id == 300 and .to == "'"$NEXT"'"'
+check "the handed slot names the successor and is renewed now" "$(cat "$FAKE_STATE/comments-90.json")" \
+  '.[0] | (.body | endswith("<!-- delegator claim: '"$NEXT"' -->")) and .updated_at == "2026-10-02T12:00:00Z"'
+status=0
+out="$(RUN_NOW=$((NOW + 14399)) run_as "$OTHER" lease take 2> /dev/null)" || status=$?
+check "a handed slot cannot be taken by a third chain before the successor renews" "$out" '.result == "full" and .holders == ["'"$NEXT"'"]'
+if [ "$status" -eq 5 ]; then pass "a third chain finds the handed lease full"; else fail "a third chain finds the handed lease full (got $status)"; fi
+status=0
+run lease release 300 > /dev/null 2>&1 || status=$?
+if [ "$status" -eq 3 ]; then pass "the old chain's release cannot free a handed slot"; else fail "the old chain's release cannot free a handed slot (got $status)"; fi
+: > "$FAKE_STATE/calls.log"
+out="$(RUN_NOW=$((NOW + 600)) run_as "$NEXT" lease take || true)"
+check "the successor holds the handed slot without racing" "$out" '.result == "won" and .id == 300 and .slot == 1'
+check_not_called "-X POST" "the successor posts no new claim"
+use lease
+slots "$(slot_comment 100 "$OURS" "$LAPSED_AT")" "$(slot_comment 200 "$OTHER" "$LIVE_AT")"
+status=0
+run lease hand 100 --to "$NEXT" > /dev/null 2>&1 || status=$?
+if [ "$status" -eq 4 ]; then pass "lease hand refuses a slot this chain no longer holds"; else fail "lease hand refuses a slot this chain no longer holds (got $status)"; fi
+check_not_called "-X PATCH" "a refused hand-over writes nothing"
+
+# the tracking issue
+use lease
+echo '[]' > "$FAKE_STATE/issues.json"
+echo '[]' > "$FAKE_STATE/labels.json"
+touch "$FAKE_STATE/issues-grow"
+out="$(run lease take || true)"
+check "with no tracking issue, lease take opens one and takes its slot" "$out" '.lease == 77 and .result == "won"'
+check_called "-X POST repos/acme/widgets/labels -f name=delegator-lease" "the lease label is created when missing"
+check_called "-f labels[]=delegator-lease" "the tracking issue carries the lease label"
+: > "$FAKE_STATE/calls.log"
+run lease take > /dev/null || true
+check_not_called "-X POST repos/acme/widgets/issues " "an existing tracking issue is reused"
+# Two sessions that find no tracking issue both open one; each re-lists and
+# settles on the lower number, so both take slots on the same issue.
+use lease
+echo '[]' > "$FAKE_STATE/issues.json"
+jq '.[0].number = 76' "$FIXTURES/lease/issues.json" > "$FAKE_STATE/issues.json.next"
+touch "$FAKE_STATE/issues-grow"
+out="$(run lease take || true)"
+check "racing to open the tracking issue settles on the lower-numbered one" "$out" '.lease == 76 and .result == "won"'
+check_called "-X POST repos/acme/widgets/issues/76/comments" "the slot is claimed on the lower-numbered tracking issue"
+check_not_called "issues/77/comments" "the higher-numbered tracking issue gets no slot"
+use lease
+jq '. + [{number: 95, title: "Delegator chain lease", state: "open", labels: [{name: "delegator-lease"}], created_at: "2026-09-02T09:00:00Z", updated_at: "2026-09-02T09:00:00Z", body: ""}]' \
+  "$FAKE_STATE/issues.json" > "$FAKE_STATE/issues.tmp" && mv "$FAKE_STATE/issues.tmp" "$FAKE_STATE/issues.json"
+check "the lowest-numbered open lease issue is the tracking issue" "$(run lease take || true)" '.lease == 90'
+use lease
+echo '[]' > "$FAKE_STATE/comments-41.json"
+out="$(run lease take --lease-issue 41 || true)"
+check "--lease-issue names the tracking issue" "$out" '.lease == 41 and .result == "won"'
+check_not_called "labels=delegator-lease" "--lease-issue skips the lookup"
+
+# only take opens the tracking issue: the other actions need one to exist
+for action in "renew 300" "heartbeat 300" "release 300" "hand 300 --to $NEXT"; do
+  use lease
+  echo '[]' > "$FAKE_STATE/issues.json"
+  status=0
+  # shellcheck disable=SC2086
+  DELEGATE_STATUS_BEATS=1 DELEGATE_STATUS_POLL=0 run lease $action > /dev/null 2> "$FAKE_STATE/stderr" || status=$?
+  if [ "$status" -ne 0 ] && [ -s "$FAKE_STATE/stderr" ]; then
+    pass "lease ${action%% *} with no tracking issue fails"
+  else
+    fail "lease ${action%% *} with no tracking issue fails (got $status)"
+  fi
+  check_not_called "-X POST" "lease ${action%% *} opens no tracking issue"
+done
+
+# --to names a session, as --session does
+for to in "bad name" "x-->" ""; do
+  use lease
+  slots "$(slot_comment 300 "$OURS" "$LIVE_AT")"
+  status=0
+  run lease hand 300 --to "$to" > /dev/null 2>&1 || status=$?
+  if [ "$status" -eq 2 ]; then pass "lease hand --to '$to' is a usage error"; else fail "lease hand --to '$to' is a usage error (got $status)"; fi
+  check_not_called "-X PATCH" "a refused --to '$to' writes nothing"
+done
+
+# usage
+use lease
+for args in "lease" "lease bogus" "lease renew" "lease hand 300" "lease take --max-chains 0" "lease take --max-chains x"; do
+  status=0
+  # shellcheck disable=SC2086
+  run $args > /dev/null 2>&1 || status=$?
+  if [ "$status" -eq 2 ]; then pass "'$args' is a usage error"; else fail "'$args' is a usage error (got $status)"; fi
+done
 
 echo ""
 

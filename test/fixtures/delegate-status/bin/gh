@@ -9,7 +9,9 @@
 # github.com does for the CLI, so the GraphQL fallbacks can be tested. A
 # `deps-404` file does the same for the native issue-dependencies route. A
 # `<fixture>.next` file replaces its fixture after the fixture is first read,
-# so a poll sees a change.
+# so a poll sees a change. A `<fixture>.fail` file makes reading that fixture
+# fail, as a gh call does on a network error. An `issues-grow` file makes a
+# created issue join issues.json, so a later list sees it.
 #
 
 set -euo pipefail
@@ -43,6 +45,10 @@ field() {
 }
 
 serve() {
+  if [ -f "$state/$1.fail" ]; then
+    echo "gh: Bad Gateway (HTTP 502)" >&2
+    exit 1
+  fi
   if [ -f "$state/$1" ]; then
     cat "$state/$1"
     if [ -f "$state/$1.next" ]; then mv "$state/$1.next" "$state/$1"; fi
@@ -170,6 +176,12 @@ if [ "${args[0]:-}" = api ]; then
       [ -f "$state/job-log-$id.txt" ] || { echo "gh: blob host unreachable (HTTP 403)" >&2; exit 1; }
       cat "$state/job-log-$id.txt"; exit 0 ;;
     POST\ repos/*/issues)
+      if [ -f "$state/issues-grow" ]; then
+        jq --arg t "$(field title)" --arg l "$(field 'labels[]')" \
+          '. + [{number: 77, title: $t, state: "open", labels: [{name: $l}], created_at: "2026-10-02T12:00:00Z", updated_at: "2026-10-02T12:00:00Z", body: ""}]' \
+          "$state/issues.json" > "$state/issues.tmp"
+        mv "$state/issues.tmp" "$state/issues.json"
+      fi
       jq -n --arg t "$(field title)" '{number: 77, title: $t, html_url: "https://github.com/acme/widgets/issues/77"}'; exit 0 ;;
     GET\ repos/*/check-runs/*/annotations)
       id="${path%/annotations}"; id="${id##*/}"
