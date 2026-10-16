@@ -92,6 +92,21 @@ else
   pass "delegate-reviewer has no edit tool"
 fi
 
+# The reviewer runs the full suite as a background task and waits for it, so it
+# needs Monitor and TaskOutput, but it may not stop a task (no TaskStop).
+for tool in Monitor TaskOutput; do
+  if printf '%s' "$reviewer_tools" | grep -Eq "(^|[ ,])$tool([ ,]|$)"; then
+    pass "delegate-reviewer has $tool to wait on a background task"
+  else
+    fail "delegate-reviewer has $tool to wait on a background task"
+  fi
+done
+if printf '%s' "$reviewer_tools" | grep -Eq '(^|[ ,])TaskStop([ ,]|$)'; then
+  fail "delegate-reviewer has no TaskStop"
+else
+  pass "delegate-reviewer has no TaskStop"
+fi
+
 # hand-back.md makes the narrow types the default dispatch.
 HAND_BACK="$SKILL_DIR/references/hand-back.md"
 if grep -qF 'its `subagent_type` is the narrow agent type for its role' "$HAND_BACK"; then
