@@ -21,6 +21,12 @@ This repository is the `craft` plugin. `AGENTS.md` is a symlink to this file.
   load every skill a second time. The eval harness builds its workspaces in a
   temp directory for that reason.
 
+## Bootstrap
+
+A fresh worktree needs `pnpm install --frozen-lockfile` before any test or
+changeset command. The SessionStart hook in `.claude/settings.json` runs it
+for sessions started in this repository.
+
 ## Before you push
 
 - `./test/run.sh` passes. It includes `scripts/check-layout.py` (manifest ↔

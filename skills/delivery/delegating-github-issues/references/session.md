@@ -38,7 +38,7 @@ Set it with one call, counted in `tool_calls`, and write the new title to `run-s
 
 Advice to the human, not instructions to the delegator:
 
-- Run `/delegate` in a dedicated environment with only the GitHub connector attached; every attached MCP server's tool list is loaded on every turn.
+- Run `/delegate` in a dedicated environment with only the GitHub connector attached; every attached MCP server's tool list is loaded on every turn. `references/cloud-environment.md` covers building that environment: connectors, network, a setup script and the GitHub access check.
 - The container is reclaimed once the session sits idle, and an in-container wakeup timer such as `ScheduleWakeup` is lost with it, silently: the loop then waits for a PR event or a message from you. That is why the loop schedules its next pass with `send_later`, a reminder kept on the server that starts the session again in a new container. A pending reminder shows in your Routines list as `delegate next pass`.
 - Do not run it with the `learning` output style or any output style that adds per-turn commentary.
 - A worktree carries a second copy of the project's `CLAUDE.md`. With the delegator staying in the main checkout, that copy no longer loads into the delegator's context on every turn, which is one more reason the delegator never enters a worktree.
