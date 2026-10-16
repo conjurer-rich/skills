@@ -16,7 +16,7 @@ The calling command supplies these; defaults apply when it does not, and keep th
 | `label` | `agent-ready` | Only issues with this label are eligible |
 | `rank_labels` | `p1`, `p2` | Higher rank first; unranked last |
 | `max_worktrees` | 1 | Active `<branch_prefix>` worktrees. |
-| `max_chains` | 1 | Chains (a Run and its successors) at once: slots on the `delegator-lease` issue; a Run beyond exits. The WIP limit, where `max_worktrees` caps one checkout |
+| `max_chains` | 1 | Chains (a Run and successors) at once: slots on the `delegator-lease` issue; a Run beyond exits. The WIP limit; `max_worktrees` caps a checkout |
 | `max_open_prs` | 6 | Open PRs in the repository, all authors |
 | `branch_prefix` | `delegated/` | Prefix of every delegated branch |
 | `pre_pr_gate` | the project's gate, else `mutation-testing`'s `pr-readiness.md` | The implementer runs it before the PR |
@@ -52,7 +52,7 @@ A comment **needs an answer** when it does not contain `<!-- delegator`, it does
 
 Several delegator sessions can run at once through one `gh` login, so a session claims an issue (Work) or PR (Review, Land, Sync) with a comment before it changes anything. The claim comment is the lock: it ends `<!-- delegator claim: <session> -->`, it is live while its heartbeat is within `claim_ttl`, and the live claim with the lowest comment id wins, so two sessions that claim at once agree on one winner. `<progress_label>` only tells humans: the winner adds it and every release removes it, and it never decides who holds an item.
 
-**Session name.** Before its first claim, a session takes its hand-off line's `session name`, or else 8 random hex characters. Not the **Session title**; the two never mix.
+**Session name.** Before its first claim, a session takes its hand-off line's `session name`, else 8 random hex characters. Not the **Session title**; the two never mix.
 
 **`delegate-status`.** `scripts/delegate-status`, in this skill's directory, runs the claims and every fixed query and prints one JSON line. Run it from the main checkout with `--repo <owner>/<repo> --session <session>` and a flag for each parameter the project changed (`delegate-status --help`). Keep claim ids in `claims.json` in the run's scratch directory. On a non-zero exit, report its last line and stop.
 
