@@ -16,6 +16,7 @@ The calling command supplies these; defaults apply when it does not, and keep th
 | `label` | `agent-ready` | Only issues with this label are eligible |
 | `rank_labels` | `p1`, `p2` | Higher rank first; unranked last |
 | `max_worktrees` | 1 | Active `<branch_prefix>` worktrees. |
+| `max_chains` | 1 | Chains (a Run and its successors) at once: slots on the `delegator-lease` issue; a Run beyond exits. The WIP limit, where `max_worktrees` caps one checkout |
 | `max_open_prs` | 6 | Open PRs in the repository, all authors |
 | `branch_prefix` | `delegated/` | Prefix of every delegated branch |
 | `pre_pr_gate` | the project's gate, else `mutation-testing`'s `pr-readiness.md` | The implementer runs it before the PR |
@@ -50,9 +51,9 @@ A comment **needs an answer** when it does not contain `<!-- delegator`, it does
 
 Several delegator sessions can run at once through one `gh` login, so a session claims an issue (Work) or PR (Review, Land, Sync) with a comment before it changes anything. The claim comment is the lock: it ends `<!-- delegator claim: <session> -->`, it is live while its heartbeat is within `claim_ttl`, and the live claim with the lowest comment id wins, so two sessions that claim at once agree on one winner. `<progress_label>` only tells humans: the winner adds it and every release removes it, and it never decides who holds an item.
 
-**Session name.** Before its first claim, a session names itself with 8 random hex characters. It is not the **Session title**; the two never mix.
+**Session name.** Before its first claim, a session takes its hand-off line's `session name`, or else 8 random hex characters. Not the **Session title**; the two never mix.
 
-**`delegate-status`.** `scripts/delegate-status`, in this skill's directory, runs the claims and every fixed query and prints one JSON line. Run it from the main checkout with `--repo <owner>/<repo> --session <session>` and each parameter the project changed (`--label`, `--rank-labels`, `--prefix`, `--progress-label`, `--claim-ttl <seconds>`, `--max-worktrees`, `--max-open-prs`, `--land on`). Keep claim ids in `claims.json` in the run's scratch directory. On a non-zero exit, report its last line and stop.
+**`delegate-status`.** `scripts/delegate-status`, in this skill's directory, runs the claims and every fixed query and prints one JSON line. Run it from the main checkout with `--repo <owner>/<repo> --session <session>` and a flag for each parameter the project changed (`delegate-status --help`). Keep claim ids in `claims.json` in the run's scratch directory. On a non-zero exit, report its last line and stop.
 
 - **Claim.** `claim <n>` prints `won` with the `id` (and `open_pr` when a delegated PR is open for the issue). When another session holds a live claim, it posts nothing, prints `lost` with the `holder` and exits 4; in a race, the loser deletes its own claim comment and exits 4. On exit 4, stop work on the item, never retry or take over. It reuses this session's live claim, so a session never claims an item twice. The winner adds the label, creating it if missing; Never `--force`.
 - **Heartbeat.** After a won claim, run `heartbeat <n> <id>` as a background task until you release. It renews every 15 minutes; when it exits 4 the claim is lost, so stop work on the item.
@@ -63,8 +64,6 @@ Several delegator sessions can run at once through one `gh` login, so a session 
 A Land waiting on a background task has not stopped: its claim, heartbeat and label hold. Review steps inside Land use Land's claim. The human frees a claim by deleting it.
 
 **Stale label.** `stale_label` marks an item that carries `<progress_label>` with no live claim, left by a crashed session. Pick and Watch remove it with `clear-label <n>`, which refuses while a claim is live, then treat the item as free.
-
-**Derived labels.** Only `status --sync-labels` writes the derived labels; a hand edit decides nothing.
 
 ## Stop rule
 

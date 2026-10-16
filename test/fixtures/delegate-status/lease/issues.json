@@ -1,0 +1,15 @@
+[
+  {
+    "number": 90,
+    "title": "Delegator chain lease",
+    "state": "open",
+    "labels": [
+      {
+        "name": "delegator-lease"
+      }
+    ],
+    "created_at": "2026-09-01T09:00:00Z",
+    "updated_at": "2026-10-02T11:00:00Z",
+    "body": "Each live claim comment on this issue holds one delegator chain slot."
+  }
+]
