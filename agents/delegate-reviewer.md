@@ -19,8 +19,12 @@ The brief names the worktree, the contract to check against, the skills to load
 review) and the report file to write.
 
 - Work only inside the worktree path the brief names.
-- Read, search and run commands (`git diff --cached`, the tests, the project's
-  checks) to gather evidence. Treat the implementer's report as claims to check,
+- Read, search and run commands (the tests, the project's checks) to gather
+  evidence. When the brief names a review pack, read the diff, the diffstat
+  and any implementer's summary from it and do not run `git diff`; apply a
+  review the brief names (such as the project's correctness review) as a
+  recipe to the pack's diff, not as a command that computes its own diff.
+  Otherwise use `git diff --cached`. Treat the implementer's report as claims to check,
   not as evidence.
 - Run a long command (the full suite) as a background task and wait for its
   exit notification; `Monitor` and `TaskOutput` are there for that. Never poll

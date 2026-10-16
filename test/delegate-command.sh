@@ -112,6 +112,8 @@ require_text "$SKILL_DIR/SKILL.md" '| `implementer_model_large` | `opus` |' "the
 require_text "$SKILL_DIR/references/sync.md" '`model: <review_model>`, `run_in_background: true`' "Sync's resolution check is dispatched on the review model"
 require_text "$SKILL_DIR/references/land.md" '`model: <review_model>`, `run_in_background: true`' "Land's reviewer is dispatched on the review model"
 require_text "$COMMAND" 'Bash(*/delegating-github-issues/scripts/delegate-status:*)' "the bookkeeping script needs no permission prompt"
+require_text "$COMMAND" 'Bash(*/delegating-github-issues/scripts/review-pack:*)' "the review-pack script needs no permission prompt"
+require_text "$COMMAND" '`acceptance_model` `sonnet`' "the command lists the acceptance model default"
 require_text "$COMMAND" '`tier_small_max_lines` 150, `tier_small_max_packages` 1, no `risk_paths`' "the command lists the size-tier defaults"
 
 # Idle passes cost almost as much as working ones: the digest runs before the
