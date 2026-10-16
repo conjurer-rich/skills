@@ -16,6 +16,10 @@
     "delegate",
     "adr",
     "learn",
-    "twelve-factor-audit"
+    "twelve-factor-audit",
+    "delegate-implementer",
+    "delegate-reviewer",
+    "delegate-walkthrough",
+    "delegate-mechanical"
   ]
 }

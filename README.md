@@ -38,7 +38,7 @@ run in Codex:
 | --- | --- | --- |
 | **portable** | works as in Claude Code | every skill not listed below |
 | **degrades** | runs its subagent parts one after another | `review`, `double-check`, `retro`, `grilling`, `codebase-design`, `improve-codebase-architecture`, `tdd-guardian`, `refactor-scan` |
-| **claude-only** | not available | `delegating-github-issues`, `/delegate`, `browser-ux-walkthrough`, the `adr`, `learn` and `twelve-factor-audit` agents, the Stop hook |
+| **claude-only** | not available | `delegating-github-issues`, `/delegate`, `browser-ux-walkthrough`, the `adr`, `learn`, `twelve-factor-audit` and `delegate-*` agents, the Stop hook |
 
 `scripts/check-portability.py` keeps portable and degrades skills free of
 Claude Code tool names and `~/.claude` paths.
@@ -76,7 +76,7 @@ load every skill twice. The names are unchanged.
 | `skills/architecture/` | design and structure: `hexagonal-architecture`, `domain-driven-design`, `codebase-design`, `api-design`, `observability`, … |
 | `skills/delivery/` | getting work shipped: `delegating-github-issues`, `planning`, `specification`, `story-splitting`, `acceptance-review`, … |
 | `skills/writing/` | knowledge and prose: `technical-writing`, `diagrams`, `ubiquitous-language`, `expectations`, … |
-| `agents/` | `twelve-factor-audit`, `adr`, `learn` (Claude Code only) |
+| `agents/` | `twelve-factor-audit`, `adr`, `learn`, and the delegator's `delegate-implementer`, `delegate-reviewer`, `delegate-walkthrough`, `delegate-mechanical` (Claude Code only) |
 | `shelf/` | skills, agents and commands kept in the repository but **not installed** |
 | `skills/deprecated/` | aliases kept for one release, then deleted |
 | `global/` | the global `CLAUDE.md` (and `AGENTS.md`, a link to it) that `scripts/install-global` puts in place |

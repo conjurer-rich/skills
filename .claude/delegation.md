@@ -13,6 +13,7 @@ Read by `/delegate` (the `delegating-github-issues` skill) and by
 | `pre_pr_gate` | `./test/run.sh`, then `pnpm changeset status --since origin/main` |
 | `risk_paths` | `.claude-plugin/**`, `package.json`, `hooks/**`, `global/**`, `scripts/version.sh` |
 | `walkthrough` | off |
+| `land` | on |
 
 ## Verification scope
 
