@@ -157,7 +157,7 @@ require_text 'The implementer'"'"'s returns are claims, not evidence.' "the impl
 require_text 'loads `acceptance-review`' "acceptance criteria are checked independently"
 require_text 'The project'"'"'s whole-PR review agent' "the whole diff is reviewed before the PR opens"
 require_text 'do **not** run its Fix step' "the delegator never applies walkthrough fixes itself"
-require_text 'Then re-run the checks for the tier, measured again from the fresh (g): at tier M or L, `tdd-guardian` and every check that reported a blocking finding, as step 7 dispatches them; at tier S, the one reviewer.' "the repair round is re-checked"
+require_text 'and re-run the checks for the tier on it, measured again from the fresh (g): at tier M or L, `tdd-guardian` and every check that reported a blocking finding, together, as step 7 dispatches them; at tier S, the one reviewer.' "the repair round is re-checked"
 require_text 'edit this comment to change them, then react' "derived acceptance criteria wait for the human"
 require_text 'including any glossary or vocabulary check' "the gate's glossary step is not dropped"
 reject_regex 'gate'"'"'s steps 1–5' "the pre-PR gate is not truncated"
@@ -247,7 +247,7 @@ require_text 'Put `<progress_label>` on an item without holding a live claim on 
 reject_regex 'EnterWorktree' "the skill no longer uses EnterWorktree"
 require_text 'git worktree add <path> -b <branch_prefix>N-<slug> origin/<default branch>' "the worktree is created from the main checkout"
 require_text 'Stay in the main checkout: the delegator never enters the worktree' "the delegator stays in the main checkout"
-require_text 'It runs no `git` command inside a worktree other than `git worktree add`, `git worktree list`, `git worktree remove`, `git worktree prune`, `git -C <path> status --porcelain` for Reclaim, and the three shipping commands above (`git -C <path> commit -q -F`, `git -C <path> push -q`, `git -C <path> rev-parse HEAD`).' "the delegator's in-worktree git commands are Reclaim's and the three shipping ones"
+require_text 'It runs no `git` command inside a worktree other than `git worktree add`, `git worktree list`, `git worktree remove`, `git worktree prune`, `git -C <path> status --porcelain` for Reclaim, the three shipping commands above (`git -C <path> commit -q -F`, `git -C <path> push -q`, `git -C <path> rev-parse HEAD`), and `scripts/review-pack --worktree <path>` (**Work** step 7, **Land** step 5, **Sync** step 4).' "the delegator's in-worktree git commands are Reclaim's, the three shipping ones and review-pack"
 require_text 'then dispatch the bootstrap subagent as **Work** step 5 does. Never enter it' "Review never enters the worktree either"
 require_text 'work only inside `<path>`' "subagents are briefed with the worktree path"
 # B. Mechanical steps run in subagents under one hand-back contract.
@@ -289,7 +289,8 @@ require_text 'Otherwise renew the claim, then dispatch a fresh implementer' "Wor
 require_text 'The brief is the step 6 brief, plus every blocking finding' "the repair brief reuses the step 6 brief"
 require_text 'never a step down' "the repair implementer keeps an escalated model"
 require_text 'Renew the claim, then hand the actionable threads' "Review renews before its handoff"
-require_text 'Renew the claim, then dispatch one subagent with `subagent_type: craft:delegate-implementer`, `model: <review_model>`, `run_in_background: true`' "Land renews before its review wait"
+require_text 'Renew the claim, then write the review pack from the main checkout: `scripts/review-pack --worktree <worktree path> --base' "Land renews before its review wait"
+require_text 'Dispatch one subagent with `subagent_type: craft:delegate-implementer`, `model: <review_model>`, `run_in_background: true`' "Land's review runs in the background on the review model"
 require_text '**Wait for CI.** Renew the claim, then run' "Land renews before its CI wait"
 # D. Pick caches skips across loop passes.
 require_script 'updatedAt: .updated_at' "Pick lists updatedAt"
@@ -471,12 +472,12 @@ reject_regex 'Where the self-check or gate requires the complete test suite, run
 
 # Land re-reviewed the whole diff the human had just approved. It simplifies
 # the diff, and reviews only what it wrote itself: a conflict resolution.
-require_text 'Run `<simplify>` on the diff against `origin/<default branch>`.' "Land simplifies the whole diff"
-require_text 'also run `<correctness_review>` on the conflict resolution only' "Land reviews only its own conflict resolution"
+require_text 'Apply `<simplify>`'"'"'s recipe to the pack'"'"'s branch diff.' "Land simplifies the whole diff"
+require_text 'also apply `<correctness_review>`'"'"'s review recipe to the conflict resolution only' "Land reviews only its own conflict resolution"
 reject_regex 'Run `/code-review` at medium effort and `/simplify` on the diff' "Land no longer re-reviews the approved diff"
 require_text 'Apply only changes that preserve behaviour; do not change any test'"'"'s assertions.' "Land's changes still preserve behaviour"
 require_text 'Do not fix anything that needs a behaviour change: return it instead.' "Land still returns behaviour-changing findings"
-require_text 'If test files changed, run the project'"'"'s `tdd-guardian` agent (else a `craft:delegate-reviewer` subagent that loads the `tdd-guardian` skill) on the staged diff' "Land runs tdd-guardian only when tests changed"
+require_text 'If test files changed, rewrite the pack for the staged changes (`scripts/review-pack --worktree <worktree path> --implementer <its report> --out <scratch>/pr-<PR>/review-pack.md`), then run the project'"'"'s `tdd-guardian` agent (else a `craft:delegate-reviewer` subagent that loads the `tdd-guardian` skill) on it' "Land runs tdd-guardian only when tests changed"
 
 # The walkthrough booted Docker, auth and the dev servers for test-only and
 # data-layer diffs under the UI root, graded every item in both themes, and
@@ -625,6 +626,30 @@ require_walkthrough 'test files (`*.test.*`, `*.spec.*`, `__tests__/**`) are not
 require_walkthrough 'Stop the stack once' "the stack is stopped once"
 require_walkthrough 'If the stack skill has a *Themes* rule' "the stack skill's Themes rule picks the themes"
 require_walkthrough 're-walks the affected surfaces on the running stack' "a no-code caller re-walks without a second boot"
+
+# Issue #33: one wake per review round, a shared review pack, runners for
+# long waits.
+require_text 'Dispatch them **together**, all in one turn, each `run_in_background: false`, so they run in parallel and you resume **once**, after every check has returned' "step 7 dispatches its checks together and resumes once"
+require_text 'in the same turn as step 7'"'"'s checks, so the round still resumes once' "the walkthrough joins the checks' single wake"
+require_text 'Set no wakeup, reminder or timer while one is running' "no wakeup while a foreground subagent runs"
+require_text 'Set no wakeup or reminder while they run' "step 7 sets no wakeup while its checks run"
+require_text '`scripts/review-pack --worktree <worktree path> --implementer <scratch>/<N>/implementer.md --out <scratch>/<N>/review-pack.md`' "step 7 writes the review pack in one call"
+require_text 'Read the staged diff, the diffstat and the implementer'"'"'s summary from <scratch>/<N>/review-pack.md; do not run git diff.' "every check's brief reads the pack, not git diff"
+require_text 'Then rewrite the review pack with the same `review-pack` call as step 7' "the repair round rewrites the pack"
+require_text '| `acceptance_model` | `sonnet` |' "acceptance_model defaults to sonnet"
+require_text '**Acceptance.** A `craft:delegate-reviewer` subagent, `model: <acceptance_model>`' "the Acceptance check is dispatched at acceptance_model"
+require_text '**No polling or `sleep` loop of your own.**' "the delegator never waits in a polling loop"
+require_text '**A runner**: one `craft:delegate-mechanical` subagent on `model: <mechanical_model>`' "long waits go to a runner at the mechanical model"
+require_text 'hand the wait to a runner' "the oracle wait goes to a runner"
+reject_regex 'polling every [0-9]+ minutes' "no step has the delegator poll on a timer"
+require_text 'Any other non-zero exit goes to **Blocked** with its stderr line.' "any other review-pack failure blocks the run"
+require_text 'applies `<correctness_review>`'"'"'s review recipe to the pack'"'"'s staged diff, rather than running it as a command that computes its own diff' "the Whole diff check reviews the pack, not a recomputed diff"
+require_text '`scripts/review-pack --worktree <worktree path> --base origin/<default branch> --out <scratch>/pr-<PR>/review-pack.md`, adding `--merge` when step 4 returned `resolved`' "Land step 5 writes a pack of the branch diff and any resolution"
+require_text 'Read the branch diff, and any merge resolution, from <scratch>/pr-<PR>/review-pack.md; do not run git diff.' "Land's review brief reads the pack, not git diff"
+require_text 'its brief carrying Work step 7'"'"'s pack line' "Land's tdd-guardian check reads the pack"
+require_text '`scripts/review-pack --worktree <worktree path> --merge --out <scratch>/pr-<PR>/review-pack.md`' "Sync step 4 writes a pack of the resolution"
+require_text 'Read the merge resolution from <scratch>/pr-<PR>/review-pack.md: the resolved files, compared with both sides of the merge; do not run git diff.' "Sync's resolution check reads the pack, not git diff"
+reject_regex 'git diff (--cached -- <files>|MERGE_HEAD)' "no reviewer brief runs git diff on a merge resolution"
 
 echo ""
 
