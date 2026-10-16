@@ -195,16 +195,29 @@ fi
 
 # The branch and main both change greet.sh's echo line, so the merge
 # conflicts there; main also adds a file the branch never touched.
-make_merge_worktree() {
+# make_conflict_worktree [readme]: the merge stopped on its conflicts, none
+# resolved yet. With "readme", both sides also rewrite README.md's last line.
+make_conflict_worktree() {
   make_worktree
+  if [ "${1:-}" = readme ]; then
+    echo 'Branch side readme.' >> "$WT/README.md"
+    g add README.md
+  fi
   g commit -q -m change
   g checkout -q -b main-side HEAD~1
   printf '#!/usr/bin/env bash\ngreet() {\n  echo "Hi, $1"\n}\n' > "$WT/src/greet.sh"
   echo 'incoming from main' > "$WT/incoming.txt"
+  if [ "${1:-}" = readme ]; then
+    echo 'Main side readme.' >> "$WT/README.md"
+  fi
   g add -A
   g commit -q -m main-change
   g checkout -q -
   g merge -q main-side > /dev/null 2>&1 || true
+}
+
+make_merge_worktree() {
+  make_conflict_worktree
   printf '#!/usr/bin/env bash\ngreet() {\n  echo "Hi, ${1:-world}"\n}\n' > "$WT/src/greet.sh"
   g add src/greet.sh
 }
@@ -241,6 +254,126 @@ else
   fail "--base with --merge: the pack carries both the branch diff and the resolution (exit $code)"
 fi
 
+# --base with --merge: the branch diff is still the whole branch, not only the
+# resolved files (Land step 5 reviews the resolution and simplifies the branch).
+make_merge_worktree
+merge_base="$(g merge-base HEAD MERGE_HEAD)"
+set +e
+stdout="$("$PACK" --worktree "$WT" --base "$merge_base" --merge --out "$OUT" 2>&1)"
+code=$?
+set -e
+range_shortstat="$(g diff --shortstat "$merge_base...HEAD" | sed 's/^ *//')"
+both_branch_body="$(section 'Branch diff' "$OUT")"
+if [ "$code" -eq 0 ] \
+  && printf '%s\n' "$both_branch_body" | grep -Fxq -- '+++ b/docs/usage.md' \
+  && printf '%s\n' "$both_branch_body" | grep -Fxq -- '+++ b/src/greet.sh'; then
+  pass "--base with --merge: the Branch diff covers the whole branch, not only the resolved files"
+else
+  fail "--base with --merge: the Branch diff covers the whole branch, not only the resolved files (exit $code: $stdout)"
+fi
+if section Diffstat "$OUT" | grep -Fxq -- "$range_shortstat" \
+  && section Diffstat "$OUT" | grep -Eq 'docs/usage\.md +\|' \
+  && [ "$stdout" = "$OUT: $range_shortstat" ]; then
+  pass "--base with --merge: the diffstat and the printed line measure base...HEAD"
+else
+  fail "--base with --merge: the diffstat and the printed line measure base...HEAD (got: $stdout)"
+fi
+
+# --merge: the resolved files are the merge's conflicted files, whichever way
+# each was resolved. README.md is resolved by taking the incoming side whole,
+# so it differs from HEAD only; greet.sh by hand, so it differs from both.
+make_conflict_worktree readme
+printf '#!/usr/bin/env bash\ngreet() {\n  echo "Hi, ${1:-world}"\n}\n' > "$WT/src/greet.sh"
+g checkout -q --theirs README.md
+g add src/greet.sh README.md
+set +e
+stdout="$("$PACK" --worktree "$WT" --merge --out "$OUT" 2>&1)"
+code=$?
+set -e
+theirs_body="$(section 'Merge resolution' "$OUT")"
+if [ "$code" -eq 0 ] \
+  && printf '%s\n' "$theirs_body" | grep -Fxq -- 'Resolved files: README.md src/greet.sh' \
+  && printf '%s\n' "$theirs_body" | grep -Fxq -- '+Main side readme.' \
+  && ! grep -Fq 'incoming' "$OUT"; then
+  pass "--merge: a conflict resolved by taking one side whole is in the pack"
+else
+  fail "--merge: a conflict resolved by taking one side whole is in the pack (exit $code: $stdout)"
+fi
+
+# BSD/macOS tools have no GNU -z (NUL-separated lines). With stubs on PATH
+# that reject it, a resolved two-file conflict still gives a full pack.
+STUBS="$TMP/bsd-stubs"
+mkdir -p "$STUBS"
+for tool in tail head sed sort cut tr uniq; do
+  real="$(command -v "$tool")"
+  cat > "$STUBS/$tool" <<EOF
+#!/usr/bin/env bash
+for a in "\$@"; do
+  case "\$a" in
+    --*) ;;
+    -*z*) echo "$tool: illegal option -- z" >&2; exit 1 ;;
+  esac
+done
+exec "$real" "\$@"
+EOF
+  chmod +x "$STUBS/$tool"
+done
+make_conflict_worktree readme
+printf '#!/usr/bin/env bash\ngreet() {\n  echo "Hi, ${1:-world}"\n}\n' > "$WT/src/greet.sh"
+g checkout -q --theirs README.md
+g add src/greet.sh README.md
+set +e
+stdout="$(PATH="$STUBS:$PATH" "$PACK" --worktree "$WT" --merge --out "$OUT" 2>&1)"
+code=$?
+set -e
+bsd_body="$(section 'Merge resolution' "$OUT")"
+if [ "$code" -eq 0 ] \
+  && printf '%s\n' "$bsd_body" | grep -Fxq -- 'Resolved files: README.md src/greet.sh' \
+  && printf '%s\n' "$bsd_body" | grep -Fxq -- '+  echo "Hi, ${1:-world}"'; then
+  pass "--merge: works with BSD tools that have no -z"
+else
+  fail "--merge: works with BSD tools that have no -z (exit $code: $stdout)"
+fi
+
+# The only conflict resolved by keeping this branch's side whole: no change
+# against HEAD, but still a resolution to review.
+make_conflict_worktree
+g checkout -q --ours src/greet.sh
+g add src/greet.sh
+set +e
+stdout="$("$PACK" --worktree "$WT" --merge --out "$OUT" 2>&1)"
+code=$?
+set -e
+ours_body="$(section 'Merge resolution' "$OUT")"
+if [ "$code" -eq 0 ] \
+  && printf '%s\n' "$ours_body" | grep -Fxq -- 'Resolved files: src/greet.sh' \
+  && printf '%s\n' "$ours_body" | grep -Fxq -- '+  echo "Hello, ${1:-world}"' \
+  && printf '%s\n' "$ours_body" | grep -Fxq -- '-  echo "Hi, $1"'; then
+  pass "--merge: the only conflict resolved by keeping one side whole still writes the pack"
+else
+  fail "--merge: the only conflict resolved by keeping one side whole still writes the pack (exit $code: $stdout)"
+fi
+
+# A merge with no conflict (main's change is a new file only) has nothing
+# resolved: exit 3.
+make_worktree
+g commit -q -m change
+g checkout -q -b main-side HEAD~1
+echo 'incoming from main' > "$WT/incoming.txt"
+g add -A
+g commit -q -m main-change
+g checkout -q -
+g merge -q --no-commit --no-ff main-side > /dev/null 2>&1 || true
+set +e
+err="$("$PACK" --worktree "$WT" --merge --out "$OUT" 2>&1 > /dev/null)"
+code=$?
+set -e
+if [ "$code" -eq 3 ] && [ ! -e "$OUT" ] && [ "$err" = "review-pack: no merge resolution staged in $WT" ]; then
+  pass "--merge with no conflict: exits 3 and writes no pack"
+else
+  fail "--merge with no conflict: exits 3 and writes no pack (exit $code: $err)"
+fi
+
 make_worktree
 set +e
 err="$("$PACK" --worktree "$WT" --merge --out "$OUT" 2>&1 > /dev/null)"
@@ -250,6 +383,32 @@ if [ "$code" -eq 3 ] && [ ! -e "$OUT" ] && [ "$err" = "review-pack: no merge in 
   pass "--merge with no merge in progress: exits 3 and writes no pack"
 else
   fail "--merge with no merge in progress: exits 3 and writes no pack (exit $code)"
+fi
+
+# A stub git on PATH that runs the real git for every subcommand except
+# merge-tree, which fails as a broken repository would: exit 128.
+GIT_STUBS="$TMP/git-stubs"
+mkdir -p "$GIT_STUBS"
+real_git="$(command -v git)"
+cat > "$GIT_STUBS/git" <<EOF
+#!/usr/bin/env bash
+for a in "\$@"; do
+  case "\$a" in
+    merge-tree) echo "fatal: merge-tree stub failure" >&2; exit 128 ;;
+  esac
+done
+exec "$real_git" "\$@"
+EOF
+chmod +x "$GIT_STUBS/git"
+make_merge_worktree
+set +e
+PATH="$GIT_STUBS:$PATH" "$PACK" --worktree "$WT" --merge --out "$OUT" > /dev/null 2>&1
+code=$?
+set -e
+if [ "$code" -eq 128 ] && [ ! -e "$OUT" ]; then
+  pass "--merge when git merge-tree fails: exits with git's code and writes no pack"
+else
+  fail "--merge when git merge-tree fails: exits with git's code and writes no pack (exit $code)"
 fi
 
 # --- Only the staged diff: unstaged edits stay out --------------------------
