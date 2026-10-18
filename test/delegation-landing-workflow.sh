@@ -258,6 +258,19 @@ require_text 'The delegator never runs `git diff` itself' "the delegator never r
 require_text 'Write to `<scratch>/<N>/implementer.md`: (a) the list of files changed' "the implementer report goes to a file"
 require_text 'its full report goes to `<scratch>/<N>/checks/<process|acceptance|whole-diff>.md`' "the three checks report to files"
 require_text '     - **Process.** The project'"'"'s `tdd-guardian` agent, or else a `craft:delegate-reviewer` subagent that loads the `tdd-guardian` skill.' "the tdd-guardian check runs as a delegate-reviewer"
+require_text 'The brief says to apply the `tdd-guardian` checklist to the pack in the reviewer'"'"'s own context and not to start the skill as a fork.' "Work step 7 tells the reviewer not to fork tdd-guardian"
+require_text 'in the reviewer'"'"'s own context, not as a fork' "Land step 5 tells the reviewer not to fork tdd-guardian"
+TDD_GUARDIAN_SKILL="$(dirname "${BASH_SOURCE[0]}")/../skills/engineering/tdd-guardian/SKILL.md"
+if grep -Eq '^context:[[:space:]]*fork' "$TDD_GUARDIAN_SKILL"; then
+  fail "tdd-guardian does not fork when a subagent loads it"
+else
+  pass "tdd-guardian does not fork when a subagent loads it"
+fi
+if grep -Fq 'first line of its report' "$TDD_GUARDIAN_SKILL"; then
+  pass "tdd-guardian names its scope on the first line when none was given"
+else
+  fail "tdd-guardian names its scope on the first line when none was given"
+fi
 require_text 'dispatch one walkthrough subagent' "the walkthrough runs in a subagent"
 require_text 'The delegator never runs `agent-browser`' "the delegator never drives the browser"
 require_text 'The re-walk never runs in the main session.' "the repair-round re-walk runs in a subagent"
