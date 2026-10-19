@@ -1,0 +1,4 @@
+interface:
+  display_name: "Python"
+  short_description: "Strictly typed, boundary-validated Python 3.12+"
+  default_prompt: "Use $python to write this Python strictly typed, following the repository's tools."

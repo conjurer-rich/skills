@@ -1,0 +1,71 @@
+# yaml-language-server: $schema=https://promptfoo.dev/config-schema.json
+#
+# python quality evaluation. See promptfooconfig.tdd.yaml for the shape;
+# graders live in python-assertions.js and read structure through
+# python-probe.py. Run with ./run-quality.sh python (needs uv on PATH).
+description: python quality — does the agent write strictly typed, boundary-validated Python the way the skill promises?
+
+prompts:
+  - '{{request}}'
+
+x-agent: &agent
+  model: '{{env.SKILL_EVAL_MODEL}}'
+  apiKeyRequired: false
+  working_dir: '{{env.SKILL_EVAL_WORKSPACE}}'
+  append_allowed_tools: ['Write', 'Edit', 'MultiEdit', 'Bash']
+  permission_mode: acceptEdits
+  # Bash runs inside the SDK sandbox with no network; run-quality.sh ran
+  # `uv sync --locked` before the eval and the uv cache lives in the
+  # workspace, so `uv run` needs none.
+  sandbox:
+    enabled: true
+    autoAllowBashIfSandboxed: true
+    network:
+      allowLocalBinding: true
+  web_search_enabled: false
+  max_turns: 80
+  persist_session: false
+
+providers:
+  - id: anthropic:claude-agent-sdk
+    label: with-skills
+    config:
+      <<: *agent
+      setting_sources: ['project']
+      skills: 'all'
+  - id: anthropic:claude-agent-sdk
+    label: no-skills
+    config:
+      <<: *agent
+      setting_sources: []
+  # Same bundle, but told to load the skill under test first. Against
+  # no-skills this isolates what the skill body is worth; against with-skills
+  # it isolates whether routing fires on its own.
+  - id: anthropic:claude-agent-sdk
+    label: skill-forced
+    config:
+      <<: *agent
+      setting_sources: ['project']
+      skills: 'all'
+      append_system_prompt: "Before doing anything else in this task, load the `python` skill with the Skill tool and follow it."
+
+extensions:
+  - file://quality-hooks.js:extensionHook
+
+evaluateOptions:
+  maxConcurrency: 1
+
+defaultTest:
+  options:
+    disableVarExpansion: true
+  assert:
+    - { type: javascript, value: 'file://python-assertions.js:noAny', metric: no-any }
+    # Weight 2: for the daily export this is the rule the case exists for.
+    - { type: javascript, value: 'file://python-assertions.js:ioTimeAndErrorRules', metric: io-time-and-error-rules, weight: 2 }
+    - { type: javascript, value: 'file://python-assertions.js:toolsRun', metric: tools-run }
+    - { type: javascript, value: 'file://python-assertions.js:behaviourDelivered', metric: behaviour-delivered, weight: 2 }
+    - { type: javascript, value: 'file://python-assertions.js:suiteGreen', metric: suite-green }
+    - { type: javascript, value: 'file://python-assertions.js:typecheckClean', metric: typecheck-clean }
+    - { type: javascript, value: 'file://python-assertions.js:lintClean', metric: lint-clean }
+
+tests: file://tests/python-quality.yaml
