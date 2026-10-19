@@ -30,7 +30,7 @@ pass() {
 }
 
 json_version() {
-  node -p "require('$1').version"
+  node -p 'require(process.argv[1]).version' "$1"
 }
 
 # 1. The committed manifest matches the committed release version.
@@ -81,8 +81,10 @@ else
   fail "sync script copies the release version into the manifest"
 fi
 
-expected="$(sed "s/\"version\": \"$manifest_version\"/\"version\": \"9.9.9\"/" "$MANIFEST")"
-if [ "$(cat "$TMP/.claude-plugin/plugin.json")" = "$expected" ]; then
+# CRs are ignored: a Windows checkout has a CRLF manifest, which the sync
+# keeps, while Git Bash's sed drops them.
+expected="$(sed "s/\"version\": \"$manifest_version\"/\"version\": \"9.9.9\"/" "$MANIFEST" | tr -d '\r')"
+if [ "$(tr -d '\r' < "$TMP/.claude-plugin/plugin.json")" = "$expected" ]; then
   pass "sync script changes only the version line"
 else
   fail "sync script changes only the version line"

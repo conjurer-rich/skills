@@ -14,7 +14,8 @@ This repository is the `craft` plugin. `AGENTS.md` is a symlink to this file.
 - `agents/` and `commands/` are discovered by default; do not list them in
   `plugin.json`.
 - `global/CLAUDE.md` is the user's global instruction file (installed by
-  `scripts/install-global`); `global/AGENTS.md` links to it. Keep it short:
+  `scripts/install-global`, as `CLAUDE.md` for Claude Code and `AGENTS.md`
+  for Codex and OpenCode). Keep it short:
   guidelines belong in `engineering-practice`, routing in its
   `references/routing.md`.
 - Never create a `.claude/skills/` inside this repository: Claude Code would
