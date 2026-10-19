@@ -1,0 +1,105 @@
+# python quality cases.
+#
+# The fixture declares strictly typed Python (README.md, CLAUDE.md, strict
+# basedpyright, ruff, pytest, all run through uv) and lists pydantic as a
+# dependency, but shows none of the practice: no model reads a request body,
+# nothing reads the environment, ids are plain `str`, and nothing writes a
+# file. Its ruff config selects only E/W/F/I/UP/B, so the project's own lint
+# run cannot teach the encoding, datetime or except rules. The priorities
+# already have one owner, `Priority(StrEnum)` in tickets.py.
+#
+# Shared graders on every case: noAny, ioTimeAndErrorRules (the skill's
+# I/O, time and error rules, run as ruff rules the fixture does not select),
+# toolsRun (type checker, linter and tests all run after the last edit; no
+# pip install), behaviourDelivered (weight 2), suiteGreen, typecheckClean,
+# lintClean.
+#
+# Each request pins only what the hidden acceptance test must call: a route,
+# the existing create_app(deps, initial) / build_app(initial) surface, a
+# function name and module, environment variable names. How input is parsed,
+# where settings live and how values are typed is the agent's — and what
+# python-assertions.js grades.
+#
+# - tickets from the web form: an HTTP body the request calls "already
+#   checked client-side" and "a five-line job" — tempts json.loads into a
+#   dict that travels inward, and a Literal or tuple re-listing the
+#   priorities beside Priority. parsedAtBoundary and onePriorityOwner.
+# - overdue tickets: two settings from the environment — tempts os.environ
+#   reads inside the route handler (per request) or at import time.
+#   configLoadedOnce: one function reads the environment, returns a named
+#   type, and is called only from build_app.
+# - goodwill credits: two look-alike string ids with a bug report about them
+#   being swapped, and an amount in pounds — tempts plain `str` ids checked
+#   by shape only, and float arithmetic formatted to two places (which the
+#   hidden test cannot see). parsedAtBoundary, distinctIds, moneyNotFloat.
+# - daily export: a CSV of today's tickets written to disk — tempts open()
+#   without an encoding, datetime.utcnow() or date.today() for "today", and
+#   os.path joins. ioTimeAndErrorRules carries this case; on Linux and macOS
+#   the default encoding is UTF-8, so the hidden test alone passes without it.
+
+- description: tickets from the web form
+  vars:
+    acceptance: tickets_from_form.py
+    request: >-
+      The web app needs to open tickets. Add POST /tickets to create_app: the
+      body is the JSON the form sends, `{"title": "…", "priority": "low" |
+      "normal" | "high"}` with priority optional and defaulting to "normal".
+      A title is required and can't be blank. The handler opens the ticket
+      with `deps.new_id()` as the id and `deps.now()` as opened_at, status
+      open, and responds 201 with the ticket as the body: `{"id", "title",
+      "priority", "status", "opened_at"}`, with opened_at as an ISO 8601
+      string. Anything that isn't a usable request gets a 400. The form
+      already checks the fields client-side, so keep the handler small —
+      it's a five-line job.
+  assert:
+    - { type: javascript, value: 'file://python-assertions.js:parsedAtBoundary', metric: parsed-at-boundary, weight: 2 }
+    - { type: javascript, value: 'file://python-assertions.js:onePriorityOwner', metric: one-priority-owner, weight: 2 }
+
+- description: overdue tickets
+  vars:
+    acceptance: overdue_settings.py
+    request: >-
+      Support leads want an escalation view. Add GET /tickets/overdue, which
+      returns `{"team": …, "ticket_ids": […]}`: the ids of open tickets
+      opened more than N minutes ago, oldest first, and the team they escalate
+      to. N comes from the TICKET_DESK_OVERDUE_MINUTES environment variable
+      (default 60) and the team from TICKET_DESK_ESCALATION_TEAM (default
+      "support"). Ops set these per deployment and change them without a code
+      change. If the minutes value isn't a positive whole number, the service
+      should refuse to start, with an error that names the setting, rather
+      than misbehave later. Production builds the app with
+      `build_app(initial)` in main.py.
+  assert:
+    - { type: javascript, value: 'file://python-assertions.js:configLoadedOnce', metric: config-loaded-once, weight: 2 }
+
+- description: goodwill credits
+  vars:
+    acceptance: customer_credits.py
+    request: >-
+      Billing will post goodwill credits to us. Add POST /credits taking
+      `{"ticket_id": "t-…", "customer_id": "cus-…", "amount": "12.50"}`:
+      amount is a string in pounds, positive, at most two decimal places.
+      Record the credit against the ticket and reply 201; 404 if we don't
+      have the ticket; 400 for anything else. Also add GET
+      /customers/{id}/credits returning `{"customer_id": …, "total":
+      "0.00"}`, the customer's credits summed, always with two decimal
+      places. Our ticket ids always start with `t-` and customer ids with
+      `cus-`. Bug report from billing's last integration, for context: a
+      credit arrived with the ticket and customer ids the wrong way round and
+      nothing complained until finance noticed.
+  assert:
+    - { type: javascript, value: 'file://python-assertions.js:parsedAtBoundary', metric: parsed-at-boundary }
+    - { type: javascript, value: 'file://python-assertions.js:distinctIds', metric: distinct-ids, weight: 2 }
+    - { type: javascript, value: 'file://python-assertions.js:moneyNotFloat', metric: money-not-float, weight: 2 }
+
+- description: daily export
+  vars:
+    acceptance: daily_export.py
+    request: >-
+      Ops want a daily CSV of new tickets. Add `export_today(tickets,
+      directory)` in src/ticket_desk/reports.py: it writes
+      `tickets-YYYY-MM-DD.csv` into the directory for today's date in UTC,
+      with a header row `id,title,priority,status,opened_at` and one row per
+      ticket opened today (UTC), opened_at in ISO 8601, and returns the
+      path it wrote. Titles are whatever customers typed, so expect commas,
+      quotes and accents.

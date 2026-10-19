@@ -73,6 +73,19 @@ For verifying test effectiveness through mutation analysis, load the `mutation-t
 
 For detailed TypeScript patterns and rationale, load the `typescript-strict` skill.
 
+## Python
+
+**Core principle**: The repository's tools first, strict typing always,
+untrusted data parsed into typed models at the boundary.
+
+- Run the project's own formatter, linter, type checker and tests; add none
+  beside them
+- Annotate every signature; no bare `Any` or unexplained `cast`
+- Parse untrusted input into a validated model; never pass `dict[str, Any]`
+  inward
+
+For detailed Python patterns and tooling defaults, load the `python` skill.
+
 ## Code style
 
 **Core principle**: Prefer immutable data and pure logic where they make

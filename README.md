@@ -72,7 +72,7 @@ load every skill twice. The names are unchanged.
 
 | Folder | Holds |
 | --- | --- |
-| `skills/engineering/` | day-to-day code work: `tdd`, `testing`, `refactoring`, `typescript-strict`, `debugging`, `mutation-testing`, … |
+| `skills/engineering/` | day-to-day code work: `tdd`, `testing`, `refactoring`, `typescript-strict`, `python`, `debugging`, `mutation-testing`, … |
 | `skills/architecture/` | design and structure: `hexagonal-architecture`, `domain-driven-design`, `codebase-design`, `api-design`, `observability`, … |
 | `skills/delivery/` | getting work shipped: `delegating-github-issues`, `planning`, `specification`, `story-splitting`, `acceptance-review`, … |
 | `skills/writing/` | knowledge and prose: `technical-writing`, `diagrams`, `ubiquitous-language`, `expectations`, … |

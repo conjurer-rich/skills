@@ -31,6 +31,15 @@ adapter teaches ports and adapters; the skill is then not measured.
 `run-quality.sh`, `quality-hooks.js`, `quality-lib.js` and `report-quality.mjs` are
 shared and need no change. Never edit them from a suite-authoring task.
 
+**Python skills.** The table above describes a TypeScript fixture. A Python fixture
+(the `python` suite is the worked example) commits `pyproject.toml`, `uv.lock` and
+`.python-version` instead of the pnpm files, keeps uv's cache in the workspace
+(`[tool.uv] cache-dir`) so the sandboxed agent needs no network, and has
+`run-quality.sh` build it with `uv sync --locked` (it does so whenever the fixture
+has a `uv.lock`). Hidden tests are pytest modules; the suite's own assertion module
+runs them, the type checker and ruff through `uv run`, and reads structure with
+`python-probe.py` rather than regexes. The host running the suite needs `uv`.
+
 ## Cases
 
 - Write requests the way a developer would. Use everyday words; do not name the
