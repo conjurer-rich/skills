@@ -24,7 +24,7 @@
 
 set -euo pipefail
 
-SUITE="${1:?usage: run-quality.sh <tdd|hexagonal|ddd> [promptfoo eval flags]}"
+SUITE="${1:?usage: run-quality.sh <suite> [promptfoo eval flags]}"
 shift
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -55,13 +55,20 @@ trap cleanup EXIT
 prepare_workspace() {
   local dir="$1" skills="$2"
   cp -R "$FIXTURE/." "$dir/"
-  rm -rf "$dir/node_modules"
+  rm -rf "$dir/node_modules" "$dir/.venv" "$dir/.uv-cache"
   mkdir -p "$dir/.claude"
   # A copy, not a symlink: tools that copy the workspace (Stryker sandboxes)
   # choke on a symlinked directory. Edits to skills are picked up per run.
   cp -R "$skills" "$dir/.claude/skills"
-  (cd "$dir" && pnpm install --frozen-lockfile --silent)
-  printf '\n.pnpm-store/\n' >> "$dir/.gitignore"
+  if [ -f "$dir/uv.lock" ]; then
+    # A Python fixture: build its environment now, while there is network.
+    # The fixture keeps uv's cache inside the workspace, so the agent's
+    # sandboxed `uv run` needs no network and no write outside it.
+    (cd "$dir" && uv sync --locked --quiet && uv run --quiet basedpyright --version >/dev/null)
+  else
+    (cd "$dir" && pnpm install --frozen-lockfile --silent)
+    printf '\n.pnpm-store/\n' >> "$dir/.gitignore"
+  fi
   (
     cd "$dir" &&
       git init --quiet &&

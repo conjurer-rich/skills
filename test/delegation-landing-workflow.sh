@@ -258,6 +258,19 @@ require_text 'The delegator never runs `git diff` itself' "the delegator never r
 require_text 'Write to `<scratch>/<N>/implementer.md`: (a) the list of files changed' "the implementer report goes to a file"
 require_text 'its full report goes to `<scratch>/<N>/checks/<process|acceptance|whole-diff>.md`' "the three checks report to files"
 require_text '     - **Process.** The project'"'"'s `tdd-guardian` agent, or else a `craft:delegate-reviewer` subagent that loads the `tdd-guardian` skill.' "the tdd-guardian check runs as a delegate-reviewer"
+require_text 'The brief says to apply the `tdd-guardian` checklist to the pack in the reviewer'"'"'s own context and not to start the skill as a fork.' "Work step 7 tells the reviewer not to fork tdd-guardian"
+require_text 'in the reviewer'"'"'s own context, not as a fork' "Land step 5 tells the reviewer not to fork tdd-guardian"
+TDD_GUARDIAN_SKILL="$(dirname "${BASH_SOURCE[0]}")/../skills/engineering/tdd-guardian/SKILL.md"
+if grep -Eq '^context:[[:space:]]*fork' "$TDD_GUARDIAN_SKILL"; then
+  fail "tdd-guardian does not fork when a subagent loads it"
+else
+  pass "tdd-guardian does not fork when a subagent loads it"
+fi
+if grep -Fq 'first line of its report' "$TDD_GUARDIAN_SKILL"; then
+  pass "tdd-guardian names its scope on the first line when none was given"
+else
+  fail "tdd-guardian names its scope on the first line when none was given"
+fi
 require_text 'dispatch one walkthrough subagent' "the walkthrough runs in a subagent"
 require_text 'The delegator never runs `agent-browser`' "the delegator never drives the browser"
 require_text 'The re-walk never runs in the main session.' "the repair-round re-walk runs in a subagent"
@@ -665,6 +678,27 @@ require_text 'its brief carrying Work step 7'"'"'s pack line' "Land's tdd-guardi
 require_text '`scripts/review-pack --worktree <worktree path> --merge --out <scratch>/pr-<PR>/review-pack.md`' "Sync step 4 writes a pack of the resolution"
 require_text 'Read the merge resolution from <scratch>/pr-<PR>/review-pack.md: the resolved files, compared with both sides of the merge; do not run git diff.' "Sync's resolution check reads the pack, not git diff"
 reject_regex 'git diff (--cached -- <files>|MERGE_HEAD)' "no reviewer brief runs git diff on a merge resolution"
+
+# A [blocked] PR listed its findings and stopped, so the human had to ask
+# "what do you recommend?" before a one-line reply could unblock it (#49,
+# #50). The session that hit the block now writes numbered fix options with
+# a recommendation, and a reply naming option ids is actionable.
+BLOCKED_REF="$SKILL_DIR/references/blocked-and-oracle.md"
+if grep -Fxq '### Fix options' "$BLOCKED_REF"; then
+  pass "blocked-and-oracle.md defines the Fix options format once"
+else
+  fail "blocked-and-oracle.md defines the Fix options format once"
+fi
+require_text 'numbered options (`1a`, `1b`, …), each with a one-line trade-off, and exactly one marked **(recommended)**' "each remaining finding carries numbered options with one recommended"
+require_text '`single fix: <the fix>` in place of options when only one sensible fix exists' "a finding with one sensible fix says single fix"
+require_text 'Never offer it for an unmet acceptance criterion or a `tdd-guardian` finding.' "deferral is never offered for unmet criteria or tdd-guardian findings"
+require_text 'End the list with a suggested reply built from the recommended options and single fixes' "the findings list ends with a ready-to-paste reply"
+require_text 'with the findings in the **Verification** section, each written as **Fix options** in `references/blocked-and-oracle.md`' "Work step 9 writes the remaining findings as fix options"
+require_text 'A reply that names option ids from a **Fix options** list' "Review step 4 treats a reply naming option ids as actionable"
+require_text 'or "fix all" when every finding in that list is a single fix' "fix all is actionable only when every finding is single-fix"
+require_text 'copy the chosen options verbatim into the implementer brief' "the chosen options reach the implementer verbatim"
+require_text 'reply with the findings that remain, written as **Fix options**' "a failed repair round under Watch or Land replies with fix options"
+reject_regex 'with the failure in one sentence, and stop' "a failed repair round no longer replies with a one-sentence failure"
 
 echo ""
 

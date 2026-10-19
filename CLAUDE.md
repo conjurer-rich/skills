@@ -14,12 +14,19 @@ This repository is the `craft` plugin. `AGENTS.md` is a symlink to this file.
 - `agents/` and `commands/` are discovered by default; do not list them in
   `plugin.json`.
 - `global/CLAUDE.md` is the user's global instruction file (installed by
-  `scripts/install-global`); `global/AGENTS.md` links to it. Keep it short:
+  `scripts/install-global`, as `CLAUDE.md` for Claude Code and `AGENTS.md`
+  for Codex and OpenCode). Keep it short:
   guidelines belong in `engineering-practice`, routing in its
   `references/routing.md`.
 - Never create a `.claude/skills/` inside this repository: Claude Code would
   load every skill a second time. The eval harness builds its workspaces in a
   temp directory for that reason.
+
+## Bootstrap
+
+A fresh worktree needs `pnpm install --frozen-lockfile` before any test or
+changeset command. The SessionStart hook in `.claude/settings.json` runs it
+for sessions started in this repository.
 
 ## Before you push
 

@@ -49,12 +49,13 @@ The plugin cannot write your global `CLAUDE.md`, so a short script does. From a
 clone of this repository:
 
 ```sh
-scripts/install-global            # or --copy where symlinks are unavailable
+scripts/install-global
 ```
 
 It links `~/.claude/CLAUDE.md` to [`global/CLAUDE.md`](global/CLAUDE.md), and
 `AGENTS.md` for Codex and OpenCode when they are installed, backing up any
-existing file. The file is short on purpose: it tells every session to load
+existing file. Where symlinks are unavailable (Git Bash without developer
+mode) it copies instead; re-run it after a `git pull`. The file is short on purpose: it tells every session to load
 `engineering-practice`, which carries the guidelines, and holds a few personal
 preferences. `git pull` updates it.
 
@@ -72,14 +73,14 @@ load every skill twice. The names are unchanged.
 
 | Folder | Holds |
 | --- | --- |
-| `skills/engineering/` | day-to-day code work: `tdd`, `testing`, `refactoring`, `typescript-strict`, `debugging`, `mutation-testing`, … |
+| `skills/engineering/` | day-to-day code work: `tdd`, `testing`, `refactoring`, `typescript-strict`, `python`, `debugging`, `mutation-testing`, … |
 | `skills/architecture/` | design and structure: `hexagonal-architecture`, `domain-driven-design`, `codebase-design`, `api-design`, `observability`, … |
 | `skills/delivery/` | getting work shipped: `delegating-github-issues`, `planning`, `specification`, `story-splitting`, `acceptance-review`, … |
 | `skills/writing/` | knowledge and prose: `technical-writing`, `diagrams`, `ubiquitous-language`, `expectations`, … |
 | `agents/` | `twelve-factor-audit`, `adr`, `learn`, and the delegator's `delegate-implementer`, `delegate-reviewer`, `delegate-walkthrough`, `delegate-mechanical` (Claude Code only) |
 | `shelf/` | skills, agents and commands kept in the repository but **not installed** |
 | `skills/deprecated/` | aliases kept for one release, then deleted |
-| `global/` | the global `CLAUDE.md` (and `AGENTS.md`, a link to it) that `scripts/install-global` puts in place |
+| `global/` | the global `CLAUDE.md` that `scripts/install-global` puts in place, also as `AGENTS.md` for Codex and OpenCode |
 
 Not sure which skill fits? Run `/craft:ask` and describe the situation; it
 maps every skill, agent and command into flows, and points at shelved skills
@@ -117,6 +118,12 @@ which `delegate-status` checks first. The delegator also commits and pushes
 from the main checkout with `git -C <worktree> commit` and
 `git -C <worktree> push`; a project that narrows `Bash(git:*)` allows those two
 as well.
+
+Running `/loop /delegate` in Claude Code on the web needs an environment set up
+first: only the GitHub connector, network access to `api.github.com`, a setup
+script that checks the tools `delegate-status` needs, and a GitHub access check.
+[`cloud-environment.md`](skills/delivery/delegating-github-issues/references/cloud-environment.md)
+walks through each.
 
 Settings a project can add to `.claude/delegation.md` to keep delegated runs
 cheap, each optional:

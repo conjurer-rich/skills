@@ -1,6 +1,6 @@
 {
   "name": "craft",
-  "version": "5.6.7",
+  "version": "5.8.0",
   "description": "Engineering craft toolkit: TDD, testing, refactoring, architecture, delivery and writing skills, agents and commands.",
   "author": {
     "name": "Richard Allen",
@@ -57,6 +57,7 @@
     "./skills/engineering/front-end-testing",
     "./skills/engineering/functional",
     "./skills/engineering/mutation-testing",
+    "./skills/engineering/python",
     "./skills/engineering/react-performance",
     "./skills/engineering/react-testing",
     "./skills/engineering/reduce-system-complexity",
@@ -76,6 +77,5 @@
     "./skills/writing/ubiquitous-language",
     "./skills/writing/writing-for-agents",
     "./skills/writing/wtf"
-  ],
-  "hooks": "./hooks/hooks.json"
+  ]
 }

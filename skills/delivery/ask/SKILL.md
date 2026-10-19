@@ -38,8 +38,8 @@ underneath.
    increments (`/plan` starts it). When one slice is too big to review, add
    `stack-pull-requests`; `/continue` advances the stack after a merge.
 5. **Build.** `tdd` drives every behaviour change, with `testing` for the
-   test design and `refactoring` after each green. `typescript-strict` and
-   `functional` apply to every line. `tdd-guardian` checks the
+   test design and `refactoring` after each green. `typescript-strict` (or
+   `python`) and `functional` apply to every line. `tdd-guardian` checks the
    process and `refactor-scan` judges whether a refactor earns its
    place *(subagents)*.
    - **Hand it off instead:** label the issue and run `/delegate` (the
@@ -90,7 +90,7 @@ underneath.
 | --- | --- |
 | The rules every task follows | `engineering-practice` (load first; its `references/routing.md` is the model-facing version of this map) |
 | Testing | `tdd`, `testing`, `test-design-reviewer`, `mutation-testing`, `front-end-testing`, `react-testing` |
-| Code | `typescript-strict`, `functional`, `refactoring`, `reduce-system-complexity` |
+| Code | `typescript-strict`, `python`, `functional`, `refactoring`, `reduce-system-complexity` |
 | Front end | `xstate` (before reaching for `useState`), `react-performance`, `browser-ux-walkthrough` |
 | Architecture | `codebase-design`, `structure-codebase`, `improve-codebase-architecture`, `hexagonal-architecture`, `domain-driven-design`, `event-sourcing` |
 | Services and APIs | `api-design`, `bff-entry-points`, `secure-oauth-oidc`, `twelve-factor`, `observability` |
