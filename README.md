@@ -49,12 +49,13 @@ The plugin cannot write your global `CLAUDE.md`, so a short script does. From a
 clone of this repository:
 
 ```sh
-scripts/install-global            # or --copy where symlinks are unavailable
+scripts/install-global
 ```
 
 It links `~/.claude/CLAUDE.md` to [`global/CLAUDE.md`](global/CLAUDE.md), and
 `AGENTS.md` for Codex and OpenCode when they are installed, backing up any
-existing file. The file is short on purpose: it tells every session to load
+existing file. Where symlinks are unavailable (Git Bash without developer
+mode) it copies instead; re-run it after a `git pull`. The file is short on purpose: it tells every session to load
 `engineering-practice`, which carries the guidelines, and holds a few personal
 preferences. `git pull` updates it.
 
@@ -79,7 +80,7 @@ load every skill twice. The names are unchanged.
 | `agents/` | `twelve-factor-audit`, `adr`, `learn`, and the delegator's `delegate-implementer`, `delegate-reviewer`, `delegate-walkthrough`, `delegate-mechanical` (Claude Code only) |
 | `shelf/` | skills, agents and commands kept in the repository but **not installed** |
 | `skills/deprecated/` | aliases kept for one release, then deleted |
-| `global/` | the global `CLAUDE.md` (and `AGENTS.md`, a link to it) that `scripts/install-global` puts in place |
+| `global/` | the global `CLAUDE.md` that `scripts/install-global` puts in place, also as `AGENTS.md` for Codex and OpenCode |
 
 Not sure which skill fits? Run `/craft:ask` and describe the situation; it
 maps every skill, agent and command into flows, and points at shelved skills
