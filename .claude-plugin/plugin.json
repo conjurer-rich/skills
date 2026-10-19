@@ -77,6 +77,5 @@
     "./skills/writing/ubiquitous-language",
     "./skills/writing/writing-for-agents",
     "./skills/writing/wtf"
-  ],
-  "hooks": "./hooks/hooks.json"
+  ]
 }
