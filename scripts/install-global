@@ -3,8 +3,12 @@
 # install-global — put craft's global instructions where each agent reads them.
 #
 #   ~/.claude/CLAUDE.md            -> global/CLAUDE.md   (Claude Code; always)
-#   $CODEX_HOME/AGENTS.md          -> global/AGENTS.md   (Codex; if ~/.codex exists)
-#   ~/.config/opencode/AGENTS.md   -> global/AGENTS.md   (OpenCode; if installed)
+#   $CODEX_HOME/AGENTS.md          -> global/CLAUDE.md   (Codex; if ~/.codex exists)
+#   ~/.config/opencode/AGENTS.md   -> global/CLAUDE.md   (OpenCode; if installed)
+#
+# Every target points at global/CLAUDE.md itself, not at the global/AGENTS.md
+# symlink: a clone without symlink support checks that out as a plain file
+# holding the word "CLAUDE.md".
 #
 # Run it from a clone of this repository: the links point into the clone, so a
 # `git pull` updates them. An existing file is moved aside to
@@ -58,7 +62,9 @@ install_one() { # agent source target
     say "$agent: $target already linked"
     return
   fi
-  if [ "$MODE" = copy ] && [ -f "$target" ] && [ ! -L "$target" ] && cmp -s "$target" "$source"; then
+  # A copy also counts as current in link mode: where symlinks are unavailable
+  # a previous run fell back to copying.
+  if [ -f "$target" ] && [ ! -L "$target" ] && cmp -s "$target" "$source"; then
     say "$agent: $target already current"
     return
   fi
@@ -94,14 +100,14 @@ fi
 
 codex_home="${CODEX_HOME:-$HOME/.codex}"
 if [ -d "$codex_home" ]; then
-  install_one "Codex" "$ROOT/global/AGENTS.md" "$codex_home/AGENTS.md"
+  install_one "Codex" "$ROOT/global/CLAUDE.md" "$codex_home/AGENTS.md"
 else
   say "Codex: not installed ($codex_home missing), skipped"
 fi
 
 opencode_home="${XDG_CONFIG_HOME:-$HOME/.config}/opencode"
 if [ -d "$opencode_home" ]; then
-  install_one "OpenCode" "$ROOT/global/AGENTS.md" "$opencode_home/AGENTS.md"
+  install_one "OpenCode" "$ROOT/global/CLAUDE.md" "$opencode_home/AGENTS.md"
 else
   say "OpenCode: not installed ($opencode_home missing), skipped"
 fi

@@ -73,7 +73,7 @@ for config in "$EVAL_DIR"/promptfooconfig.*.yaml; do
       echo -e "${RED}FAIL${NC}: $suite: grader module $module not found"
       exit 1
     fi
-    if ! node -e "const m=require('$EVAL_DIR/$module'); if (typeof m['$fn'] !== 'function') process.exit(1)"; then
+    if ! node -e 'if (typeof require(process.argv[1])[process.argv[2]] !== "function") process.exit(1)' "$EVAL_DIR/$module" "$fn"; then
       echo -e "${RED}FAIL${NC}: $suite: $module does not export $fn"
       exit 1
     fi

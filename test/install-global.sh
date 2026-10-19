@@ -38,6 +38,15 @@ links_to() { # link expected-target
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
+# Git Bash without developer mode cannot make symlinks: `ln -s` copies, and a
+# clone checks symlinks out as plain files holding the target's name.
+SYMLINKS=false
+if ln -s "$work" "$work/probe" 2>/dev/null && [ -L "$work/probe" ]; then SYMLINKS=true; fi
+
+installed() { # target source — a link where the system allows, else a copy
+  if [ "$SYMLINKS" = true ]; then links_to "$1" "$2"; else [ ! -L "$1" ] && cmp -s "$1" "$2"; fi
+}
+
 run() { # home [args...]
   local home="$1"
   shift
@@ -45,7 +54,9 @@ run() { # home [args...]
 }
 
 # The source files are what the installer links to.
-check "global/AGENTS.md is a symlink to CLAUDE.md" links_to "$REPO_ROOT/global/AGENTS.md" CLAUDE.md
+if [ "$(git -C "$REPO_ROOT" config core.symlinks)" != false ]; then
+  check "global/AGENTS.md is a symlink to CLAUDE.md" links_to "$REPO_ROOT/global/AGENTS.md" CLAUDE.md
+fi
 check "global/CLAUDE.md points every agent at engineering-practice" \
   grep -q 'load the `engineering-practice` skill' "$REPO_ROOT/global/CLAUDE.md"
 
@@ -53,14 +64,14 @@ check "global/CLAUDE.md points every agent at engineering-practice" \
 home="$work/fresh"
 mkdir -p "$home/.codex"
 out="$(run "$home")"
-check "Claude Code's CLAUDE.md is linked, creating ~/.claude" links_to "$home/.claude/CLAUDE.md" "$REPO_ROOT/global/CLAUDE.md"
-check "Codex's AGENTS.md is linked" links_to "$home/.codex/AGENTS.md" "$REPO_ROOT/global/AGENTS.md"
+check "Claude Code's CLAUDE.md is linked, creating ~/.claude" installed "$home/.claude/CLAUDE.md" "$REPO_ROOT/global/CLAUDE.md"
+check "Codex's AGENTS.md is linked" installed "$home/.codex/AGENTS.md" "$REPO_ROOT/global/CLAUDE.md"
 check "OpenCode is skipped when it is not installed" test ! -e "$home/.config/opencode/AGENTS.md"
 check "the skip is reported" grep -qi "opencode.*not installed" <<< "$out"
 
 # 2. Running again changes nothing and backs nothing up.
 out="$(run "$home")"
-check "a second run reports the links as current" grep -q "already linked" <<< "$out"
+check "a second run reports the files as current" grep -Eq "already (linked|current)" <<< "$out"
 check "a second run makes no backups" test -z "$(find "$home" -name '*.backup.*' -print -quit)"
 
 # 3. An existing CLAUDE.md, and the old base-CLAUDE.md, are backed up first.
@@ -69,13 +80,13 @@ mkdir -p "$home/.claude" "$home/.config/opencode"
 printf 'my old instructions\n' > "$home/.claude/CLAUDE.md"
 printf 'upstream base\n' > "$home/.claude/base-CLAUDE.md"
 run "$home" > /dev/null
-check "the existing CLAUDE.md is replaced by the link" links_to "$home/.claude/CLAUDE.md" "$REPO_ROOT/global/CLAUDE.md"
+check "the existing CLAUDE.md is replaced by the link" installed "$home/.claude/CLAUDE.md" "$REPO_ROOT/global/CLAUDE.md"
 backup="$(find "$home/.claude" -name 'CLAUDE.md.backup.*' -print -quit)"
 check "the existing CLAUDE.md is kept as a backup" grep -q 'my old instructions' "${backup:-/nonexistent}"
 check "base-CLAUDE.md is retired" test ! -e "$home/.claude/base-CLAUDE.md"
 base_backup="$(find "$home/.claude" -name 'base-CLAUDE.md.backup.*' -print -quit)"
 check "base-CLAUDE.md is kept as a backup" grep -q 'upstream base' "${base_backup:-/nonexistent}"
-check "OpenCode's AGENTS.md is linked when it is installed" links_to "$home/.config/opencode/AGENTS.md" "$REPO_ROOT/global/AGENTS.md"
+check "OpenCode's AGENTS.md is linked when it is installed" installed "$home/.config/opencode/AGENTS.md" "$REPO_ROOT/global/CLAUDE.md"
 
 # 4. --copy writes plain files, for systems without symlinks.
 home="$work/copy"
@@ -93,7 +104,27 @@ out="$(run "$home" --dry-run)"
 check "--dry-run leaves the existing file alone" grep -q 'keep me' "$home/.claude/CLAUDE.md"
 check "--dry-run says what it would do" grep -q "would" <<< "$out"
 
-# 6. An unknown option is refused.
+# 6. A checkout without symlinks: global/AGENTS.md is a plain file holding
+#    "CLAUDE.md", and `ln -s` silently copies (as Git Bash does).
+repo="$work/nosymlinks"
+mkdir -p "$repo/scripts" "$repo/global" "$work/bin"
+cp "$INSTALL" "$repo/scripts/install-global"
+cp "$REPO_ROOT/global/CLAUDE.md" "$repo/global/CLAUDE.md"
+printf 'CLAUDE.md' > "$repo/global/AGENTS.md"
+printf '#!/bin/sh
+shift; cp "$1" "$2"
+' > "$work/bin/ln"
+chmod +x "$work/bin/ln"
+home="$work/nosymlinks-home"
+mkdir -p "$home/.codex"
+nosymlinks() { HOME="$home" XDG_CONFIG_HOME="$home/.config" PATH="$work/bin:$PATH" "$repo/scripts/install-global"; }
+nosymlinks > /dev/null
+check "without symlinks, Codex gets the instructions, not the link's name"   cmp -s "$home/.codex/AGENTS.md" "$repo/global/CLAUDE.md"
+out="$(nosymlinks)"
+check "without symlinks, a second run reports the copies as current" grep -q "already current" <<< "$out"
+check "without symlinks, a second run makes no backups"   test -z "$(find "$home" -name '*.backup.*' -print -quit)"
+
+# 7. An unknown option is refused.
 check "an unknown option exits non-zero" bash -c "! HOME='$work/x' '$INSTALL' --bogus >/dev/null 2>&1"
 
 echo ""

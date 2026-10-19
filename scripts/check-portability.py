@@ -91,18 +91,18 @@ def check(root):
             openai = folder / "agents" / "openai.yaml"
             if not (openai.is_file() and IMPLICIT_OFF.search(openai.read_text(encoding="utf-8"))):
                 problems.append(
-                    f"{folder.relative_to(root)}: claude-only skill needs agents/openai.yaml with"
+                    f"{folder.relative_to(root).as_posix()}: claude-only skill needs agents/openai.yaml with"
                     " allow_implicit_invocation: false, so Codex never picks it on its own"
                 )
             continue
         openai = folder / "agents" / "openai.yaml"
         if not openai.is_file():
-            problems.append(f"{folder.relative_to(root)}: {tier.get(name, 'portable')} skill has no agents/openai.yaml")
+            problems.append(f"{folder.relative_to(root).as_posix()}: {tier.get(name, 'portable')} skill has no agents/openai.yaml")
         elif USER_INVOKED.search((folder / "SKILL.md").read_text(encoding="utf-8")) and not IMPLICIT_OFF.search(
             openai.read_text(encoding="utf-8")
         ):
             problems.append(
-                f"{openai.relative_to(root)}: the skill is user-invoked but allow_implicit_invocation is not false"
+                f"{openai.relative_to(root).as_posix()}: the skill is user-invoked but allow_implicit_invocation is not false"
             )
         for md in sorted(folder.rglob("*.md")):
             if md.name == "source-notes.md":
@@ -112,7 +112,7 @@ def check(root):
                     continue
                 for match in CLAUDE_ONLY_NAMES.finditer(block):
                     problems.append(
-                        f"{md.relative_to(root)}: names {match.group(0)!r} outside a \"{NOTE}\" note"
+                        f"{md.relative_to(root).as_posix()}: names {match.group(0)!r} outside a \"{NOTE}\" note"
                         f" in a {tier.get(name, 'portable')} skill"
                     )
 
