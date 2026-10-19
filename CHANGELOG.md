@@ -1,5 +1,16 @@
 # @conjurer-rich/skills
 
+## 5.8.0
+
+### Minor Changes
+
+- 751a035: python: a new skill for writing, reviewing and refactoring Python 3.12+. It follows the repository's own tools first (with uv, ruff, pyright strict and pytest as defaults, and a complete `pyproject.toml` in `references/tooling.md`), and covers strict typing, parsing untrusted data into typed models at the boundary, one owner per value set, `NewType` identifiers, frozen dataclasses, Protocols, error handling, UTF-8 I/O and aware datetimes, async and pytest. `engineering-practice` gains a Python section that routes to it, and `ask` lists it beside `typescript-strict`. A `python` quality suite under `evals/skills` (four cases, proven against a reference solution) measures the skill; `run-quality.sh` now builds a fixture with `uv sync --locked` when it has a `uv.lock`.
+
+### Patch Changes
+
+- b85fbce: `scripts/install-global` now works from a clone without symlink support (Git Bash on Windows without developer mode). Codex's and OpenCode's `AGENTS.md` used to receive the single word `CLAUDE.md`, because such a clone checks the `global/AGENTS.md` symlink out as a plain file. Every target now comes from `global/CLAUDE.md`, and `global/AGENTS.md` is gone. The script checks once whether symlinks work and copies when they do not, so a re-run reports those copies as current instead of backing them up and copying them again; where symlinks work, a copy left by `--copy` is still replaced by a link. `scripts/*` is now checked out with LF endings, so a Windows clone keeps the CR out of their shebangs, and `test/run.sh` gets further on Windows: `check-portability.py` reports paths with `/`, the version-sync and eval checks pass paths to Node as arguments, and `upstream-changes` prints UTF-8.
+- c5b5b04: `tdd-guardian` no longer forks when a subagent loads it, so a delegator's Process check reviews the pack it was briefed with instead of a PR it guessed. With no scope given, the skill asks or names the scope it chose on the first line of its report. The delegator's Process-check briefs now tell the reviewer to apply the checklist in its own context.
+
 ## 5.7.0
 
 ### Minor Changes
