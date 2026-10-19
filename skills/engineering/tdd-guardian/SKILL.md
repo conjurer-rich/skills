@@ -5,13 +5,12 @@ description: Use to verify TDD process compliance for new or changed observable 
 
 # TDD Guardian
 
-**Where it runs.** The skill applies in the context that loads it. A caller
-that holds a scoped brief (a worktree path, a review-pack file) loads it and
-checks that scope and nothing else; it does not start a fork. To keep the
-work it judges from colouring the check, a main session spawns a fresh
-subagent and briefs it with the scope to check, then has that subagent load
-this skill; where the harness has no subagents, run it inline after the
-work, reading the evidence afresh.
+**Where it runs.** The skill applies in the context that loads it; it does
+not start a fork. To keep the work it judges from colouring the check, a main
+session spawns a fresh subagent, briefs it with the scope to check (a
+worktree path, a review-pack file), then has that subagent load this skill;
+where the harness has no subagents, run it inline after the work, reading the
+evidence afresh.
 
 **Scope first.** Check only the scope the brief names. If none was given, stop
 and ask for one, or name the scope you chose (worktree, branch or PR, and
