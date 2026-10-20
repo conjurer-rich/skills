@@ -5,8 +5,9 @@
 # the sleep and each agent CLI, and check that an idle check never calls the
 # agent, that work calls it once with the rendered prompt, that STOP, the
 # failure limit and the daily budget end or pause the loop, that each CLI gets
-# its unattended flags, and that the project's delegation settings reach the
-# gate.
+# its unattended flags, that the project's delegation settings reach the
+# gate, and that the chain's ticket is kept in ticket.json between passes,
+# renewed, handed to each pass and to the gate, and dropped once complete.
 #
 
 set -e
@@ -64,6 +65,12 @@ EOF
   # The gate answers from $W/actions, one JSON line per call, the last repeating.
   cat > "$W/bin/delegate-status" <<'EOF'
 #!/usr/bin/env bash
+# Ticket renewals are logged apart and exit with $W/renew-exit.
+if [ "$1" = ticket ]; then
+  printf '%s\n' "$*" >> "$W/ticket.calls"
+  echo '{"result":"renewed"}'
+  exit "$(cat "$W/renew-exit" 2> /dev/null || echo 0)"
+fi
 printf '%s\n' "$*" >> "$W/status.calls"
 n=$(($(wc -l < "$W/status.calls")))
 line="$(sed -n "${n}p" "$W/actions")"
@@ -84,6 +91,13 @@ EOF
 echo x >> "$W/agent.count"
 { printf '%s' "$(basename "$0")"; for a in "$@"; do printf ' [%s]' "$a"; done; printf '\n'; } >> "$W/agent.calls"
 [ -f "$W/agent-fails" ] && { echo "agent error"; exit 3; }
+# The pass finds run-state.json in its scratch directory, named in the prompt,
+# and records the ticket from $W/pass-ticket there, as a Run pass does.
+scratch="$(printf '%s' "${*: -1}" | sed -n 's/.*Scratch directory:\*\* `\([^`]*\)`.*/\1/p' | head -n 1)"
+[ -f "$scratch/run-state.json" ] && cp "$scratch/run-state.json" "$W/seeded-run-state.json"
+if [ -f "$W/pass-ticket" ]; then
+  jq -n --argjson t "$(cat "$W/pass-ticket")" '{step: 14, ticket: $t}' > "$scratch/run-state.json"
+fi
 case "$(basename "$0")" in
   claude) echo '{"type":"result","total_cost_usd":0.42,"usage":{"input_tokens":1000,"output_tokens":200,"cache_read_input_tokens":5000}}' ;;
   codex) printf '%s\n' '{"type":"thread.started"}' '{"type":"turn.completed","usage":{"input_tokens":900,"cached_input_tokens":100,"output_tokens":50}}' ;;
@@ -191,6 +205,100 @@ loop --max-passes 1 --pause 5 --idle 700
 expect "the daily pass budget allows that many passes" test "$(wc -l < "$W/agent.count")" -eq 1
 expect "past the budget, work waits and the loop idles" grep -q "daily pass budget (1) reached" "$W/project/.delegate-loop/loop.log"
 expect "after a pass the loop pauses, then idles" test "$(paste -sd, "$W/sleep.calls")" = "5,700"
+
+# ---------------------------------------------------------------- the ticket
+#
+# A chain owns one ticket until it is complete (#37). Each runner pass gets
+# fresh scratch, so the runner keeps the ticket in ticket.json in its state
+# directory: it seeds each pass's run-state.json with it, reads it back after
+# the pass, names it to the gate so the gate never answers pick while it is
+# open, renews a PR-less ticket's marker, and drops it once the gate reports it
+# complete or the marker is gone.
+
+ticket_file() { printf '%s' "$W/project/.delegate-loop/ticket.json"; }
+seed_ticket() { mkdir -p "$W/project/.delegate-loop" && printf '%s\n' "$1" > "$(ticket_file)"; }
+
+setup
+echo "$pick" > "$W/actions"
+echo '{"issue": 9, "pr": null}' > "$W/pass-ticket"
+loop --once
+expect "a ticket the pass records is kept in the state directory" \
+  jq -e '. == {"issue": 9, "pr": null}' "$(ticket_file)"
+
+setup
+echo '{"action":"watch","reasons":["PR #40 needs review"],"ticket":{"issue":31,"pr":40}}' > "$W/actions"
+seed_ticket '{"issue": 31, "pr": 40}'
+loop --once
+expect "the gate is asked about the chain's ticket and its PR" grep -q -- '--ticket 31 --pr 40' "$W/status.calls"
+expect "the pass is seeded with the ticket in its run-state.json" \
+  jq -e '.ticket == {"issue": 31, "pr": 40}' "$W/seeded-run-state.json"
+expect "the prompt names the ticket" grep -q 'ticket #31 (PR #40)' "$W/agent.calls"
+expect "a ticket with a PR is not renewed: its marker lives while the PR is open" test ! -e "$W/ticket.calls"
+expect "a pass that leaves the ticket alone keeps it" jq -e '. == {"issue": 31, "pr": 40}' "$(ticket_file)"
+
+setup
+echo "$idle" > "$W/actions"
+seed_ticket '{"issue": 31, "pr": null, "id": 3190}'
+loop --once
+expect "a PR-less ticket is named to the gate without a PR" bash -c "grep -qE -- '--ticket 31( |\$)' '$W/status.calls' && ! grep -q -- '--pr' '$W/status.calls'"
+expect "a PR-less ticket's marker is renewed on every iteration" \
+  grep -q '^ticket renew 31 3190 --repo acme/widgets --session test-loop' "$W/ticket.calls"
+expect "a renewed ticket is kept" jq -e '.issue == 31' "$(ticket_file)"
+
+setup
+echo "$idle" > "$W/actions"
+seed_ticket '{"issue": 31, "pr": null, "id": 3190}'
+echo 4 > "$W/renew-exit"
+loop --once
+expect "a ticket whose marker lapsed or was taken is dropped" test ! -e "$(ticket_file)"
+expect "the dropped ticket is logged" grep -q 'ticket #31 is gone' "$W/project/.delegate-loop/loop.log"
+expect "a dropped ticket is not named to the gate" bash -c "! grep -q -- '--ticket' '$W/status.calls'"
+
+setup
+echo "$idle" > "$W/actions"
+seed_ticket '{"issue": 31, "pr": null, "id": 3190}'
+echo 1 > "$W/renew-exit"
+loop --once
+expect "a renewal that fails for another reason keeps the ticket" jq -e '. == {"issue": 31, "pr": null, "id": 3190}' "$(ticket_file)"
+expect "the failed renewal is logged" grep -q 'renewing ticket #31 failed' "$W/project/.delegate-loop/loop.log"
+expect "a ticket kept after a failed renewal is still named to the gate" grep -qE -- '--ticket 31( |$)' "$W/status.calls"
+
+# A lost ticket.json loses nothing, even with a PR: the gate finds the chain's
+# marker on the issue and names the ticket, and the loop adopts it.
+setup
+echo '{"action":"idle","reasons":["waiting on ticket #14"],"ticket":{"issue":14,"pr":20,"id":1490}}' > "$W/actions"
+loop --once
+expect "a ticket with a PR the gate recovers from the issue is adopted" jq -e '. == {"issue": 14, "pr": 20, "id": 1490}' "$(ticket_file)"
+
+setup
+echo '{"action":"idle","reasons":["waiting on ticket #31"],"ticket":{"issue":31,"pr":44}}' > "$W/actions"
+seed_ticket '{"issue": 31, "pr": null}'
+loop --once
+expect "the gate's ticket replaces the kept one, with the PR it found" jq -e '. == {"issue": 31, "pr": 44}' "$(ticket_file)"
+expect "an idle ticket never starts the agent" test ! -e "$W/agent.calls"
+
+setup
+echo '{"action":"pick","reasons":["issue #9 is eligible"],"issue":9,"ticket":null}' > "$W/actions"
+seed_ticket '{"issue": 31, "pr": 40}'
+loop --once
+expect "a ticket the gate reports complete is dropped before the pass" \
+  jq -e '.ticket == null' "$W/seeded-run-state.json"
+expect "the prompt then names no ticket" grep -q 'Ticket:\*\* none' "$W/agent.calls"
+
+setup
+echo "$watch" > "$W/actions"
+seed_ticket '{"issue": 31, "pr": 40}'
+echo 'null' > "$W/pass-ticket"
+loop --once
+expect "a pass that clears the ticket drops it" test ! -e "$(ticket_file)"
+
+for bad in '' '{oops' '{"issue": "x"}'; do
+  setup
+  echo "$idle" > "$W/actions"
+  seed_ticket "$bad"
+  if loop --once; then pass "an unreadable ticket.json ('$bad') does not stop the loop"; else fail "an unreadable ticket.json ('$bad') does not stop the loop"; fi
+  expect "an unreadable ticket.json ('$bad') names no ticket" bash -c "! grep -q -- '--ticket' '$W/status.calls'"
+done
 
 # ---------------------------------------------------------------- refusals
 

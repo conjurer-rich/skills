@@ -17,7 +17,9 @@
 # footer, [bot] and Bot authors, preview stickies, reply-to), PR
 # classification, Land markers, hand-off comments, CI checks pinned to a head
 # SHA, the Watch digest and its backoff, follow-up issues, cost notes, the
-# Pick skip cache and the chain lease (take, full, lapsed, release, hand-over).
+# Pick skip cache, the chain's ticket (next-action answering for it alone, the
+# ticket marker on the issue: forged, lapsed, raced, renewed, released) and
+# the chain lease (take, full, lapsed, release, hand-over).
 #
 
 set -e
@@ -1117,6 +1119,316 @@ if run next-action --from "$TMP/missing.json" > /dev/null 2>&1; then
 else
   pass "next-action --from a missing file is a usage error"
 fi
+
+# ---------------------------------------------------------------- next-action with a ticket
+#
+# A chain owns one ticket until it is complete (#37): with --ticket, or with a
+# ticket marker of this chain in the status, next-action answers for that
+# ticket alone and never picks another issue while it is open.
+
+ticket_status() { # prs-json issues-json [budget] -> status json with an eligible issue #9
+  printf '{"prs": %s, "issues": %s, "pick": {"number": 9}, "budget": %s, "counts": {}}' "$1" "$2" "${3:-$budget_ok}"
+}
+waiting31='[{"number": 31, "state": "waiting-on-human", "reason": "question-unanswered"}, {"number": 9, "state": "free"}]'
+other_review='{"number": 20, "class": "needs-review"}'
+
+check "a conflicted ticket PR is Watch work, and no other PR is" \
+  "$(printf '%s' "$(ticket_status "[$other_review, {\"number\": 4, \"class\": \"conflicted\"}]" '[{"number": 31, "state": "delegated", "pr": 4}]')" > "$TMP/status.json"; run next-action --from "$TMP/status.json" --ticket 31 --pr 4)" \
+  '.action == "watch" and .reasons == ["PR #4 has a merge conflict"] and .ticket == {"issue": 31, "pr": 4}'
+check "a ticket PR another session holds is idle, and says who holds it" \
+  "$(printf '%s' "$(ticket_status "[$other_review, {\"number\": 4, \"class\": \"claimed\", \"holder\": \"$OTHER\"}]" '[{"number": 31, "state": "delegated", "pr": 4}]')" > "$TMP/status.json"; run next-action --from "$TMP/status.json" --ticket 31 --pr 4)" \
+  ".action == \"idle\" and .reasons == [\"PR #4 is claimed by $OTHER\"]"
+check "a ticket issue another session holds is idle, and says who holds it" \
+  "$(printf '%s' "$(ticket_status "[$other_review]" "[{\"number\": 31, \"state\": \"claimed\", \"holder\": \"$OTHER\"}, {\"number\": 9, \"state\": \"free\"}]")" > "$TMP/status.json"; run next-action --from "$TMP/status.json" --ticket 31)" \
+  ".action == \"idle\" and .reasons == [\"issue #31 is claimed by $OTHER\"] and .ticket == {\"issue\": 31, \"pr\": null}"
+check "a ticket issue waiting on the human is idle: the chain waits on its ticket, never picks" \
+  "$(printf '%s' "$(ticket_status "[$other_review]" "$waiting31")" > "$TMP/status.json"; run next-action --from "$TMP/status.json" --ticket 31)" \
+  '.action == "idle" and .reasons == ["waiting on ticket #31"]'
+check "an idle ticket PR waits on its ticket" \
+  "$(printf '%s' "$(ticket_status '[{"number": 4, "class": "idle"}]' '[{"number": 31, "state": "delegated", "pr": 4}]')" > "$TMP/status.json"; run next-action --from "$TMP/status.json" --ticket 31 --pr 4)" \
+  '.action == "idle" and .reasons == ["waiting on ticket #31"]'
+check "a ticket PR that needs review is Watch work" \
+  "$(printf '%s' "$(ticket_status '[{"number": 4, "class": "needs-review"}]' '[{"number": 31, "state": "delegated", "pr": 4}]')" > "$TMP/status.json"; run next-action --from "$TMP/status.json" --ticket 31 --pr 4)" \
+  '.action == "watch" and .reasons == ["PR #4 needs review"]'
+check "a Ready ticket PR is Land work" \
+  "$(printf '%s' "$(ticket_status "[$other_review, {\"number\": 4, \"class\": \"ready\"}]" '[{"number": 31, "state": "delegated", "pr": 4}]')" > "$TMP/status.json"; run next-action --from "$TMP/status.json" --ticket 31 --pr 4)" \
+  '.action == "land" and .reasons == ["PR #4 is marked ready"]'
+check "a ticket issue the human answered is resumed as Pick work on that issue" \
+  "$(printf '%s' "$(ticket_status '[]' '[{"number": 31, "state": "free", "criteria": "body"}, {"number": 9, "state": "free"}]')" > "$TMP/status.json"; run next-action --from "$TMP/status.json" --ticket 31)" \
+  '.action == "pick" and .issue == 31 and .reasons == ["ticket #31 can be resumed"]'
+check "a held ticket issue with criteria is resumed" \
+  "$(printf '%s' "$(ticket_status '[]' '[{"number": 31, "state": "held", "criteria": "confirmed"}]')" > "$TMP/status.json"; run next-action --from "$TMP/status.json" --ticket 31)" \
+  '.action == "pick" and .issue == 31'
+check "a resumable ticket over budget is idle, and says why" \
+  "$(printf '%s' "$(ticket_status '[]' '[{"number": 31, "state": "free", "criteria": "body"}]' "$budget_full")" > "$TMP/status.json"; run next-action --from "$TMP/status.json" --ticket 31)" \
+  '.action == "idle" and (.reasons[0] | startswith("budget at limit"))'
+check "a ticket whose issue gained its PR records the PR" \
+  "$(printf '%s' "$(ticket_status '[{"number": 4, "class": "idle"}]' '[{"number": 31, "state": "delegated", "pr": 4}]')" > "$TMP/status.json"; run next-action --from "$TMP/status.json" --ticket 31)" \
+  '.ticket == {"issue": 31, "pr": 4} and .action == "idle"'
+check "a ticket whose PR merged or closed is complete, and the chain picks again" \
+  "$(printf '%s' "$(ticket_status '[]' '[{"number": 31, "state": "free", "criteria": "body"}, {"number": 9, "state": "free"}]')" > "$TMP/status.json"; run next-action --from "$TMP/status.json" --ticket 31 --pr 4)" \
+  '.ticket == null and .action == "pick" and .issue == 9'
+check "a ticket whose issue left the label is released, and the chain picks again" \
+  "$(printf '%s' "$(ticket_status '[]' '[{"number": 9, "state": "free"}]')" > "$TMP/status.json"; run next-action --from "$TMP/status.json" --ticket 31)" \
+  '.ticket == null and .action == "pick"'
+check "a PR-less ticket whose issue is blocked is complete: it was never startable" \
+  "$(printf '%s' "$(ticket_status '[]' '[{"number": 31, "state": "blocked", "blocked_by": [3]}, {"number": 9, "state": "free"}]')" > "$TMP/status.json"; run next-action --from "$TMP/status.json" --ticket 31)" \
+  '.ticket == null and .action == "pick" and .issue == 9'
+check "a ticket with an open PR stays open whatever its issue reads" \
+  "$(printf '%s' "$(ticket_status '[{"number": 4, "class": "idle"}]' '[{"number": 31, "state": "blocked", "blocked_by": [3]}, {"number": 9, "state": "free"}]')" > "$TMP/status.json"; run next-action --from "$TMP/status.json" --ticket 31 --pr 4)" \
+  '.ticket == {"issue": 31, "pr": 4} and .action == "idle"'
+check "next-action takes the ticket's id from its issue" \
+  "$(printf '%s' "$(ticket_status '[{"number": 4, "class": "idle"}]' '[{"number": 31, "state": "delegated", "pr": 4, "ticket_id": 3190}]')" > "$TMP/status.json"; run next-action --from "$TMP/status.json" --ticket 31 --pr 4)" \
+  '.ticket == {"issue": 31, "pr": 4, "id": 3190}'
+check "a PR-less ticket another chain now holds is complete for this chain" \
+  "$(printf '%s' "$(ticket_status '[]' "[{\"number\": 31, \"state\": \"ticketed\", \"holder\": \"$OTHER\"}, {\"number\": 9, \"state\": \"free\"}]")" > "$TMP/status.json"; run next-action --from "$TMP/status.json" --ticket 31)" \
+  '.ticket == null and .action == "pick" and .issue == 9'
+check "without a ticket, next-action carries no ticket key" \
+  "$(printf '%s' "$(ticket_status '[]' '[{"number": 9, "state": "free"}]')" > "$TMP/status.json"; run next-action --from "$TMP/status.json")" \
+  'has("ticket") | not'
+check "a left-over marker of this chain with no PR is adopted as the ticket" \
+  "$(printf '{"prs": [], "issues": %s, "pick": {"number": 9}, "budget": %s, "counts": {}, "ticket": {"issue": 31, "pr": null, "id": 3190}}' "$waiting31" "$budget_ok" > "$TMP/status.json"; run next-action --from "$TMP/status.json")" \
+  '.action == "idle" and .reasons == ["waiting on ticket #31"] and .ticket == {"issue": 31, "pr": null, "id": 3190}'
+for bad in "--ticket x" "--ticket 31 --pr x"; do
+  status=0
+  # shellcheck disable=SC2086
+  run next-action --from "$TMP/status.json" $bad > /dev/null 2>&1 || status=$?
+  if [ "$status" -eq 2 ]; then pass "next-action $bad is a usage error"; else fail "next-action $bad is a usage error (got $status)"; fi
+done
+
+# ---------------------------------------------------------------- ticket markers
+#
+# The ticket is also recorded on the issue, as a marker comment Pick honours
+# whether or not the chain's lease slot is live: until its PR merges or
+# closes, the human deletes it, or (with no PR) ticket_ttl passes without a
+# renewal. Only a marker the delegator's own login posted counts.
+
+# ticket_comment <id> <chain> <pr|none> <updated_at> [login]
+ticket_comment() {
+  jq -nc --argjson id "$1" --arg c "$2" --arg p "$3" --arg at "$4" --arg l "${5:-rich}" \
+    '{id: $id, body: "Ticket held by delegator chain `\($c)` until its PR merges or closes.\n<!-- delegator ticket: \($c) pr=\($p) -->",
+      created_at: $at, updated_at: $at, user: {login: $l}}'
+}
+on_issue() { # n, comment json objects -> appended to comments-n.json
+  local n="$1"; shift
+  [ -f "$FAKE_STATE/comments-$n.json" ] || echo '[]' > "$FAKE_STATE/comments-$n.json"
+  jq -s '.[0] + .[1:]' "$FAKE_STATE/comments-$n.json" <(printf '%s\n' "$@") > "$FAKE_STATE/comments.tmp"
+  mv "$FAKE_STATE/comments.tmp" "$FAKE_STATE/comments-$n.json"
+}
+T_LIVE=2026-10-02T06:00:00Z     # 6 hours old
+T_LAPSED=2026-10-01T23:00:00Z   # 13 hours old
+TICKET_TTL=43200
+NEXT_CHAIN=f0e1d2c3
+
+use status
+on_issue 31 "$(ticket_comment 3190 "$OTHER" none "$T_LIVE")"
+out="$(run status)"
+check "another chain's PR-less ticket marker makes the issue ticketed, with the chain" "$out" \
+  "$(issue 31) | .state == \"ticketed\" and .holder == \"$OTHER\""
+check "Pick skips an issue another chain holds as its ticket" "$out" '.pick.number != 31'
+check "counts tallies ticketed issues" "$out" '.counts.ticketed == 1'
+out="$(run status --chain "$OTHER")"
+check "--chain names the chain whose markers are its own" "$out" \
+  "$(issue 31) | .state == \"free\" and .ticket_id == 3190"
+check "status names this chain's PR-less ticket" "$out" '.ticket == {"issue": 31, "pr": null, "id": 3190}'
+out="$(run issue 31)"
+check "issue reads a ticket marker as status does" "$out" ".state == \"ticketed\" and .holder == \"$OTHER\""
+# Work step 1 passes --chain, so a hand-off session resumes its own PR-less
+# ticket instead of reading it as another chain's (PR #53 review, B3).
+out="$(run issue 31 --chain "$OTHER")"
+check "issue --chain reads the chain's own ticket as free, with its ticket_id" "$out" \
+  ".state == \"free\" and .ticket_id == 3190"
+
+use status
+on_issue 31 "$(ticket_comment 3190 "$OTHER" none "$T_LIVE" mallory)"
+check "a ticket marker posted by another login is ignored" "$(run status)" "$(issue 31) | .state == \"free\""
+
+use status
+on_issue 31 "$(ticket_comment 3190 "$OTHER" none "$T_LAPSED")"
+check "a PR-less ticket marker lapses ticket_ttl after its last renewal" "$(run status)" "$(issue 31) | .state == \"free\""
+use status
+on_issue 31 "$(ticket_comment 3190 "$OTHER" none "$T_LIVE")"
+check "a PR-less ticket marker exactly ticket_ttl old has lapsed" \
+  "$(RUN_NOW=$(($(jq -n --arg t "$T_LIVE" '$t | fromdateiso8601') + TICKET_TTL)) run status)" "$(issue 31) | .state == \"free\""
+check "a PR-less ticket marker one second short of ticket_ttl is live" \
+  "$(RUN_NOW=$(($(jq -n --arg t "$T_LIVE" '$t | fromdateiso8601') + TICKET_TTL - 1)) run status)" "$(issue 31) | .state == \"ticketed\""
+check "--ticket-ttl sets the lapse" "$(run status --ticket-ttl 3600)" "$(issue 31) | .state == \"free\""
+
+use status
+on_issue 31 "$(ticket_comment 3190 "$OTHER" 25 "$T_LAPSED")"
+check "a ticket marker whose PR is open is honoured past ticket_ttl" "$(run status)" "$(issue 31) | .state == \"ticketed\""
+use status
+on_issue 31 "$(ticket_comment 3190 "$OTHER" 55 "$T_LIVE")"
+check "a ticket marker whose PR merged or closed is not honoured" "$(run status)" "$(issue 31) | .state == \"free\""
+
+use status
+on_issue 36 "$(ticket_comment 3690 "$NEXT_CHAIN" none "$T_LIVE")"
+check "a live claim still wins over a ticket marker" "$(run status)" "$(issue 36) | .state == \"claimed\" and .holder == \"$OTHER\""
+
+use status
+on_issue 35 "$(ticket_comment 3590 "$OTHER" none "$T_LIVE")"
+jq 'map(if .number == 35 then .labels += [{name: "needs-answer"}] else . end)' \
+  "$FAKE_STATE/issues.json" > "$FAKE_STATE/issues.tmp" && mv "$FAKE_STATE/issues.tmp" "$FAKE_STATE/issues.json"
+out="$(run status --sync-labels)"
+check "--sync-labels leaves an issue another chain holds as its ticket alone" "$out" \
+  '(.labels_synced["needs-answer"].removed | index(35)) == null'
+check_not_called "-X DELETE repos/acme/widgets/issues/35/labels" "another chain's ticket keeps its answer label"
+check "Pick's cache never records a ticketed issue" "$(run status --cache "$FAKE_STATE/pick-cache.json" > /dev/null; cat "$FAKE_STATE/pick-cache.json")" \
+  'all(.[]; .number != 35)'
+
+use status
+on_issue 35 "$(ticket_comment 3590 "$OURS" none "$T_LIVE")"
+run status --cache "$FAKE_STATE/pick-cache.json" > /dev/null
+: > "$FAKE_STATE/calls.log"
+out="$(run status --cache "$FAKE_STATE/pick-cache.json")"
+check_called "issues/35/comments" "an issue carrying this chain's ticket is re-read every pass, never cached"
+check "this chain's ticket is named on every pass, cache or not" "$out" '.ticket == {"issue": 35, "pr": null, "id": 3590}'
+
+# A ticket whose PR is open is recovered from the issue too: a chain that lost
+# its run-state.json (a reclaimed web container) or its ticket.json (the
+# runner) finds it again and never picks while the PR waits. Issue 14 is
+# delegated, with PR #20 open.
+use status
+on_issue 14 "$(ticket_comment 1490 "$OURS" 20 "$T_LAPSED")"
+out="$(run status)"
+check "status names this chain's ticket whose PR is open, with the PR" "$out" '.ticket == {"issue": 14, "pr": 20, "id": 1490}'
+check "an issue with this chain's ticket and an open PR is still delegated" "$out" "$(issue 14) | .state == \"delegated\" and .pr == 20 and .ticket_id == 1490"
+out="$(run next-action)"
+check "a chain that lost its ticket recovers it from the PR's issue and never picks" "$out" \
+  '.action != "pick" and .ticket == {"issue": 14, "pr": 20, "id": 1490}'
+use status
+on_issue 14 "$(ticket_comment 1490 "$OURS" none "$T_LIVE")"
+check "this chain's PR-less marker on a delegated issue names the open PR" "$(run status)" '.ticket == {"issue": 14, "pr": 20, "id": 1490}'
+use status
+on_issue 14 "$(ticket_comment 1490 "$OTHER" 20 "$T_LIVE")"
+out="$(run status)"
+check "another chain's ticket on a delegated issue is not this chain's" "$out" '.ticket == null'
+check "another chain's ticket leaves a delegated issue delegated" "$out" "$(issue 14) | .state == \"delegated\" and (has(\"ticket_id\") | not)"
+use status
+on_issue 14 "$(ticket_comment 1490 "$OURS" 20 "$T_LIVE" mallory)"
+check "a forged marker on a delegated issue is no ticket" "$(run status)" '.ticket == null'
+
+# ticket set
+use status
+out="$(run ticket set 31)"
+check "ticket set records this chain's ticket on the issue" "$out" '.item == 31 and .result == "set" and .id == 900 and .chain == "'"$OURS"'" and .pr == null'
+check "the ticket marker names the chain and no PR" "$(cat "$FAKE_STATE/comments-31.json")" \
+  '.[0].body | endswith("<!-- delegator ticket: '"$OURS"' pr=none -->")'
+check "this chain's own ticket leaves the issue free to it" "$(run status)" "$(issue 31) | .state == \"free\" and .ticket_id == 900"
+: > "$FAKE_STATE/calls.log"
+out="$(run ticket set 31 --pr 25)"
+check "ticket set --pr records the PR on the same marker" "$out" '.result == "set" and .id == 900 and .pr == 25'
+check_not_called "-X POST repos/acme/widgets/issues/31/comments" "ticket set reuses this chain's marker"
+check "the marker now names the PR" "$(cat "$FAKE_STATE/comments-31.json")" \
+  '(map(select(.body | contains("delegator ticket"))) | length) == 1 and (.[0].body | endswith("pr=25 -->"))'
+
+use status
+on_issue 31 "$(ticket_comment 3190 "$OTHER" none "$T_LIVE")"
+status=0
+out="$(run ticket set 31 2> /dev/null)" || status=$?
+check "ticket set refuses an issue another chain holds as its ticket" "$out" '.result == "lost" and .holder == "'"$OTHER"'"'
+if [ "$status" -eq 4 ]; then pass "a refused ticket set exits 4"; else fail "a refused ticket set exits 4 (got $status)"; fi
+check_not_called "-X POST" "a refused ticket set posts nothing"
+
+use status
+on_issue 31 "$(ticket_comment 3190 "$OTHER" none "$T_LAPSED")"
+check "ticket set takes an issue whose other marker lapsed" "$(run ticket set 31)" '.result == "set" and .id == 900'
+use status
+on_issue 31 "$(ticket_comment 3190 "$OTHER" none "$T_LIVE" mallory)"
+check "ticket set ignores a forged marker" "$(run ticket set 31)" '.result == "set"'
+
+# Two chains set a ticket at once: the lower id keeps it, the other withdraws.
+use status
+ticket_comment 890 "$OTHER" none "$T_LIVE" | jq -s '.' > "$FAKE_STATE/comments-31.json.next"
+status=0
+out="$(run ticket set 31 2> /dev/null)" || status=$?
+check "a chain that loses the race for a ticket reports lost" "$out" '.result == "lost" and .holder == "'"$OTHER"'"'
+if [ "$status" -eq 4 ]; then pass "losing the ticket race exits 4"; else fail "losing the ticket race exits 4 (got $status)"; fi
+check_called "-X DELETE repos/acme/widgets/issues/comments/900" "the losing chain deletes its own marker"
+
+# ticket renew and heartbeat
+use status
+on_issue 31 "$(ticket_comment 3190 "$OURS" none "$T_LIVE")"
+out="$(run ticket renew 31 3190)"
+check "ticket renew renews this chain's live marker" "$out" '.item == 31 and .result == "renewed" and .id == 3190'
+check "the renewed marker carries the renewal time and keeps its marker line" "$(cat "$FAKE_STATE/comments-31.json")" \
+  '.[0] | (.body | split("\n") | (.[0] | endswith("renewed 2026-10-02T12:00:00Z")) and .[1] == "<!-- delegator ticket: '"$OURS"' pr=none -->") and .updated_at == "2026-10-02T12:00:00Z"'
+
+# A lapsed marker is gone, as a lapsed claim is: renewing it would revive an
+# older id that outranks the chain that rightly took the issue since.
+use status
+on_issue 31 "$(ticket_comment 3190 "$OURS" none "$T_LAPSED")"
+status=0
+out="$(run ticket renew 31 3190 2> /dev/null)" || status=$?
+check "ticket renew refuses a marker past ticket_ttl" "$out" '.result == "lost" and .id == 3190'
+if [ "$status" -eq 4 ]; then pass "renewing a lapsed ticket exits 4"; else fail "renewing a lapsed ticket exits 4 (got $status)"; fi
+check_not_called "-X PATCH" "renewing a lapsed ticket writes nothing"
+
+use status
+on_issue 31 "$(ticket_comment 3190 "$OURS" none "$T_LIVE")" "$(ticket_comment 3191 "$OTHER" none "$T_LIVE")"
+status=0
+out="$(run ticket renew 31 3190 2> /dev/null)" || status=$?
+check "ticket renew refuses when another chain holds a newer ticket on the issue" "$out" '.result == "lost" and .holder == "'"$OTHER"'"'
+if [ "$status" -eq 4 ]; then pass "renewing over another chain's ticket exits 4"; else fail "renewing over another chain's ticket exits 4 (got $status)"; fi
+check_not_called "-X PATCH" "renewing over another chain's ticket writes nothing"
+
+use status
+on_issue 31 "$(ticket_comment 3190 "$OURS" none "$T_LAPSED")"
+status=0
+DELEGATE_STATUS_BEATS=2 DELEGATE_STATUS_POLL=0 run ticket heartbeat 31 3190 > /dev/null 2>&1 || status=$?
+if [ "$status" -eq 4 ]; then pass "ticket heartbeat exits 4 on a lapsed marker"; else fail "ticket heartbeat exits 4 on a lapsed marker (got $status)"; fi
+check_not_called "-X PATCH" "a heartbeat on a lapsed ticket writes nothing"
+use status
+on_issue 31 "$(ticket_comment 3190 "$OURS" none "$T_LIVE")" "$(ticket_comment 3191 "$OTHER" none "$T_LIVE")"
+status=0
+DELEGATE_STATUS_BEATS=2 DELEGATE_STATUS_POLL=0 run ticket heartbeat 31 3190 > /dev/null 2>&1 || status=$?
+if [ "$status" -eq 4 ]; then pass "ticket heartbeat exits 4 when another chain holds a newer ticket"; else fail "ticket heartbeat exits 4 when another chain holds a newer ticket (got $status)"; fi
+check_not_called "-X PATCH" "a heartbeat over another chain's ticket writes nothing"
+
+use status
+on_issue 31 "$(ticket_comment 3190 "$OURS" none "$T_LIVE")"
+out="$(DELEGATE_STATUS_BEATS=2 DELEGATE_STATUS_POLL=0 run ticket heartbeat 31 3190 --every 600 || true)"
+check "ticket heartbeat renews a live marker on each beat" "$out" '.result == "renewed"'
+if [ "$(grep -c -- "-X PATCH repos/acme/widgets/issues/comments/3190" "$FAKE_STATE/calls.log")" -eq 2 ]; then
+  pass "ticket heartbeat renews once per beat"
+else
+  fail "ticket heartbeat renews once per beat"
+fi
+if run ticket heartbeat 31 3190 --every 50000 > /dev/null 2>&1; then
+  fail "a ticket heartbeat slower than ticket_ttl is a usage error"
+else
+  pass "a ticket heartbeat slower than ticket_ttl is a usage error"
+fi
+use status
+on_issue 31 "$(ticket_comment 3190 "$OURS" 25 "$T_LAPSED")"
+check "a ticket with an open PR renews past ticket_ttl" "$(run ticket renew 31 3190)" '.result == "renewed"'
+
+# ticket release
+use status
+on_issue 31 "$(ticket_comment 3190 "$OURS" none "$T_LIVE")"
+out="$(run ticket release 31 3190)"
+check "ticket release deletes this chain's marker" "$out" '.item == 31 and .result == "released" and .id == 3190'
+check "the released marker is gone" "$(cat "$FAKE_STATE/comments-31.json")" '. == []'
+use status
+on_issue 31 "$(ticket_comment 3190 "$OTHER" none "$T_LIVE")"
+status=0
+run ticket release 31 3190 > /dev/null 2>&1 || status=$?
+if [ "$status" -eq 3 ]; then pass "ticket release refuses another chain's marker"; else fail "ticket release refuses another chain's marker (got $status)"; fi
+check_not_called "-X DELETE" "another chain's marker is never deleted"
+use status
+on_issue 31 "$(ticket_comment 3190 "$OURS" none "$T_LIVE")"
+status=0
+run ticket release 32 3190 > /dev/null 2>&1 || status=$?
+if [ "$status" -eq 3 ]; then pass "ticket release refuses a marker on another issue"; else fail "ticket release refuses a marker on another issue (got $status)"; fi
+
+# usage
+use status
+for args in "ticket" "ticket bogus 31" "ticket set" "ticket set x" "ticket renew 31" "ticket release 31" "ticket set 31 --pr x" "ticket set 31 --chain x-->" "status --ticket-ttl x"; do
+  status=0
+  # shellcheck disable=SC2086
+  run $args > /dev/null 2>&1 || status=$?
+  if [ "$status" -eq 2 ]; then pass "'$args' is a usage error"; else fail "'$args' is a usage error (got $status)"; fi
+done
 
 # ---------------------------------------------------------------- lease
 #

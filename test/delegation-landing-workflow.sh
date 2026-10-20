@@ -336,7 +336,21 @@ require_text 'The new session starts a fresh Run, not the stopped Work.' "a stop
 # max_worktrees tickets and paid Watch, Sync and rework on each.
 require_text 'The ticket is `ticket` in `run-state.json`, `{issue, pr}`' "the chain's ticket is recorded in run-state"
 require_text 'While `ticket` is set, the chain never runs Pick' "a chain with an open ticket never picks"
-require_text 'ticket #<issue> PR #<pr>;' "the hand-off line carries the ticket"
+require_text 'ticket #<issue> PR #<pr> chain <chain>;' "the hand-off line carries the ticket and its chain"
+# The lease slot lapses while a chain waits, so the ticket is also recorded
+# on the issue, where Pick honours it whatever happens to the slot (PR #53).
+require_text 'delegate-status ticket set N --chain <chain>' "Work records the ticket on its issue when its claim wins"
+require_text 'ticket set N --pr <P> --chain <chain>' "the ticket's PR is recorded on the issue's marker"
+require_text '`ticketed`: another chain holds the issue as its ticket' "Pick skips an issue another chain holds as its ticket"
+require_text 'Only a marker the delegator'"'"'s own login posted counts' "a forged ticket marker is ignored"
+require_text 'the issue no longer carries this chain'"'"'s `ticket_id`' "a lapsed or deleted marker ends the ticket"
+require_text 'Whenever `ticket` is cleared, `ticket release` its marker' "a complete ticket's marker is removed"
+require_text 'adopt it as `ticket`' "a left-over marker of this chain is resumed"
+require_text 'never set it again over the other chain' "a lost ticket is dropped, never retaken"
+require_text 'On the CLI, where no hand-off is possible, the chain waits in place' "the CLI waits in place instead of ending the loop"
+require_text 'cannot hand off keeps its lease slot and its loop' "Hand-off on the CLI keeps the waiting loop"
+require_text 'reminder 240 minutes out, only while the ticket has no PR' "the web's safety-net reminder runs only while the ticket has no PR"
+require_text 'The ticket marker stays' "a hand-off keeps the ticket marker"
 require_text 'writes it to `run-state.json` as `ticket` and resumes that ticket' "the session a hand-off creates resumes the ticket"
 require_text 'act only on the ticket'"'"'s PR' "Watch reviews, lands and syncs only the ticket's PR"
 require_text 'A chain with an open ticket holds only the ticket'"'"'s PR' "a chain subscribes only to its ticket's PR"
@@ -346,6 +360,15 @@ require_text 'it was never startable. Clear `ticket`; Pick skips it as before' "
 require_text 'hands off before it waits' "a chain hands off before waiting on the human or CI"
 require_text 'schedule no next pass and set no reminder' "a waiting chain sets no scheduled wakeup"
 require_text 'A **Run** whose chain holds an open `ticket` never runs Pick' "Pick is never reached while a ticket is open"
+# A chain that lost run-state.json with a reclaimed container recovers its
+# ticket from the issue, PR or not; a Work started by hand is no chain, so it
+# leaves no marker that would refuse a later /delegate #N (PR #53 review).
+require_text 'resumes its ticket this way, PR or not' "a chain that lost run-state.json recovers its ticket, PR or not"
+require_text 'takes `chain` from its hand-off line, else its session name' "a rebuilt session knows its chain"
+require_text 'A Work started by hand sets no `ticket` and posts no ticket marker' "a hand-started Work leaves no ticket marker"
+require_text 'If it prints `ticketed`, another chain holds the issue as its ticket' "Work reports an issue another chain holds as its ticket"
+require_text '`delegate-status issue N --chain <chain>`' "Work reads the issue as its own chain, so a hand-off resumes its PR-less ticket"
+require_text 'Set `worked_issue` and, while `ticket` is set, the `ticket`'"'"'s `pr`' "Blocked records the PR on the ticket only under a chain"
 # A /loop wakeup is a new turn in the same session, so a run that stopped at
 # the context limit tripped the rule again on every later pass and the loop died.
 # A cloud session hands the loop to a new session with an empty context.
