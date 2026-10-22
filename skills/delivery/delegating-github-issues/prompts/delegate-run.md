@@ -31,6 +31,11 @@ Follow the skill's **Run** entry point once: Watch, then Pick and Work.
 - **Bookkeeping script:** `{{status_script}}`.
 - **Scratch directory:** `{{scratch}}`. Use it wherever the skill says
   `<scratchpad>` or `<scratch>`.
+- **Ticket:** {{ticket}}. This loop is one chain, and the chain owns one
+  ticket until it is complete (**Ticket** in the skill's `references/run.md`).
+  The runner wrote it to `run-state.json` in the scratch directory as
+  `ticket`; keep that field as the skill says, because the runner reads it
+  back when you exit. While it is set, never run Pick.
 
 ## What the runner does instead
 

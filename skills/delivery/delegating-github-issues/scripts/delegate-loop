@@ -10,6 +10,15 @@
 # lives on GitHub and in git, so the CLI is swappable and a restarted loop
 # loses nothing.
 #
+# The loop is one chain, named by --session, and owns one ticket at a time.
+# It keeps the ticket in <state-dir>/ticket.json: it seeds each pass's
+# run-state.json with it and reads it back after the pass, names it to the
+# gate (which then answers for that ticket alone and never picks another
+# issue), renews a PR-less ticket's marker on the issue each iteration, and
+# drops it once the gate reports it complete or the marker is gone. A lost
+# ticket.json loses nothing: the gate finds the chain's marker on the issue,
+# with or without a PR, and the loop adopts the ticket it names.
+#
 # Run it from the project's main checkout. The project's .claude/delegation.md
 # supplies the same parameters `/delegate` reads; without one the loop refuses
 # to start.
@@ -116,6 +125,7 @@ case "$STATE_DIR/" in
     grep -qxF "$rel" "$exclude" 2> /dev/null || printf '%s\n' "$rel" >> "$exclude" ;;
 esac
 LOG="$STATE_DIR/loop.log"
+TICKET_FILE="$STATE_DIR/ticket.json"
 USAGE_LOG="$STATE_DIR/usage.jsonl"
 WORKTREES="$(dirname "$CHECKOUT")/$(basename "$CHECKOUT")-worktrees"
 
@@ -199,6 +209,46 @@ usage_of() {
   esac
 }
 
+# The chain's ticket as compact JSON, or nothing when there is none or the
+# file is unreadable.
+read_ticket() {
+  [ -s "$TICKET_FILE" ] || return 0
+  jq -ce 'select(type == "object" and (.issue | type) == "number" and (.pr == null or (.pr | type) == "number"))' \
+    "$TICKET_FILE" 2> /dev/null || log "ticket.json is unreadable; ignoring it"
+}
+
+# Keeps a ticket (JSON) in ticket.json, or removes the file for null.
+write_ticket() {
+  if [ "$1" = null ]; then
+    rm -f "$TICKET_FILE"
+  else
+    printf '%s\n' "$1" > "$TICKET_FILE"
+  fi
+}
+
+# Renews a PR-less ticket's marker, so it does not lapse while the chain
+# waits on the human; a marker with a PR lives while the PR is open. Clears
+# TICKET when the marker is gone (exit 4).
+renew_ticket() {
+  local issue id code=0
+  issue="$(printf '%s' "$TICKET" | jq -r '.issue')"
+  id="$(printf '%s' "$TICKET" | jq -r 'if .pr == null and (.id | type) == "number" then .id else empty end')"
+  [ -n "$id" ] || return 0
+  "$STATUS" ticket renew "$issue" "$id" --repo "$REPO" --session "$SESSION" > /dev/null 2>> "$LOG" || code=$?
+  if [ "$code" -eq 4 ]; then
+    log "ticket #$issue is gone (lapsed, taken or deleted); dropping it"
+    write_ticket null
+    TICKET=""
+  elif [ "$code" -ne 0 ]; then
+    log "renewing ticket #$issue failed; see the lines above"
+  fi
+}
+
+ticket_text() {
+  [ -n "$TICKET" ] || { echo none; return; }
+  printf '%s' "$TICKET" | jq -r '"ticket #\(.issue) (\(if .pr == null then "no PR yet" else "PR #\(.pr)" end))"'
+}
+
 render_prompt() { # action reasons scratch
   local text
   text="$(cat "$PROMPT")"
@@ -209,6 +259,7 @@ render_prompt() { # action reasons scratch
   text="${text//\{\{scratch\}\}/$3}"
   text="${text//\{\{status_script\}\}/$STATUS}"
   text="${text//\{\{skill_dir\}\}/$SKILL_DIR}"
+  text="${text//\{\{ticket\}\}/$(ticket_text)}"
   printf '%s' "$text"
 }
 
@@ -225,11 +276,23 @@ count_pass() {
 # One iteration. Returns 0 for an idle check or a pass that succeeded, 1 for a
 # failure, and sets NEXT_SLEEP.
 iterate() {
-  local gate action reasons stamp scratch out start code usage
+  local gate action reasons stamp scratch out start code usage ticket_args=() after
   NEXT_SLEEP="$IDLE"
-  if ! gate="$("$STATUS" next-action "${STATUS_ARGS[@]}" 2>> "$LOG")"; then
+  TICKET="$(read_ticket)"
+  [ -z "$TICKET" ] || renew_ticket
+  if [ -n "$TICKET" ]; then
+    ticket_args=(--ticket "$(printf '%s' "$TICKET" | jq -r '.issue')")
+    [ "$(printf '%s' "$TICKET" | jq -r '.pr')" = null ] || ticket_args+=(--pr "$(printf '%s' "$TICKET" | jq -r '.pr')")
+  fi
+  if ! gate="$("$STATUS" next-action "${STATUS_ARGS[@]}" ${ticket_args[@]+"${ticket_args[@]}"} 2>> "$LOG")"; then
     log "next-action failed; see the lines above"
     return 1
+  fi
+  # The gate names the ticket it answered for, with any PR it found, or null
+  # once the ticket is complete.
+  if printf '%s' "$gate" | jq -e 'has("ticket")' > /dev/null 2>&1; then
+    write_ticket "$(printf '%s' "$gate" | jq -c '.ticket')"
+    TICKET="$(read_ticket)"
   fi
   action="$(printf '%s' "$gate" | jq -r '.action')"
   reasons="$(printf '%s' "$gate" | jq -r '.reasons | join("; ")')"
@@ -246,12 +309,18 @@ iterate() {
   scratch="$STATE_DIR/passes/$stamp-$action"
   mkdir -p "$scratch" "$WORKTREES"
   out="$scratch/output.log"
+  jq -n --argjson t "${TICKET:-null}" '{ticket: $t}' > "$scratch/run-state.json"
   agent_args
   log "$action: $reasons; running $AGENT (log: $out)"
   start="$(date +%s)"
   code=0
   "${ARGS[@]}" "$(render_prompt "$action" "$reasons" "$scratch")" < /dev/null > "$out" 2>&1 || code=$?
   count_pass
+  # The pass keeps the ticket in its run-state.json, as a Run does.
+  after="$(jq -c 'select(type == "object" and has("ticket")) | .ticket' "$scratch/run-state.json" 2> /dev/null || true)"
+  if [ "$after" = null ] || printf '%s' "$after" | jq -e '(.issue | type) == "number"' > /dev/null 2>&1; then
+    write_ticket "$after"
+  fi
   usage="$(usage_of "$out")"
   jq -nc --arg at "$stamp" --arg agent "$AGENT" --arg action "$action" --argjson code "$code" \
     --argjson seconds $(($(date +%s) - start)) --argjson usage "$usage" \
