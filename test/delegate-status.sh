@@ -565,6 +565,16 @@ else
   pass "merge refuses a head that moved since it was verified"
 fi
 if run merge 21 > /dev/null 2>&1; then fail "merge without --sha is a usage error"; else pass "merge without --sha is a usage error"; fi
+check_not_called "commit_title" "merge leaves GitHub's squash subject alone for an unblocked title"
+
+# A PR the Blocked step opened keeps its [blocked] title until something takes
+# it off; the human's Ready click is the last word, so the squash subject never
+# carries it into the default branch.
+jq '.title = "[blocked] fix(web): thing (#12)"' "$FAKE_STATE/pull-21.json" > "$FAKE_STATE/p.tmp" && mv "$FAKE_STATE/p.tmp" "$FAKE_STATE/pull-21.json"
+out="$(run merge 21 --sha h21 || true)"
+check "merge squashes a PR whose title still says blocked" "$out" '.result == "merged"'
+check_called "-f commit_title=fix(web): thing (#12) (#21)" "the squash subject drops the [blocked] prefix"
+check "the merged PR's title drops the prefix" "$(cat "$FAKE_STATE/pull-21.json")" '.title == "fix(web): thing (#12)"'
 
 # ---------------------------------------------------------------- checks
 
@@ -1012,6 +1022,15 @@ out="$(run review-status 22 --addressed 2)"
 body="$(jq -r '.body' "$FAKE_STATE/pull-22.json")"
 check "with no earlier review there is no compare link" "$(jq -n --arg b "$body" '$b')" \
   '. == "**Ready for re-review (round 1):** addressed 2 comments in `h22`. <!-- delegator:status round=1 -->"'
+check "review-status leaves a title that is not blocked alone" "$(cat "$FAKE_STATE/pull-22.json")" '.title == "PR 22"'
+check "review-status says it unblocked nothing" "$out" '.unblocked == false'
+
+# A round that got this far passed the gate with no blocking finding left, so
+# the PR is no longer blocked: the title stops saying it is.
+jq '.title = "[blocked] fix(web): thing (#12)"' "$FAKE_STATE/pull-22.json" > "$FAKE_STATE/p.tmp" && mv "$FAKE_STATE/p.tmp" "$FAKE_STATE/pull-22.json"
+out="$(run review-status 22 --addressed 1)"
+check "review-status reports that it unblocked the title" "$out" '.unblocked == true'
+check "review-status drops the [blocked] prefix from the title" "$(cat "$FAKE_STATE/pull-22.json")" '.title == "fix(web): thing (#12)"'
 if run review-status 20 > /dev/null 2>&1; then fail "review-status without --addressed is a usage error"; else pass "review-status without --addressed is a usage error"; fi
 # ---------------------------------------------------------------- promote-criteria
 
