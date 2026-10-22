@@ -161,6 +161,10 @@ if [ "${args[0]:-}" = api ]; then
         jq --arg b "$(field body)" '.body = $b' "$state/pull-$n.json" > "$state/pull-$n.tmp"
         mv "$state/pull-$n.tmp" "$state/pull-$n.json"
       fi
+      if [ -f "$state/pull-$n.json" ] && [ -n "$(field title)" ]; then
+        jq --arg t "$(field title)" '.title = $t' "$state/pull-$n.json" > "$state/pull-$n.tmp"
+        mv "$state/pull-$n.tmp" "$state/pull-$n.json"
+      fi
       jq -n --argjson n "$n" '{number: $n, html_url: "https://github.com/acme/widgets/pull/\($n)"}'; exit 0 ;;
     GET\ repos/*/commits/*/check-runs)
       sha="${path%/check-runs}"; sha="${sha##*/}"

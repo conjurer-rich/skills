@@ -1163,15 +1163,27 @@ cmd_pr_edit() {
     | jq -c '{item: .number, result: "edited", url: .html_url}'
 }
 
+# The title a PR carries once it is no longer blocked: the **Blocked** step
+# opens it as `[blocked] <issue title> (#N)`, and nothing else in the skill
+# renames a PR. Prints nothing for a title without the prefix.
+unblocked_title() {
+  case "$1" in
+    "[blocked]"*) printf '%s' "$1" | sed 's/^\[blocked\][[:space:]]*//' ;;
+  esac
+}
+
 # After a Review round: one line at the top of the PR body saying the PR is
 # ready for the human again, the round, how many comments it addressed, the
 # head, and a link to the changes since the human's last review. GitHub
 # never notifies the human of the delegator's work, which runs on their own
 # login, so the line is where they see it. A later round replaces the line.
+# A round only gets here once the gate passed with no blocking finding left,
+# so a `[blocked]` title loses its prefix in the same write.
 cmd_review_status() {
   need_args 2
   [ -n "$ADDRESSED" ] || die "review-status takes --addressed <n>" 2
-  local n="${POSITIONAL[1]}" pull reviews tmp round
+  local n="${POSITIONAL[1]}" pull reviews tmp round title unblocked=false
+  local args=()
   pull="$(gh_json api "repos/$REPO/pulls/$n")"
   reviews="$(list_of "repos/$REPO/pulls/$n/reviews?per_page=100")"
   tmp="$(mktemp "$JSON_DIR/body.XXXXXX")"
@@ -1187,8 +1199,13 @@ cmd_review_status() {
       + " <!-- delegator:status round=\($round) -->"
       + (if $rest == "" then "" else "\n\n" + $rest end)' > "$tmp"
   round="$(head -n 1 "$tmp" | sed -n 's/.*delegator:status round=\([0-9]*\).*/\1/p')"
-  gh_json api -X PATCH "repos/$REPO/pulls/$n" -F body=@"$tmp" > /dev/null
-  jq -nc --argjson n "$n" --argjson r "$round" '{item: $n, result: "noted", round: $r}'
+  title="$(unblocked_title "$(printf '%s' "$pull" | jq -r '.title // ""')")"
+  if [ -n "$title" ]; then
+    args+=(-f title="$title")
+    unblocked=true
+  fi
+  gh_json api -X PATCH "repos/$REPO/pulls/$n" -F body=@"$tmp" ${args[@]+"${args[@]}"} > /dev/null
+  jq -nc --argjson n "$n" --argjson r "$round" --argjson u "$unblocked" '{item: $n, result: "noted", round: $r, unblocked: $u}'
 }
 
 # Returns a PR to draft: the only draft-state change the delegator makes.
@@ -1207,12 +1224,21 @@ cmd_to_draft() {
   jq -nc --argjson n "$n" '{item: $n, result: "draft"}'
 }
 
-# Squash-merges only while the head is still the SHA Land verified.
+# Squash-merges only while the head is still the SHA Land verified. A title
+# that still says `[blocked]` was approved by the human's Ready click, so the
+# squash subject and the merged PR drop the prefix.
 cmd_merge() {
   need_args 2
   [ -n "$SHA" ] || die "merge takes --sha <verified head SHA>" 2
-  gh_json api -X PUT "repos/$REPO/pulls/${POSITIONAL[1]}/merge" -f merge_method=squash -f sha="$SHA" \
-    | jq -c --argjson n "${POSITIONAL[1]}" '{item: $n, result: (if .merged then "merged" else "refused" end), sha, message}'
+  local n="${POSITIONAL[1]}" title out
+  local args=()
+  title="$(unblocked_title "$(gh_json api "repos/$REPO/pulls/$n" | jq -r '.title // ""')")"
+  [ -n "$title" ] && args+=(-f commit_title="$title (#$n)")
+  out="$(gh_json api -X PUT "repos/$REPO/pulls/$n/merge" -f merge_method=squash -f sha="$SHA" ${args[@]+"${args[@]}"})"
+  if [ -n "$title" ] && [ "$(printf '%s' "$out" | jq '.merged')" = true ]; then
+    gh_json api -X PATCH "repos/$REPO/pulls/$n" -f title="$title" > /dev/null
+  fi
+  printf '%s' "$out" | jq -c --argjson n "$n" '{item: $n, result: (if .merged then "merged" else "refused" end), sha, message}'
 }
 
 # One commit's check runs and commit statuses, as pass, fail, pending or none.
