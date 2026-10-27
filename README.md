@@ -38,7 +38,7 @@ run in Codex:
 | --- | --- | --- |
 | **portable** | works as in Claude Code | every skill not listed below |
 | **degrades** | runs its subagent parts one after another | `review`, `double-check`, `retro`, `grilling`, `codebase-design`, `improve-codebase-architecture`, `tdd-guardian`, `refactor-scan` |
-| **claude-only** | not available | `delegating-github-issues`, `/delegate`, `browser-ux-walkthrough`, the `adr`, `learn`, `twelve-factor-audit` and `delegate-*` agents, the Stop hook |
+| **claude-only** | not available | `delegating-github-issues`, `/delegate`, `/delegate-spawn`, `browser-ux-walkthrough`, the `adr`, `learn`, `twelve-factor-audit` and `delegate-*` agents, the Stop hook |
 
 `scripts/check-portability.py` keeps portable and degrades skills free of
 Claude Code tool names and `~/.claude` paths.
@@ -124,6 +124,12 @@ first: only the GitHub connector, network access to `api.github.com`, a setup
 script that checks the tools `delegate-status` needs, and a GitHub access check.
 [`cloud-environment.md`](skills/delivery/delegating-github-issues/references/cloud-environment.md)
 walks through each.
+
+A chain that ends (every lease slot `full`, a failed hand-off, a closed
+session) starts no successor. `/delegate-spawn` refills free slots: run it from
+an hourly scheduled task that starts a fresh session each time. It starts a
+`/loop /delegate` session only while `next-action` has work and the lease has
+a free slot, at most `spawn_per_fire` (default 1) per run.
 
 Settings a project can add to `.claude/delegation.md` to keep delegated runs
 cheap, each optional:
