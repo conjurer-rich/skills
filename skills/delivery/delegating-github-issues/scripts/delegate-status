@@ -26,7 +26,7 @@
 #   delegate-status renew       <n> <id>       [options]
 #   delegate-status heartbeat   <n> <id> [--every 900]                 [options]
 #   delegate-status release     <n> <id> (--reason <text> | --delete) [options]
-#   delegate-status lease       take | renew <id> | heartbeat <id> [--every 900] | release <id> | hand <id> --to <session>
+#   delegate-status lease       status | take | renew <id> | heartbeat <id> [--every 900] | release <id> | hand <id> --to <session>
 #   delegate-status ticket      set <n> [--pr <p>] | renew <n> <id> | heartbeat <n> <id> [--every 900] | release <n> <id>
 #   delegate-status clear-label <n>            [options]
 #   delegate-status promote-criteria <n> <comment id>                  [options]
@@ -49,7 +49,8 @@
 # Options (defaults are the skill's):
 #   --repo <owner/repo>      required
 #   --session <name>         this session's claim name; required for claim, confirm,
-#                            renew, heartbeat, release, lease, ticket and cost-note
+#                            renew, heartbeat, release, lease (but lease status), ticket
+#                            and cost-note
 #   --chain <name>           the chain that owns a ticket (default: --session); a
 #                            hand-off passes it on, so the successor keeps the ticket
 #   --ticket-ttl 43200       seconds a ticket marker with no PR lives after its last renewal
@@ -67,8 +68,8 @@
 #   --ticket <n> --pr <p>    next-action only: the chain's open ticket, issue and PR
 #
 # Run it from the main checkout. status (without --sync-labels), next-action,
-# budget, issue, pr, checks, watch-digest, cost and merged-sizes write nothing
-# to GitHub. Exit status:
+# budget, issue, pr, checks, watch-digest, cost, merged-sizes and lease status
+# write nothing to GitHub. Exit status:
 # 0 done, 1 a gh or git call failed, 2 usage, 3 refused (the comment is
 # another session's, or a live claim backs the label), 4 another session
 # holds a live claim on the item (claim, heartbeat, lease heartbeat and hand),
@@ -545,7 +546,8 @@ lease_issue_of() {
 }
 
 # The tracking issue's number. Only `take` (with "open") opens one when there
-# is none; every other action needs one to exist.
+# is none; `status` (with "peek") prints nothing; every other action needs
+# one to exist.
 lease_issue() {
   local list n body
   if [ -n "$LEASE_ISSUE" ]; then
@@ -554,6 +556,9 @@ lease_issue() {
   fi
   list="repos/$REPO/issues?state=open&per_page=100&labels=$(uri "$LEASE_LABEL")"
   n="$(list_of "$list" | lease_issue_of)"
+  if [ -z "$n" ] && [ "${1:-}" = peek ]; then
+    return
+  fi
   if [ -z "$n" ] && [ "${1:-}" != open ]; then
     die "no open $LEASE_LABEL issue; lease take opens one"
   fi
@@ -613,6 +618,19 @@ lease_take() {
     '{lease: $n, result: "won", id: $id, slot: $r, slots: $k}'
 }
 
+# The live and free slots, read-only: a spawner checks for a free slot here
+# before it takes one. With no tracking issue, every slot is free.
+lease_status() {
+  local n comments='[]'
+  n="$(lease_issue peek)"
+  [ -z "$n" ] || comments="$(comments_of "$n")"
+  printf '%s' "$comments" | jq -c --argjson now "$NOW" --argjson ttl "$CLAIM_TTL" --argjson k "$SLOTS" \
+    --argjson n "${n:-null}" "$JQ_DEFS"'
+    live_claims($now; $ttl) as $live
+    | {lease: $n, result: "status", live: ($live | length), slots: $k,
+       free: ([$k - ($live | length), 0] | max), holders: [$live[:$k][].session]}'
+}
+
 lease_release() {
   local n="$1" id="$2" comment
   comment="$(gh_json api "repos/$REPO/issues/comments/$id")"
@@ -643,10 +661,14 @@ lease_hand() {
 }
 
 cmd_lease() {
-  need_session
   local action="${POSITIONAL[1]:-}" id="${POSITIONAL[2]:-}"
   [ "$MAX_CHAINS" -ge 1 ] || die "--max-chains takes 1 or more" 2
   SLOTS="$MAX_CHAINS"
+  if [ "$action" = status ]; then
+    lease_status
+    return
+  fi
+  need_session
   case "$action" in
     take) lease_take; return ;;
     renew|heartbeat|release|hand) ;;

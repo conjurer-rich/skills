@@ -1640,6 +1640,30 @@ out="$(run lease take --lease-issue 41 || true)"
 check "--lease-issue names the tracking issue" "$out" '.lease == 41 and .result == "won"'
 check_not_called "labels=delegator-lease" "--lease-issue skips the lookup"
 
+# status: a read-only count of live slots, for a spawner that must not write
+# when no slot is free. It needs no --session and never opens an issue.
+run_bare() {
+  PATH="$FIXTURES/bin:$PATH" DELEGATE_STATUS_NOW="${RUN_NOW:-$NOW}" "$STATUS" "$@" \
+    --repo acme/widgets --claim-ttl 14400
+}
+use lease
+slots "$(slot_comment 100 "$OTHER" "$LIVE_AT")" "$(slot_comment 101 "$NEXT" "$LAPSED_AT")"
+out="$(run_bare lease status --max-chains 3 || true)"
+check "lease status counts live slots and the free ones" "$out" \
+  '.lease == 90 and .result == "status" and .live == 1 and .slots == 3 and .free == 2 and .holders == ["'"$OTHER"'"]'
+check_not_called "-X " "lease status writes nothing"
+use lease
+slots "$(slot_comment 100 "$OTHER" "$LIVE_AT")" "$(slot_comment 101 "$NEXT" "$LIVE_AT")"
+status=0
+out="$(run_bare lease status 2> /dev/null)" || status=$?
+check "lease status of a full lease reports no free slot" "$out" '.live == 2 and .slots == 1 and .free == 0 and (.holders | length) == 1'
+if [ "$status" -eq 0 ]; then pass "lease status of a full lease exits 0"; else fail "lease status of a full lease exits 0 (got $status)"; fi
+use lease
+echo '[]' > "$FAKE_STATE/issues.json"
+out="$(run_bare lease status --max-chains 2 || true)"
+check "lease status with no tracking issue reports every slot free" "$out" '.lease == null and .live == 0 and .free == 2 and .holders == []'
+check_not_called "-X POST" "lease status opens no tracking issue"
+
 # only take opens the tracking issue: the other actions need one to exist
 for action in "renew 300" "heartbeat 300" "release 300" "hand 300 --to $NEXT"; do
   use lease
