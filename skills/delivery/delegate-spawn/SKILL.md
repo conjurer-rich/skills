@@ -24,6 +24,8 @@ Nobody answers prompts here. End with exactly one report line.
 
 If the settings or the bookkeeping script read `none`, report `spawner: not set up (<which one is missing>)` and stop.
 
+If this session has no `create_session` tool (Claude Code on the web's session tools), report `spawner: not set up (no create_session; attach the Claude Code Remote connector to the scheduled task)` and stop. Check this before any `lease` call: a slot taken with nobody to hand it to sits idle until `claim_ttl`.
+
 Owner and repo come from the **Repository** line: strip any `https://github.com/` or `git@github.com:` prefix and `.git` suffix. From the settings file's **Parameters** table, read `max_chains` (default 1), `max_open_prs`, `max_worktrees`, `label`, `land` and `spawn_per_fire` (default 1). Pass the first five to every `delegate-status` call that takes them (`--max-chains`, `--max-open-prs`, `--max-worktrees`, `--label`, `--land`), and `--claim-ttl <seconds>` when the settings change `claim_ttl`. `<status>` is the bookkeeping script and `<scratch>` is this session's scratch directory.
 
 ## Procedure
@@ -51,7 +53,7 @@ Owner and repo come from the **Repository** line: strip any `https://github.com/
 
 ## Scheduling
 
-Run it from a scheduled task that starts a fresh session on each firing, with the prompt `/delegate-spawn` (`/craft:delegate-spawn` when the plugin is installed), hourly. Most firings stop at step 1 or 2 and write nothing. A firing's fixed cost is the session's system prompt and every attached connector's tools, so give the scheduled task an environment with only the GitHub connector (`../delegating-github-issues/references/cloud-environment.md`).
+Run it from a scheduled task that starts a fresh session on each firing, with the prompt `/delegate-spawn` (`/craft:delegate-spawn` when the plugin is installed), hourly. Attach the repository and the Claude Code Remote connector, which supplies `create_session`; a scheduled task made from inside a session may carry neither, so check both in the scheduled task's settings. Most firings stop at step 1 or 2 and write nothing. A firing's fixed cost is the session's system prompt and every attached connector's tools, so attach no other connectors, and give the scheduled task an environment with only the GitHub connector (`../delegating-github-issues/references/cloud-environment.md`).
 
 | Lever | Effect |
 |---|---|
