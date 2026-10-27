@@ -1,5 +1,11 @@
 # @conjurer-rich/skills
 
+## 5.10.0
+
+### Minor Changes
+
+- e4b1dbb: Add `/delegate-spawn`, which a scheduled task runs to restart `/loop /delegate` chains in free lease slots while eligible issues wait, and `delegate-status lease status`, a read-only count of live and free chain slots.
+
 ## 5.9.1
 
 ### Patch Changes
