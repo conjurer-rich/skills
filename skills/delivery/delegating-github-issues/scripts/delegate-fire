@@ -1,0 +1,172 @@
+#!/usr/bin/env bash
+#
+# delegate-fire: start a new /loop /delegate chain when one is needed, from a
+# host that cannot run the delegator itself (a GitHub Actions cron).
+#
+# A chain hands itself on from session to session, but some exits end it for
+# good (a full lease, a failed hand-off, a session the human closed), and
+# nothing starts a new one. A session started by a scheduled task cannot call
+# create_session, so the spawner cannot be a skill. This script is the gate
+# instead: it asks `delegate-status next-action` and `lease status` what a
+# chain would do (plain gh and jq, no tokens), and only when there is work
+# and a free slot does it POST to a scheduled task's API trigger. That task's
+# prompt is /loop /delegate, so the session it starts is the new chain, and
+# its own `lease take` settles any race.
+#
+# It fires at most once per run:
+#   pick           fires when the lease has a free slot;
+#   watch or land  fires only when no chain is live (a live chain's Watch
+#                  answers the review or lands the PR);
+#   idle           never fires.
+#
+# Run it from the project's checkout. The project's .claude/delegation.md
+# supplies the same parameters `/delegate` reads; without one it refuses to
+# start. Setup: references/delegate-fire.md.
+#
+# Usage:
+#   delegate-fire [--repo <owner/repo>] [--force] [--dry-run]
+#
+# Options:
+#   --repo <owner/repo>   default: the origin remote
+#   --force               fire whatever the gate says (to test the trigger)
+#   --dry-run             decide and report, but never fire; needs no secrets
+#
+# Environment:
+#   DELEGATE_FIRE_URL     the scheduled task's API trigger URL
+#   DELEGATE_FIRE_TOKEN   the trigger's bearer token
+#   GH_TOKEN              read access to the repository's issues and PRs
+#
+# It prints one report line, which also goes to $GITHUB_STEP_SUMMARY, and
+# writes fired=true|false to $GITHUB_OUTPUT when they are set. Exit status:
+# 0 fired or nothing to do, 1 a gate or trigger failure, 2 usage.
+# DELEGATE_STATUS overrides the bookkeeping script, for tests.
+#
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+STATUS="${DELEGATE_STATUS:-$SCRIPT_DIR/delegate-status}"
+
+usage() {
+  sed -n '/^# Usage:/,/^# It prints one/p' "$0" | sed '$d' | sed 's/^# \{0,1\}//' >&2
+  exit 2
+}
+
+die() {
+  printf 'delegate-fire: %s\n' "$1" >&2
+  exit "${2:-1}"
+}
+
+REPO=""
+FORCE=0
+DRY_RUN=0
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --repo) REPO="${2:-}"; shift 2 ;;
+    --force) FORCE=1; shift ;;
+    --dry-run) DRY_RUN=1; shift ;;
+    -h|--help) usage ;;
+    *) die "unknown argument $1" 2 ;;
+  esac
+done
+
+# Checked before the gate, so a workflow missing its secrets fails on every
+# run, not only on the first one with work.
+if [ "$DRY_RUN" -eq 0 ]; then
+  [ -n "${DELEGATE_FIRE_URL:-}" ] || die "set DELEGATE_FIRE_URL to the scheduled task's API trigger URL" 2
+  [ -n "${DELEGATE_FIRE_TOKEN:-}" ] || die "set DELEGATE_FIRE_TOKEN to the trigger's token" 2
+fi
+
+CHECKOUT="$(git rev-parse --show-toplevel 2> /dev/null)" || die "run it from the project's checkout" 2
+SETTINGS="$CHECKOUT/.claude/delegation.md"
+[ -r "$SETTINGS" ] || die "this project has no .claude/delegation.md, so delegation is not set up here" 2
+
+if [ -z "$REPO" ]; then
+  REPO="$(git -C "$CHECKOUT" remote get-url origin 2> /dev/null || true)"
+  REPO="${REPO#https://github.com/}"
+  REPO="${REPO#git@github.com:}"
+  REPO="${REPO%.git}"
+fi
+[ -n "$REPO" ] || die "no origin remote; pass --repo <owner/repo>" 2
+
+# A parameter from the settings file's Parameters table: | `name` | value |.
+param() {
+  sed -n "s/^|[[:space:]]*\`$1\`[[:space:]]*|[[:space:]]*\([^|]*[^|[:space:]]\)[[:space:]]*|.*/\1/p" "$SETTINGS" \
+    | head -n 1 | tr -d '`'
+}
+
+# claim_ttl reads "45 minutes", "4 hours" or plain seconds.
+ttl_seconds() {
+  local n="${1%% *}" unit="${1#* }"
+  case "$n" in ''|*[!0-9]*) die "claim_ttl in $SETTINGS is not a duration: $1" 2 ;; esac
+  [ "$unit" = "$1" ] && unit="seconds"
+  case "$unit" in
+    minute|minutes) echo $((n * 60)) ;;
+    hour|hours) echo $((n * 3600)) ;;
+    second|seconds) echo "$n" ;;
+    *) die "claim_ttl in $SETTINGS is not a duration: $1" 2 ;;
+  esac
+}
+
+GATE_ARGS=(--repo "$REPO")
+v="$(param label)" && [ -n "$v" ] && GATE_ARGS+=(--label "$v")
+v="$(param rank_labels)" && [ -n "$v" ] && GATE_ARGS+=(--rank-labels "$(printf '%s' "$v" | tr -d ' ')")
+v="$(param branch_prefix)" && [ -n "$v" ] && GATE_ARGS+=(--prefix "$v")
+v="$(param progress_label)" && [ -n "$v" ] && GATE_ARGS+=(--progress-label "$v")
+v="$(param max_worktrees)" && [ -n "$v" ] && GATE_ARGS+=(--max-worktrees "$v")
+v="$(param max_open_prs)" && [ -n "$v" ] && GATE_ARGS+=(--max-open-prs "$v")
+v="$(param land)" && [ -n "$v" ] && GATE_ARGS+=(--land "$v")
+v="$(param claim_ttl)" && [ -n "$v" ] && GATE_ARGS+=(--claim-ttl "$(ttl_seconds "$v")")
+MAX_CHAINS="$(param max_chains)"
+MAX_CHAINS="${MAX_CHAINS:-1}"
+
+report() { # fired line
+  printf 'delegate-fire: %s\n' "$2"
+  [ -z "${GITHUB_STEP_SUMMARY:-}" ] || printf 'delegate-fire: %s\n' "$2" >> "$GITHUB_STEP_SUMMARY"
+  [ -z "${GITHUB_OUTPUT:-}" ] || printf 'fired=%s\n' "$1" >> "$GITHUB_OUTPUT"
+}
+
+cd "$CHECKOUT"
+gate="$("$STATUS" next-action "${GATE_ARGS[@]}")" || die "next-action failed; see the lines above"
+lease="$("$STATUS" lease status "${GATE_ARGS[@]}" --max-chains "$MAX_CHAINS")" || die "lease status failed; see the lines above"
+
+action="$(printf '%s' "$gate" | jq -r '.action')"
+reasons="$(printf '%s' "$gate" | jq -r '.reasons | join("; ")')"
+live="$(printf '%s' "$lease" | jq -r '.live')"
+free="$(printf '%s' "$lease" | jq -r '.free')"
+holders="$(printf '%s' "$lease" | jq -r '.holders | join(", ")')"
+
+why=""
+if [ "$action" = idle ]; then
+  why="idle ($reasons)"
+elif [ "$free" -eq 0 ]; then
+  why="full ($holders)"
+elif [ "$action" != pick ] && [ "$live" -gt 0 ]; then
+  why="$action left to the running chains ($reasons)"
+fi
+
+summary="$action: $reasons"
+if [ -n "$why" ]; then
+  if [ "$FORCE" -eq 0 ]; then
+    report false "$why"
+    exit 0
+  fi
+  summary="forced; the gate said $why"
+fi
+
+if [ "$DRY_RUN" -eq 1 ]; then
+  report false "would fire ($summary)"
+  exit 0
+fi
+
+body="$(jq -nc --arg s "$summary" '{text: ("Started by delegate-fire. " + $s)}')"
+if ! answer="$(curl --fail-with-body --silent --show-error -X POST "$DELEGATE_FIRE_URL" \
+  -H "Authorization: Bearer $DELEGATE_FIRE_TOKEN" \
+  -H "anthropic-beta: experimental-cc-routine-2026-04-01" \
+  -H "anthropic-version: 2023-06-01" \
+  -H "Content-Type: application/json" \
+  --data "$body" 2>&1)"; then
+  die "the trigger refused the fire: $answer"
+fi
+report true "fired ($summary); trigger answered $answer"

@@ -1,0 +1,77 @@
+name: Delegate fire
+
+# A reusable workflow: a project that delegates GitHub issues calls it on a
+# cron to restart /loop /delegate chains that ended. It runs the
+# delegating-github-issues skill's scripts/delegate-fire, which reads the
+# delegation state with the caller's GITHUB_TOKEN (no model, no cost) and,
+# only when there is work and a free lease slot, fires the scheduled task
+# whose prompt is /loop /delegate.
+#
+# Setup and a caller example:
+# skills/delivery/delegating-github-issues/references/delegate-fire.md
+
+on:
+  workflow_call:
+    inputs:
+      craft-ref:
+        description: The conjurer-rich/skills tag or commit whose delegate-fire runs; use the same ref as the `uses:` line
+        type: string
+        required: true
+      force:
+        description: Fire even when the gate finds nothing to do
+        type: boolean
+        default: false
+      dry-run:
+        description: Decide and report, but never fire
+        type: boolean
+        default: false
+    secrets:
+      fire-url:
+        description: The scheduled task's API trigger URL
+        required: false
+      fire-token:
+        description: The trigger's token
+        required: false
+    outputs:
+      fired:
+        description: true when a chain was started
+        value: ${{ jobs.fire.outputs.fired }}
+
+jobs:
+  fire:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+      checks: read
+      statuses: read
+    concurrency:
+      group: delegate-fire-${{ github.repository }}
+      cancel-in-progress: false
+    outputs:
+      fired: ${{ steps.fire.outputs.fired }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check out the craft scripts
+        uses: actions/checkout@v4
+        with:
+          repository: conjurer-rich/skills
+          ref: ${{ inputs.craft-ref }}
+          path: .delegate-fire-craft
+          sparse-checkout: skills/delivery/delegating-github-issues/scripts
+
+      - name: Fire the delegator when it has work
+        id: fire
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DELEGATE_FIRE_URL: ${{ secrets.fire-url }}
+          DELEGATE_FIRE_TOKEN: ${{ secrets.fire-token }}
+          FORCE: ${{ inputs.force }}
+          DRY_RUN: ${{ inputs.dry-run }}
+        run: |
+          args=()
+          [ "$FORCE" = true ] && args+=(--force)
+          [ "$DRY_RUN" = true ] && args+=(--dry-run)
+          .delegate-fire-craft/skills/delivery/delegating-github-issues/scripts/delegate-fire ${args[@]+"${args[@]}"}

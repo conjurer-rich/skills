@@ -51,8 +51,8 @@ underneath.
      fixed commands) *(Claude Code)*.
      In Codex or OpenCode, run the skill's `scripts/delegate-loop` instead:
      a shell loop that starts one fresh agent pass whenever there is work.
-     To restart chains that ended while work waits, fire `/delegate-spawn`
-     from an hourly scheduled task on Claude Code on the web *(Claude Code)*.
+     To restart chains that ended while work waits, run the skill's
+     `delegate-fire` workflow on a GitHub Actions cron *(Claude Code)*.
 6. **Check it before the PR.** `mutation-testing` runs once, at PR
    readiness; its `references/pr-readiness.md` is the evidence gate.
    `review` checks the diff on two separate axes, the repository's standards
