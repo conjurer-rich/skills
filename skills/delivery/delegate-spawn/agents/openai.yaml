@@ -1,5 +1,0 @@
-interface:
-  display_name: "Delegate spawn"
-  short_description: "Claude Code on the web: start /loop /delegate chains in free lease slots"
-policy:
-  allow_implicit_invocation: false
