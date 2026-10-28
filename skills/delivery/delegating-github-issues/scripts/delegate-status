@@ -76,6 +76,8 @@
 # or the ticket is another chain's or has lapsed (ticket set, renew, heartbeat),
 # 5 every lease slot is held by a live chain (lease take): exit, never retry.
 #
+# DELEGATE_STATUS_LOGIN names the delegator's GitHub login, for a token that
+# is no user (GitHub Actions); without it the gh token's user is the login.
 # DELEGATE_STATUS_NOW (epoch seconds) overrides the clock, DELEGATE_STATUS_POLL
 # (seconds, default 30) the checks --wait interval and the heartbeat interval,
 # and DELEGATE_STATUS_BEATS stops a heartbeat after that many renewals, for tests.
@@ -273,6 +275,20 @@ def issue_norm:
 
 gh_json() {
   gh "$@" || die "gh $* failed"
+}
+
+# The login whose markers, claims and reactions count as the delegator's own:
+# DELEGATE_STATUS_LOGIN when set, else the user the gh token belongs to. A
+# GitHub Actions token is no user, so a gate run there must set it.
+delegator_login() {
+  if [ -n "${DELEGATE_STATUS_LOGIN:-}" ]; then
+    printf '%s' "$DELEGATE_STATUS_LOGIN"
+    return
+  fi
+  local user
+  user="$(gh api user)" \
+    || die "gh api user failed; with a token that is no user (GitHub Actions), set DELEGATE_STATUS_LOGIN to the delegator's login"
+  printf '%s' "$user" | jq -r '.login'
 }
 
 # Every page of a REST list, as one array.
@@ -709,7 +725,7 @@ TICKET_LIVE="[]"
 # $TICKET_LIVE. Call it directly, not in $(...).
 read_tickets() {
   local login open
-  login="$(gh_json api user | jq -r '.login')"
+  login="$(delegator_login)"
   open="$(open_prs | jq -c 'map(.number)')"
   TICKET_COMMENTS="$(comments_of "$1")"
   TICKET_LIVE="$(printf '%s' "$TICKET_COMMENTS" | jq -c --arg l "$login" --argjson open "$open" \
@@ -744,7 +760,7 @@ ticket_set() {
   other="$(other_ticket)"
   [ "$other" = null ] || lost_ticket "$n" null "$(printf '%s' "$other" | jq -r .chain)"
   # This chain's own marker, live or lapsed, is reused.
-  mine="$(printf '%s' "$TICKET_COMMENTS" | jq -r --arg c "$CHAIN" --arg l "$(gh_json api user | jq -r '.login')" \
+  mine="$(printf '%s' "$TICKET_COMMENTS" | jq -r --arg c "$CHAIN" --arg l "$(delegator_login)" \
     '[.[] | select((.user.login // "") == $l and (.body // "" | contains("<!-- delegator ticket: \($c) pr=")))] | sort_by(.id) | first | .id // empty')"
   if [ -n "$mine" ]; then
     gh_json api -X PATCH "repos/$REPO/issues/comments/$mine" -f body="$(ticket_body "$PR" "$NOW_ISO")" > /dev/null
@@ -847,7 +863,7 @@ cmd_promote_criteria() {
   esac
   printf '%s' "$comment" | jq -e '.body // "" | startswith("**Acceptance criteria (derived by the delegator")' > /dev/null \
     || die "comment $id is not a derived-criteria comment; refusing to promote it" 3
-  login="$(gh_json api user | jq -r '.login')"
+  login="$(delegator_login)"
   gh_json api --paginate "repos/$REPO/issues/comments/$id/reactions" \
     | jq -se --arg l "$login" 'add // [] | any(.[]; .content == "+1" and .user.login == $l)' > /dev/null \
     || die "comment $id has no 👍 from $login; criteria are promoted only once confirmed" 3
@@ -1125,7 +1141,7 @@ cmd_issue() {
     return
   fi
   blockers_of "$issue"
-  issue_from_comments "$issue" "$(comments_of "${POSITIONAL[1]}")" "$(gh_json api user | jq -r '.login')" "$BLOCKERS" \
+  issue_from_comments "$issue" "$(comments_of "${POSITIONAL[1]}")" "$(delegator_login)" "$BLOCKERS" \
     "$(open_prs | jq -c 'map(.number)')" | jq -c '{number, title, eligible: true} + .'
 }
 
@@ -1146,7 +1162,7 @@ cmd_status() {
       map(select(has("pull_request") | not) | issue_norm | del(.state))
       | ($r | split(",") | map(select(length > 0))) as $ranks
       | sort_by(([.labels[].name] as $names | ($ranks | index(first($ranks[] | select(. as $x | $names | index($x)))) // ($ranks | length))), .createdAt)')"
-  login="$(gh_json api user | jq -r '.login')"
+  login="$(delegator_login)"
   if [ -n "$CACHE" ] && [ -s "$CACHE" ]; then
     cache="$(jq -c 'if type == "array" then . else [] end' "$CACHE" 2> /dev/null || echo '[]')"
   fi

@@ -35,6 +35,8 @@
 #   DELEGATE_FIRE_URL     the scheduled task's API trigger URL
 #   DELEGATE_FIRE_TOKEN   the trigger's bearer token
 #   GH_TOKEN              read access to the repository's issues and PRs
+#   DELEGATE_STATUS_LOGIN the login the delegator posts as; required when
+#                         GH_TOKEN is no user (a GitHub Actions token)
 #
 # It prints one report line, which also goes to $GITHUB_STEP_SUMMARY, and
 # writes fired=true|false to $GITHUB_OUTPUT when they are set. Exit status:

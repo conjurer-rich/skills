@@ -1261,6 +1261,13 @@ check "issue --chain reads the chain's own ticket as free, with its ticket_id" "
 use status
 on_issue 31 "$(ticket_comment 3190 "$OTHER" none "$T_LIVE" mallory)"
 check "a ticket marker posted by another login is ignored" "$(run status)" "$(issue 31) | .state == \"free\""
+# A host with no user token (a GitHub Actions gate) names the delegator's
+# login instead of asking GitHub whose token it holds.
+use status
+on_issue 31 "$(ticket_comment 3190 "$OTHER" none "$T_LIVE" mallory)"
+check "DELEGATE_STATUS_LOGIN names the login whose markers count" \
+  "$(DELEGATE_STATUS_LOGIN=mallory run status)" "$(issue 31) | .state == \"ticketed\" and .holder == \"$OTHER\""
+check_not_called "api user" "DELEGATE_STATUS_LOGIN never asks GitHub for the token's user"
 
 use status
 on_issue 31 "$(ticket_comment 3190 "$OTHER" none "$T_LAPSED")"
