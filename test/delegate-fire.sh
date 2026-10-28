@@ -68,7 +68,7 @@ setup() {
 EOF
   cat > "$W/bin/delegate-status" <<'EOF'
 #!/usr/bin/env bash
-printf '%s\n' "$*" >> "$W/status.calls"
+printf '%s login=%s\n' "$*" "${DELEGATE_STATUS_LOGIN:-}" >> "$W/status.calls"
 [ -f "$W/status-fails" ] && { echo "gh: HTTP 502" >&2; exit 1; }
 case "$1 $2" in
   "lease status") cat "$W/lease" ;;
@@ -149,6 +149,17 @@ expect "land reaches the gate" grep -q -- '--land on' <<< "$calls"
 expect "claim_ttl reaches the gate in seconds" grep -q -- '--claim-ttl 14400' <<< "$calls"
 expect "max_chains reaches the lease" grep -q -- '^lease status .*--max-chains 3' <<< "$calls"
 refuse "no gate call needs a session" grep -q -- '--session' <<< "$calls"
+
+setup
+echo "$pick" > "$W/action"
+echo "$free" > "$W/lease"
+DELEGATE_STATUS_LOGIN=octo fire
+expect "the delegator's login reaches the gate" grep -q -- '^next-action .* login=octo$' "$W/status.calls"
+expect "the delegator's login reaches the lease" grep -q -- '^lease status .* login=octo$' "$W/status.calls"
+
+WORKFLOW="$REPO_ROOT/.github/workflows/delegate-fire.yml"
+expect "the reusable workflow names the delegator's login, since its token is no user" \
+  grep -q 'DELEGATE_STATUS_LOGIN: ${{ inputs.delegator-login || github.repository_owner }}' "$WORKFLOW"
 
 setup
 echo "$watch" > "$W/action"

@@ -17,6 +17,10 @@ on:
         description: The conjurer-rich/skills tag or commit whose delegate-fire runs; use the same ref as the `uses:` line
         type: string
         required: true
+      delegator-login:
+        description: The GitHub login the delegator posts as; its markers and claims are the only ones that count. Default, the repository owner
+        type: string
+        default: ""
       force:
         description: Fire even when the gate finds nothing to do
         type: boolean
@@ -66,6 +70,9 @@ jobs:
         id: fire
         env:
           GH_TOKEN: ${{ github.token }}
+          # The Actions token is no user, so the gate cannot ask GitHub whose
+          # markers are the delegator's own.
+          DELEGATE_STATUS_LOGIN: ${{ inputs.delegator-login || github.repository_owner }}
           DELEGATE_FIRE_URL: ${{ secrets.fire-url }}
           DELEGATE_FIRE_TOKEN: ${{ secrets.fire-token }}
           FORCE: ${{ inputs.force }}

@@ -83,14 +83,17 @@ Each run writes one line to its job summary: why it did not fire (`idle`, `full`
 The script runs anywhere with `bash`, `git`, `gh`, `jq` and `curl`, from the project's checkout:
 
 ```bash
-DELEGATE_FIRE_URL=… DELEGATE_FIRE_TOKEN=… GH_TOKEN=… scripts/delegate-fire --dry-run
+DELEGATE_FIRE_URL=… DELEGATE_FIRE_TOKEN=… GH_TOKEN=… DELEGATE_STATUS_LOGIN=… scripts/delegate-fire --dry-run
 ```
+
+`DELEGATE_STATUS_LOGIN` is the login the delegator posts as. Only markers and claims that login posted count, so the gate must know it. With a personal token it can be left unset: the token's user is the login.
 
 It exits 0 when it fired or had nothing to do, 1 when the gate or the trigger failed, and 2 on a usage error, such as a missing secret.
 
 ## Caveats
 
 - **The gate sees no worktrees.** A runner has no delegated worktrees, so the `max_worktrees` budget always reads empty there. `max_open_prs` and the lease are the limits that hold.
+- **Whose markers count.** The delegator trusts only markers and claims posted by its own login. A workflow token is no user, so the reusable workflow passes the caller repository's owner as that login. When the delegator posts as someone else, for example in a repository an organisation owns, set the `delegator-login` input to that login.
 - **A race ends the fired chain early.** The gate reads the lease a minute or so before the fired session starts, and another chain may take the last slot in between. The fired chain's `lease take` then prints `full` and it ends. The workflow's `concurrency` group stops two runs from overlapping.
 - **A waiting chain's slot lapses.** In a cloud container a chain waiting on a human loses its heartbeat with the reclaimed container, and its slot lapses after `claim_ttl`. The gate then counts the slot as free and fires a chain for other work. That is intended: `max_chains` caps active chains, and `max_open_prs` caps work waiting on review. The waiting PR is still answered and landed by whichever chain's **Watch** reaches it.
 - **Trigger limits.** A scheduled task's API trigger accepts 30 fires per hour, far above one per run.

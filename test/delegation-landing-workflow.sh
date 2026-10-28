@@ -167,7 +167,7 @@ reject_regex 'gate'"'"'s steps 1–5' "the pre-PR gate is not truncated"
 # round refreshes the gate evidence, and the verdict words match the checkers.
 require_text 'post nothing, and stop' "a waiting issue is never re-posted"
 require_text 'Take the first issue that is not waiting on the human' "Pick skips issues waiting on the human"
-require_script 'gh_json api user' "only the authenticated login's reaction confirms"
+require_script 'login="$(delegator_login)"' "only the delegator login's reaction confirms"
 require_script '.content == "+1" and .user.login == $l' "only a thumbs-up from that login confirms"
 require_text 'Only that login'"'"'s reaction counts' "the skill says why only that login counts"
 require_text 'does not rate `Covered`' "acceptance verdicts use acceptance-review's statuses"
