@@ -47,7 +47,7 @@ reject_regex() {
 }
 
 if [ -f "$COMMAND" ] && grep -q '"./skills/delivery/delegate"' "$REPO_ROOT/.claude-plugin/plugin.json"; then pass "the plugin ships /delegate as a skill"; else fail "the plugin ships /delegate as a skill"; fi
-require_text "$COMMAND" 'disable-model-invocation: true' "/delegate runs only when the user invokes it"
+reject_regex "$COMMAND" '^disable-model-invocation: *true' "/delegate stays reachable from /loop and other skills"
 require_text "$COMMAND" 'arrive unfilled: run the commands yourself' "another harness gets the context the injections give Claude Code"
 reject_regex "$COMMAND" 'fast-flow-board|conjurer-rich|flow-canvas|apps/web|ux-evidence|agent-ready' "the command names no project or its settings"
 render_settings_line() {
