@@ -1,7 +1,6 @@
 ---
 name: delegate
 description: Keep delegating under /loop (watch delegated PRs, then pick and work the next issue), or work a labelled GitHub issue to a reviewable PR, pick the next one, address review comments, watch delegated PRs, or land a PR marked ready
-disable-model-invocation: true
 argument-hint: "[run] | #<issue> | next | review #<pr> | watch | land #<pr> | sync #<pr>"
 allowed-tools: Read, Glob, Grep, Bash(git:*), Bash(gh:*), Bash(pnpm:*), Bash(npm:*), Bash(npx:*), Bash(timeout:*), Bash(jq:*), Bash(tail:*), Bash(*/delegating-github-issues/scripts/delegate-status:*), Bash(*/delegating-github-issues/scripts/review-pack:*), Agent, SendMessage, mcp__claude-code-remote__get_session, mcp__claude-code-remote__set_session_title, mcp__claude-code-remote__subscribe_pr_activity, mcp__claude-code-remote__unsubscribe_pr_activity, mcp__claude-code-remote__create_session, mcp__claude-code-remote__send_later, mcp__claude-code-remote__delete_trigger
 ---
