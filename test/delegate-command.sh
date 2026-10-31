@@ -80,6 +80,9 @@ require_text "$COMMAND" 'gh repo view --json nameWithOwner' "owner and repo come
 
 require_text "$COMMAND" 'No arguments, or `run` → one **Run** pass' "a bare /delegate runs one Run pass"
 require_text "$COMMAND" 'Run it as `/loop /delegate` to keep delegating' "the Run pass is built for /loop"
+require_text "$COMMAND" '`loop`, `loop run` or `loop watch` → the same **Run** or **Watch** pass, run as if under a self-paced `/loop`' "/delegate loop runs a looping pass without /loop"
+require_text "$COMMAND" 'Claude Code refuses `/loop` there' "the command says why its own messages never carry /loop"
+require_text "$COMMAND" 'the session'"'"'s **Loop command** as `message`' "the idle pass schedules the loop command, not /loop"
 require_text "$COMMAND" '**Run**, **Watch**, the **Work**' "a Run pass commits without asking"
 require_text "$COMMAND" 'Several sessions can run `/loop /delegate` at once' "the command says parallel sessions are supported"
 require_text "$COMMAND" '- **Session title** (skill):' "the command says the chat is named after the item held"

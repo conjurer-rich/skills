@@ -375,7 +375,14 @@ require_text 'Set `worked_issue` and, while `ticket` is set, the `ticket`'"'"'s 
 require_text '## Hand-off' "the skill has a Hand-off section"
 require_text 'A skill cannot run `/clear` or `/compact`' "hand-off says why the session cannot clear itself"
 require_text 'the `create_session` tool of the `claude-code-remote` MCP server' "hand-off starts the next session through create_session"
-require_text 'set to the exact `/loop` command this session was started with' "the next session runs the same loop"
+require_text 'with `prompt` set to the session'"'"'s loop command' "the next session runs the same loop"
+# A session create_session starts is a relay participant, and Claude Code
+# refuses /loop there, so every hand-off failed with "/loop isn't available to
+# a relay participant". Messages the loop sends carry `/delegate loop` instead.
+require_text 'never a `/loop` command, which the new session refuses as a relay participant' "the hand-off prompt never carries /loop"
+require_text '`/loop /delegate` becomes `/delegate loop`' "the loop command drops /loop for the loop mode word"
+require_text 'in `loop` mode there is no `/loop` to stop' "a loop-mode session ends its loop by cancelling its reminder"
+reject_regex 'prompt `/loop /' "no session is started with a /loop prompt"
 require_text 'and trips the context or tool-call rule before finishing one pass' "a hand-off chain cannot loop forever"
 require_text 'call `ScheduleWakeup` with `stop: true`' "the stopped session ends its own loop"
 require_text 'unsubscribe only the PRs it holds' "the stopped session stops taking PR events for the PRs it claimed"
@@ -389,7 +396,7 @@ require_text 'or, for a run started by hand, the exact `/delegate` command with 
 # A ScheduleWakeup timer lives in the container, which is reclaimed while the
 # session idles, so the loop stalled for hours until a PR event or the human
 # woke it. On the web the next pass is a server-side send_later reminder.
-require_text 'call it once with `delay_minutes` set to `next_interval_minutes`, `message` set to the exact `/loop` command this session was started with' "the web loop schedules its next pass with send_later"
+require_text 'call it once with `delay_minutes` set to `next_interval_minutes`, `message` set to the session'"'"'s loop command, never the `/loop` command itself' "the web loop schedules its next pass with send_later, without /loop"
 require_text 'Do not also call `ScheduleWakeup`: two schedulers would fire two passes.' "the web loop never double-schedules"
 require_text 'Otherwise (the CLI), call `ScheduleWakeup`' "the CLI loop still uses ScheduleWakeup"
 require_text 'that reminder has not fired: cancel it with `delete_trigger`' "every pass cancels the pending reminder first"

@@ -10,7 +10,7 @@
 # instead: it asks `delegate-status next-action` and `lease status` what a
 # chain would do (plain gh and jq, no tokens), and only when there is work
 # and a free slot does it POST to a scheduled task's API trigger. That task's
-# prompt is /loop /delegate, so the session it starts is the new chain, and
+# prompt is /delegate loop, so the session it starts is the new chain, and
 # its own `lease take` settles any race.
 #
 # It fires at most once per run:
