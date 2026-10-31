@@ -1,7 +1,7 @@
 ---
 name: delegate
 description: Keep delegating under /loop (watch delegated PRs, then pick and work the next issue), or work a labelled GitHub issue to a reviewable PR, pick the next one, address review comments, watch delegated PRs, or land a PR marked ready
-argument-hint: "[run] | #<issue> | next | review #<pr> | watch | land #<pr> | sync #<pr>"
+argument-hint: "[loop] [run] | #<issue> | next | review #<pr> | watch | land #<pr> | sync #<pr>"
 allowed-tools: Read, Glob, Grep, Bash(git:*), Bash(gh:*), Bash(pnpm:*), Bash(npm:*), Bash(npx:*), Bash(timeout:*), Bash(jq:*), Bash(tail:*), Bash(*/delegating-github-issues/scripts/delegate-status:*), Bash(*/delegating-github-issues/scripts/review-pack:*), Agent, SendMessage, mcp__claude-code-remote__get_session, mcp__claude-code-remote__set_session_title, mcp__claude-code-remote__subscribe_pr_activity, mcp__claude-code-remote__unsubscribe_pr_activity, mcp__claude-code-remote__create_session, mcp__claude-code-remote__send_later, mcp__claude-code-remote__delete_trigger
 ---
 
@@ -34,9 +34,14 @@ Parse the arguments given with the skill (`$ARGUMENTS` in Claude Code):
 - `next` → **Pick**, then **Work** the result.
 - `review #<n>` or `review <n>` → **Review** PR `n`.
 - `watch` → one **Watch** pass. Run it as `/loop /delegate watch` to keep watching.
+- `loop`, `loop run` or `loop watch` → the same **Run** or **Watch** pass, run as if under a self-paced `/loop`: everything this command and the skill say for a pass under `/loop` applies to it, except that there is no `/loop` to stop. It is the **Loop command** a web session's loop sends itself.
 - `land #<n>` or `land <n>` → **Land** PR `n`.
 - `sync #<n>` or `sync <n>` → **Sync** PR `n`: merge the default branch into a delegated PR with a merge conflict. Watch runs it on its own.
-- Anything else → print the seven forms above and stop.
+- Anything else → print the eight forms above and stop.
+
+## Loop command
+
+On Claude Code on the web, a loop goes on through messages: the `send_later` reminder that starts each next pass (**Watch** step 6) and the `create_session` prompt that starts the session a **Hand-off** hands to. A session that another session started is a relay participant, and Claude Code refuses `/loop` there with "/loop isn't available to a relay participant". So those messages never carry `/loop`. They carry the session's loop command: the delegate command it runs, with `/loop` and any interval replaced by the `loop` mode word. `/loop /delegate` and `/loop 10m /delegate run` become `/delegate loop`, `/loop /delegate watch` becomes `/delegate loop watch`, and `/delegate loop` stays as it is. Keep the skill's name as this session invoked it (`/craft:delegate loop` when craft is installed as a plugin). The human still starts a loop with `/loop /delegate` in a session of their own. On the CLI, `loop` has no scheduler behind it (`ScheduleWakeup` runs only under `/loop`), so `/delegate loop` there runs one pass: use `/loop /delegate`.
 
 ## Model
 
@@ -44,11 +49,11 @@ The `/loop /delegate` session mostly routes: it runs `delegate-status`, reads ve
 
 ## Idle pass
 
-A **Run** or **Watch** pass under `/loop` first asks whether anything changed, before it loads the skill. Skip this section when the **Bookkeeping script** line reads `none`, or the mode is anything else.
+A **Run** or **Watch** pass under `/loop` or in `loop` mode first asks whether anything changed, before it loads the skill. Skip this section when the **Bookkeeping script** line reads `none`, or the mode is anything else.
 
 1. Run `<script> watch-digest --repo <owner>/<repo> --state <scratchpad>/delegator/watch-digest.json`, with `--prs-only` for **Watch**, and `--label`, `--prefix` and `--claim-ttl <seconds>` when the settings change them. `<scratchpad>` is this session's scratch directory.
 2. If it prints `changed: true`, or exits non-zero, go on to **Procedure**.
-3. If it prints `changed: false`, end the pass without loading the skill: when `run-state.json` (under `<scratchpad>/delegator/<session name>/`) holds a `next_pass_trigger` whose `next_pass_at` is still in the future, cancel it with `delete_trigger`. When it holds a `ticket` with a PR, schedule nothing: an event on the ticket wakes the session (**Watch** step 6), and the line reads `idle: no change since <since>; waiting on #<issue>`. When it holds a `ticket` with no PR, first renew its marker on the issue with `<script> ticket renew <issue> <ticket_id> --repo <owner>/<repo> --session <session name> --chain <chain>`; if that exits 4 the ticket is gone, so clear `ticket` and go on to **Procedure**. Otherwise on the web schedule the next pass 240 minutes out with `send_later` as below, the safety net for a human answer no event reports, and on the CLI schedule nothing (its background poll wakes it); the line reads `idle: no change since <since>; waiting on #<issue>`. Without a ticket, schedule the next pass `next_interval_minutes` out (on the web `send_later` with that `delay_minutes`, the exact `/loop` command as `message`, `name` `delegate next pass` and `initiation` `own_followup`, writing its `trigger_id` and `fire_at` back to `run-state.json`; on the CLI `ScheduleWakeup`), and print one line: `idle: no change since <since>; next pass in <next_interval_minutes> min`. Nothing else.
+3. If it prints `changed: false`, end the pass without loading the skill: when `run-state.json` (under `<scratchpad>/delegator/<session name>/`) holds a `next_pass_trigger` whose `next_pass_at` is still in the future, cancel it with `delete_trigger`. When it holds a `ticket` with a PR, schedule nothing: an event on the ticket wakes the session (**Watch** step 6), and the line reads `idle: no change since <since>; waiting on #<issue>`. When it holds a `ticket` with no PR, first renew its marker on the issue with `<script> ticket renew <issue> <ticket_id> --repo <owner>/<repo> --session <session name> --chain <chain>`; if that exits 4 the ticket is gone, so clear `ticket` and go on to **Procedure**. Otherwise on the web schedule the next pass 240 minutes out with `send_later` as below, the safety net for a human answer no event reports, and on the CLI schedule nothing (its background poll wakes it); the line reads `idle: no change since <since>; waiting on #<issue>`. Without a ticket, schedule the next pass `next_interval_minutes` out (on the web `send_later` with that `delay_minutes`, the session's **Loop command** as `message`, `name` `delegate next pass` and `initiation` `own_followup`, writing its `trigger_id` and `fire_at` back to `run-state.json`; on the CLI `ScheduleWakeup`), and print one line: `idle: no change since <since>; next pass in <next_interval_minutes> min`. Nothing else.
 
 ## Procedure
 
