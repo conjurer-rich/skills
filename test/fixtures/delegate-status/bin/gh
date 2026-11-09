@@ -11,7 +11,9 @@
 # `<fixture>.next` file replaces its fixture after the fixture is first read,
 # so a poll sees a change. A `<fixture>.fail` file makes reading that fixture
 # fail, as a gh call does on a network error. An `issues-grow` file makes a
-# created issue join issues.json, so a later list sees it.
+# created issue join issues.json, so a later list sees it. A list read with
+# `page=N` past the first page serves `<fixture>.pageN`, or `[]` without one,
+# so manual paging can be tested.
 #
 
 set -euo pipefail
@@ -45,6 +47,12 @@ field() {
 }
 
 serve() {
+  local page
+  page="$(query_param page)"
+  if [ -n "$page" ] && [ "$page" -gt 1 ]; then
+    if [ -f "$state/$1.page$page" ]; then cat "$state/$1.page$page"; else echo '[]'; fi
+    return
+  fi
   if [ -f "$state/$1.fail" ]; then
     echo "gh: Bad Gateway (HTTP 502)" >&2
     exit 1
@@ -236,6 +244,7 @@ if [ "${args[0]:-}" = api ]; then
     DELETE\ repos/*/issues/comments/*)
       id="${path##*/}"
       f="$(comments_file_holding "$id")"
+      [ -n "$f" ] || not_found
       jq --argjson id "$id" 'map(select(.id != $id))' "$f" > "$f.tmp"
       mv "$f.tmp" "$f"
       exit 0 ;;

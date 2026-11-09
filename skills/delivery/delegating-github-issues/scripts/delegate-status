@@ -291,9 +291,27 @@ delegator_login() {
   printf '%s' "$user" | jq -r '.login'
 }
 
-# Every page of a REST list, as one array.
+# Every page of a REST list, as one array. Paged by hand: `gh api
+# --paginate` follows the Link header's /repositories/<id>/ URLs, which the
+# Claude Code on the web proxy refuses, so any list past one page failed. A
+# page shorter than per_page is the last. Pages go through files, since a
+# long list passes the 128 KB argument cap.
 list_of() {
-  gh_json api --paginate "$1" | jq -s 'add // []'
+  local path="$1" sep="?" per=100 page=1 dir f
+  case "$path" in *\?*) sep="&" ;; esac
+  case "$path" in
+    *[?\&]per_page=*) per="${path#*per_page=}"; per="${per%%&*}" ;;
+    *) path="$path${sep}per_page=$per"; sep="&" ;;
+  esac
+  dir="$(mktemp -d "$JSON_DIR/list.XXXXXX")"
+  while :; do
+    f="$dir/$(printf '%05d' "$page")"
+    gh_json api "$path${sep}page=$page" > "$f"
+    [ "$(jq 'length' "$f")" -ge "$per" ] || break
+    page=$((page + 1))
+  done
+  jq -s 'add // []' "$dir"/*
+  rm -rf "$dir"
 }
 
 comments_of() {
@@ -554,6 +572,13 @@ cmd_release() {
 # heartbeats as a claim does, and `hand` rewrites it to name the successor
 # session, keeping its id and so its rank: no third session can take it
 # between the hand-off and the successor's first renewal.
+#
+# `take` sweeps first: it deletes every claim on the tracking issue that has
+# gone two claim TTLs without a heartbeat, its own included. Renewal never
+# revives a lapsed claim, so such a claim can never hold a slot again; the
+# second TTL covers a renew that read the claim live just before it lapsed.
+# Without the sweep, a chain that died or lost its slot left its claim on the
+# issue for good, and a busy issue soon ran past one page of comments.
 
 LEASE_OUT='{lease: .item} + del(.item)'
 
@@ -607,10 +632,23 @@ lease_mine() {
     | "\(.key + 1) \(.value.id)"'
 }
 
+# Deletes the claims that went two claim TTLs without a heartbeat. Another
+# chain sweeping at once may delete one first, so a failed delete is skipped:
+# the next take sweeps whatever is left.
+lease_sweep() {
+  local id
+  for id in $(printf '%s' "$1" | jq -r --argjson now "$NOW" --argjson ttl "$CLAIM_TTL" '.[]
+      | select((.body // "" | contains("<!-- delegator claim: "))
+               and ($now - (.updated_at | fromdateiso8601) >= 2 * $ttl)) | .id'); do
+    gh_try api -X DELETE "repos/$REPO/issues/comments/$id" || true
+  done
+}
+
 lease_take() {
   local n comments mine rank id body
   n="$(lease_issue open)"
   comments="$(comments_of "$n")"
+  lease_sweep "$comments"
   mine="$(lease_mine "$comments")"
   if [ -z "$mine" ]; then
     if printf '%s' "$comments" | jq -e --argjson now "$NOW" --argjson ttl "$CLAIM_TTL" --argjson k "$SLOTS" \
@@ -864,8 +902,8 @@ cmd_promote_criteria() {
   printf '%s' "$comment" | jq -e '.body // "" | startswith("**Acceptance criteria (derived by the delegator")' > /dev/null \
     || die "comment $id is not a derived-criteria comment; refusing to promote it" 3
   login="$(delegator_login)"
-  gh_json api --paginate "repos/$REPO/issues/comments/$id/reactions" \
-    | jq -se --arg l "$login" 'add // [] | any(.[]; .content == "+1" and .user.login == $l)' > /dev/null \
+  list_of "repos/$REPO/issues/comments/$id/reactions" \
+    | jq -e --arg l "$login" 'any(.[]; .content == "+1" and .user.login == $l)' > /dev/null \
     || die "comment $id has no 👍 from $login; criteria are promoted only once confirmed" 3
   # Read the body as late as possible: REST has no conditional write, so a
   # human edit between this read and the write below would be lost.
@@ -995,7 +1033,7 @@ issue_from_comments() {
   if [ "$derived" != null ] \
     && ! printf '%s' "$blockers" | jq -e 'any(.[]; .open)' > /dev/null \
     && ! printf '%s' "$issue" | jq -e "$JQ_DEFS"'body_criteria' > /dev/null; then
-    reactions="$(gh_json api --paginate "repos/$REPO/issues/comments/$derived/reactions" | jq -s 'add // []')"
+    reactions="$(list_of "repos/$REPO/issues/comments/$derived/reactions")"
     confirmed="$(printf '%s' "$reactions" | jq --arg l "$login" 'any(.[]; .content == "+1" and .user.login == $l)')"
   fi
   jq -nc --slurpfile i "$(json_file "$issue")" --slurpfile c "$(json_file "$comments")" --argjson w "$winner" --arg s "$SESSION" \
