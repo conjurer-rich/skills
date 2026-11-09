@@ -19,7 +19,9 @@
 # SHA, the Watch digest and its backoff, follow-up issues, cost notes, the
 # Pick skip cache, the chain's ticket (next-action answering for it alone, the
 # ticket marker on the issue: forged, lapsed, raced, renewed, released) and
-# the chain lease (take, full, lapsed, release, hand-over).
+# the chain lease (take, full, lapsed, swept, release, hand-over), and lists
+# paged by hand, since the agent proxy refuses the /repositories/<id>/ Link
+# URLs that `gh api --paginate` follows.
 #
 
 set -e
@@ -396,7 +398,7 @@ else
 fi
 check_not_called "graphql" "no GraphQL request is made while the /ccr/ routes answer"
 check_called "api --paginate repos/acme/widgets/pulls/20/ccr/review_threads" "review threads come from the /ccr/ route"
-check_called "api --paginate repos/acme/widgets/issues/20/timeline?per_page=100" "Ready comes from the issue timeline"
+check_called "api repos/acme/widgets/issues/20/timeline?per_page=100&page=1" "Ready comes from the issue timeline"
 check_called "repos/acme/widgets/pulls?state=all&per_page=1&head=acme%3Adelegated%2F2-merged" "a worktree's PR is found by owner:branch"
 check_called "repos/acme/widgets/issues?state=open&per_page=100&labels=agent-ready" "eligible issues are listed by label"
 
@@ -1526,6 +1528,46 @@ use lease
 slots "$(slot_comment 100 "$OTHER" "$LIVE_AT")"
 out="$(RUN_NOW=$((NOW + 10800)) run lease take || true)"
 check "lease take: a slot exactly claim_ttl old is lapsed" "$out" '.result == "won"'
+
+# swept: lease take deletes a claim that lapsed a whole claim_ttl ago (two
+# claim_ttl without a heartbeat). Renewal never revives a lapsed claim, so it
+# can never hold a slot again; the extra claim_ttl covers a renew whose read
+# came just before the lapse. Nothing else on the tracking issue is touched.
+SWEPT_AT=2026-10-02T03:00:00Z
+use lease
+slots "$(slot_comment 100 "$OTHER" "$SWEPT_AT")" "$(slot_comment 101 "$OURS" "$SWEPT_AT")" \
+  "$(slot_comment 102 "$NEXT" "$LAPSED_AT")" \
+  '{"id": 103, "body": "A note from Rich.", "created_at": "2026-09-01T00:00:00Z", "updated_at": "2026-09-01T00:00:00Z", "user": {"login": "rich"}}'
+out="$(run lease take || true)"
+check "lease take: a free slot is won while sweeping" "$out" '.result == "won" and .id == 900'
+check_called "-X DELETE repos/acme/widgets/issues/comments/100" "lease take sweeps another chain's long-lapsed claim"
+check_called "-X DELETE repos/acme/widgets/issues/comments/101" "lease take sweeps this session's own long-lapsed claim"
+check_not_called "comments/102" "a claim lapsed less than claim_ttl ago is kept"
+check "the sweep keeps the recent claim, the note and the new slot" "$(cat "$FAKE_STATE/comments-90.json")" 'map(.id) == [102, 103, 900]'
+use lease
+slots "$(slot_comment 100 "$OTHER" "$LIVE_AT")"
+out="$(RUN_NOW=$((NOW + 25200)) run lease take || true)"
+check "lease take: a claim exactly two claim_ttl old is swept" "$out" '.result == "won"'
+check_called "-X DELETE repos/acme/widgets/issues/comments/100" "a claim exactly two claim_ttl old is deleted"
+# A claim another chain swept first answers 404; the sweep carries on.
+use lease
+slots "$(slot_comment 100 "$OTHER" "$SWEPT_AT")"
+echo '[]' > "$FAKE_STATE/comments-90.json.next"
+out="$(run lease take || true)"
+check "lease take: a claim already swept by another chain is no failure" "$out" '.result == "won"'
+
+# paged: a list longer than one page is read page by page, without
+# --paginate, so a slot on the second page of the tracking issue is found.
+use lease
+jq -n '[range(1; 101) | {id: ., body: "Comment \(.)", created_at: "2026-10-01T00:00:00Z", updated_at: "2026-10-01T00:00:00Z", user: {login: "rich"}}]' \
+  > "$FAKE_STATE/comments-90.json"
+slot_comment 300 "$OURS" "$LIVE_AT" | jq -s '.' > "$FAKE_STATE/comments-90.json.page2"
+out="$(run lease take || true)"
+check "lease take: a slot on the second page is reused" "$out" '.result == "won" and .id == 300'
+check_called "api repos/acme/widgets/issues/90/comments?per_page=100&page=2" "a full first page is followed by the second"
+check_not_called "page=3" "a short page is the last"
+check_not_called "--paginate" "lists are paged by hand, not with --paginate"
+check_not_called "-X POST" "a slot found on the second page posts nothing"
 
 # race: two chains take the last slot at once; the lower id keeps it
 use lease
