@@ -31,6 +31,7 @@ The upstream skill's deep-module vocabulary is now supplied by its sibling `code
 - Add escaping, Content Security Policy, accessibility, responsive, print, and offline requirements; remove Mermaid `securityLevel: "loose"`.
 - Keep automatic browser opening conditional on environment capability and authority.
 - Replace the mandatory `Agent` tool and fixed sub-agent count with provider-neutral parallel exploration when useful.
+- Start each explorer from a clean context, after upstream's "sub-agent with a fresh context window" ([`7739eaed`](https://github.com/mattpocock/skills/commit/7739eaed7f8f3915437a8def198a6d0d7206dbc7), 2026-10-29); ideas only, no text copied, so the pinned revision above is unchanged.
 - Change the upstream explicit-only invocation to locally auto-discoverable model invocation because this skill is the evidence-gathering entry point to the audit → selection → design flow; its narrowed repository/multi-module trigger prevents a single named module request from starting the audit workflow.
 - Use several hotspot signals—co-change, defects, tests, runtime risk, ownership, dependency direction, and planned work—rather than raw churn alone.
 - Include counterevidence, confidence, risks, fidelity gaps, and why-now evidence so visuals do not overstate certainty.
