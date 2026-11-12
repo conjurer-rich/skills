@@ -4,12 +4,12 @@ Advice to the human, not instructions to the delegator. Set this up when `/loop 
 
 ## Why it exists
 
-A chain hands itself on from session to session (`references/handoff.md`), but some exits end it for good: `lease take` finds every slot `full`, a hand-off fails, or the human closes the session. Nothing starts a new chain afterwards, so slots stay free while eligible issues wait.
+A chain hands itself on from session to session (`references/handoff.md`), but some exits end it for good: a finish-only pass with no ticket ends its loop, a hand-off fails, or the human closes the session. Nothing starts a new chain afterwards, so slots stay free while eligible issues wait, and a PR marked Ready waits with no session to land it.
 
 A session started by a scheduled task cannot call `create_session`, so a skill run from a scheduled task cannot start a chain. The two jobs are split instead:
 
 - **The gate runs in GitHub Actions.** `scripts/delegate-fire` asks `delegate-status next-action` and `lease status` whether a chain is needed. It reads GitHub with the workflow's `GITHUB_TOKEN` and uses no model, so a run that does not fire costs a few seconds of Actions minutes.
-- **The session starts through a scheduled task's API trigger.** When the gate passes, the script POSTs to the trigger. Each fire starts one fresh session whose prompt is `/delegate loop`. That session *is* the new chain: it takes its own slot with `lease take` and runs.
+- **The session starts through a scheduled task's API trigger.** When the gate passes, the script POSTs to the trigger. Each fire starts one fresh session whose prompt is `/delegate loop`. That session *is* the new chain: it takes its own slot with `lease take` and runs, or, when every slot is held, finishes the PRs that need it and ends.
 
 ## What the gate decides
 
@@ -18,7 +18,7 @@ The script fires at most once per run:
 | `next-action` | Fires when |
 |---|---|
 | `pick` | the lease has a free slot |
-| `watch` or `land` | the lease has a free slot and no chain is live; a live chain's **Watch** answers the review or lands the PR |
+| `watch` or `land` | always. These name only a PR no session holds a claim on, and a live chain acts only on its own ticket's PR, so no running chain would reach it. On a full lease the fired session's pass is finish-only |
 | `idle` | never |
 
 It reads the same parameters `/delegate` does from the project's `.claude/delegation.md` (`label`, `rank_labels`, `branch_prefix`, `progress_label`, `max_worktrees`, `max_open_prs`, `land`, `claim_ttl` and `max_chains`), and refuses to run without that file.
@@ -76,7 +76,7 @@ jobs:
 
 The called workflow's job asks for the same read-only permissions, and a called workflow can never have more than its caller grants. A cron run has no inputs, so both flags read false.
 
-Each run writes one line to its job summary: why it did not fire (`idle`, `full`, or work left to the running chains), or `fired` with the new session's id. Read those lines, and `delegate-status cost`, after the first day, then tune `max_chains` or the cron.
+Each run writes one line to its job summary: why it did not fire (`idle`, or `full` when the only work is a new issue and every slot is held), or `fired` with the new session's id. Read those lines, and `delegate-status cost`, after the first day, then tune `max_chains` or the cron.
 
 ## Without the reusable workflow
 
@@ -92,10 +92,10 @@ It exits 0 when it fired or had nothing to do, 1 when the gate or the trigger fa
 
 ## Caveats
 
-- **The gate sees no worktrees.** A runner has no delegated worktrees, so the `max_worktrees` budget always reads empty there. `max_open_prs` and the lease are the limits that hold.
+- **The gate sees no worktrees.** A runner has no delegated worktrees, so the `max_worktrees` budget always reads empty there. `max_open_prs` (drafts awaiting a first look, **Count** in `references/work.md`) and the lease are the limits that hold.
 - **Whose markers count.** The delegator trusts only markers and claims posted by its own login. A workflow token is no user, so the reusable workflow passes the caller repository's owner as that login. When the delegator posts as someone else, for example in a repository an organisation owns, set the `delegator-login` input to that login.
-- **A race ends the fired chain early.** The gate reads the lease a minute or so before the fired session starts, and another chain may take the last slot in between. The fired chain's `lease take` then prints `full` and it ends. The workflow's `concurrency` group stops two runs from overlapping.
-- **A waiting chain's slot lapses.** In a cloud container a chain waiting on a human loses its heartbeat with the reclaimed container, and its slot lapses after `claim_ttl`. The gate then counts the slot as free and fires a chain for other work. That is intended: `max_chains` caps active chains, and `max_open_prs` caps work waiting on review. The waiting PR is still answered and landed by whichever chain's **Watch** reaches it.
+- **A race ends the fired chain early.** The gate reads the lease a minute or so before the fired session starts, and another chain may take the last slot in between. The fired chain's `lease take` then prints `full`, and its pass is finish-only: it reviews, lands and syncs what needs it, picks nothing, and ends. The workflow's `concurrency` group stops two runs from overlapping.
+- **A waiting chain's slot lapses.** In a cloud container a chain waiting on a human loses its heartbeat with the reclaimed container, and its slot lapses after `claim_ttl`. The gate then counts the slot as free and fires a chain for other work. That is intended: `max_chains` caps active chains, and `max_open_prs` caps work waiting on a first look. A chain with a slot acts only on its own ticket's PR, so the waiting PR is answered and landed by the session that owns it when its subscription wakes it, with or without a slot (**Finish-only** in `references/run.md`). When that session is gone, the gate fires one for it: `watch` and `land` name only PRs no session holds a claim on, and fire whatever the lease holds.
 - **Trigger limits.** A scheduled task's API trigger accepts 30 fires per hour, far above one per run.
 - **A private craft copy.** The reusable workflow checks out `conjurer-rich/skills` without a token. A fork kept private needs its own checkout step with a token that can read it.
 - **Usage limits are not visible from GitHub.** If the ramp proves too loose, lower `max_chains` or run the cron less often.

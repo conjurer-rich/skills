@@ -284,8 +284,25 @@ check "a squash-merged, clean worktree at the PR's head is reclaimable" "$out" \
 check "worktrees that must stay are reported with a reason" "$out" \
   '[.worktrees.keep[] | [.branch, .reason]] == [["delegated/3-dirty", "uncommitted"], ["delegated/4-open", "pr-open"], ["delegated/5-nopr", "no-pr"], ["delegated/6-unpushed", "unpushed"]]'
 check "the main worktree is ignored" "$out" 'all(.worktrees.keep[]; .branch != "main")'
-check "budget counts worktrees after reclaim and all open PRs" "$out" \
-  '.budget == {"worktrees": 4, "max_worktrees": 5, "open_prs": 6, "max_open_prs": 6, "at_limit": true}'
+# Of the six open PRs, #21 and #22 are delegated and no longer drafts: the
+# human has looked at them, so they do not hold back new work.
+check "budget counts worktrees after reclaim and the open PRs awaiting a first look" "$out" \
+  '.budget == {"worktrees": 4, "max_worktrees": 5, "open_prs": 4, "max_open_prs": 6, "ready_prs": 2, "blocked_prs": 0, "at_limit": false}'
+out="$(run status --max-worktrees 5 --max-open-prs 4 --land on)"
+check "the counted PRs reach the limit" "$out" '.budget.open_prs == 4 and .budget.at_limit'
+
+# A [blocked] draft waits on the human's answer, not on a first look.
+use status
+jq '(.[] | select(.number == 20) | .title) |= "[blocked] " + .' "$FAKE_STATE/prs.json" > "$FAKE_STATE/prs.tmp"
+mv "$FAKE_STATE/prs.tmp" "$FAKE_STATE/prs.json"
+out="$(run budget --max-worktrees 5 || true)"
+check "a [blocked] delegated PR is not counted" "$out" '.budget.open_prs == 3 and .budget.blocked_prs == 1 and .budget.ready_prs == 2'
+jq '(.[] | select(.number == 25) | .title) |= "[blocked] " + .' "$FAKE_STATE/prs.json" > "$FAKE_STATE/prs.tmp"
+mv "$FAKE_STATE/prs.tmp" "$FAKE_STATE/prs.json"
+out="$(run budget --max-worktrees 5 || true)"
+check "a PR from another author is counted whatever its title or draft state" "$out" '.budget.open_prs == 3 and .budget.blocked_prs == 1'
+use status
+out="$(run status --max-worktrees 5 --max-open-prs 6 --land on)"
 
 # Untracked agent scratch does not keep a merged worktree; Reclaim deletes it.
 use status
@@ -364,7 +381,7 @@ fi
 use status
 out="$(run budget --max-worktrees 5 || true)"
 check "budget prints the worktrees and the counts status prints" "$out" \
-  '.worktrees.reclaim[0].branch == "delegated/2-merged" and .budget.worktrees == 4 and .budget.open_prs == 6 and .budget.at_limit'
+  '.worktrees.reclaim[0].branch == "delegated/2-merged" and .budget.worktrees == 4 and .budget.open_prs == 4 and .budget.ready_prs == 2 and (.budget.at_limit | not)'
 if grep -Fq "issue list" "$FAKE_STATE/calls.log"; then
   fail "budget reads no issues"
 else

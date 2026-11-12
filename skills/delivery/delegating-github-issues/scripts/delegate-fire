@@ -8,15 +8,19 @@
 # nothing starts a new one. A session started by a scheduled task cannot call
 # create_session, so the spawner cannot be a skill. This script is the gate
 # instead: it asks `delegate-status next-action` and `lease status` what a
-# chain would do (plain gh and jq, no tokens), and only when there is work
-# and a free slot does it POST to a scheduled task's API trigger. That task's
-# prompt is /delegate loop, so the session it starts is the new chain, and
-# its own `lease take` settles any race.
+# chain would do (plain gh and jq, no tokens), and only when there is work a
+# new session could do does it POST to a scheduled task's API trigger. That
+# task's prompt is /delegate loop, so the session it starts is the new chain,
+# and its own `lease take` settles any race.
 #
 # It fires at most once per run:
-#   pick           fires when the lease has a free slot;
-#   watch or land  fires only when no chain is live (a live chain's Watch
-#                  answers the review or lands the PR);
+#   pick           fires when the lease has a free slot: the lease caps new
+#                  work;
+#   watch or land  fires whatever the lease holds. The gate reports these
+#                  only for a PR no session holds a claim on, and a live
+#                  chain acts only on its own ticket's PR, so nothing else
+#                  would reach it. On a full lease the fired session's Run
+#                  does a finish-only pass;
 #   idle           never fires.
 #
 # Run it from the project's checkout. The project's .claude/delegation.md
@@ -135,20 +139,20 @@ lease="$("$STATUS" lease status "${GATE_ARGS[@]}" --max-chains "$MAX_CHAINS")" |
 
 action="$(printf '%s' "$gate" | jq -r '.action')"
 reasons="$(printf '%s' "$gate" | jq -r '.reasons | join("; ")')"
-live="$(printf '%s' "$lease" | jq -r '.live')"
 free="$(printf '%s' "$lease" | jq -r '.free')"
 holders="$(printf '%s' "$lease" | jq -r '.holders | join(", ")')"
 
 why=""
 if [ "$action" = idle ]; then
   why="idle ($reasons)"
-elif [ "$free" -eq 0 ]; then
+elif [ "$action" = pick ] && [ "$free" -eq 0 ]; then
   why="full ($holders)"
-elif [ "$action" != pick ] && [ "$live" -gt 0 ]; then
-  why="$action left to the running chains ($reasons)"
 fi
 
 summary="$action: $reasons"
+if [ "$action" != pick ] && [ "$free" -eq 0 ]; then
+  summary="$summary; the lease is full, so finish only"
+fi
 if [ -n "$why" ]; then
   if [ "$FORCE" -eq 0 ]; then
     report false "$why"

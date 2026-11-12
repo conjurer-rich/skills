@@ -116,13 +116,6 @@ expect "a full lease exits 0" fire
 expect "a full lease never calls the trigger" test ! -e "$W/curl.calls"
 expect "a full lease names its holders" grep -q "delegate-fire: full (a, b, c)" "$W/out"
 
-setup
-echo "$watch" > "$W/action"
-echo "$free" > "$W/lease"
-expect "watch with a live chain exits 0" fire
-expect "watch with a live chain never calls the trigger" test ! -e "$W/curl.calls"
-expect "watch is left to the running chains" grep -q "delegate-fire: watch left to the running chains" "$W/out"
-
 # ---------------------------------------------------------------- fire
 
 setup
@@ -172,6 +165,34 @@ echo "$land" > "$W/action"
 echo "$empty" > "$W/lease"
 expect "land with no live chain fires" fire
 expect "land with no live chain calls the trigger" test "$(wc -l < "$W/curl.calls")" -eq 1
+
+setup
+echo "$watch" > "$W/action"
+echo "$free" > "$W/lease"
+expect "watch with a live chain fires: a chain acts only on its ticket's PR" fire
+expect "watch with a live chain calls the trigger" test "$(wc -l < "$W/curl.calls")" -eq 1
+
+setup
+echo "$land" > "$W/action"
+echo "$free" > "$W/lease"
+expect "land with a live chain fires" fire
+expect "land with a live chain calls the trigger" test "$(wc -l < "$W/curl.calls")" -eq 1
+
+# A full lease stops new work, never finishing: the fired session's Run does
+# a finish-only pass.
+setup
+echo "$land" > "$W/action"
+echo "$full" > "$W/lease"
+expect "land with a full lease fires" fire
+expect "land with a full lease calls the trigger" test "$(wc -l < "$W/curl.calls")" -eq 1
+expect "the text says the lease is full" \
+  grep -q '"text":"Started by delegate-fire. land: PR #21 is marked ready; the lease is full, so finish only"' "$W/curl.calls"
+
+setup
+echo "$watch" > "$W/action"
+echo "$full" > "$W/lease"
+expect "watch with a full lease fires" fire
+expect "watch with a full lease calls the trigger" test "$(wc -l < "$W/curl.calls")" -eq 1
 
 setup
 echo "$idle" > "$W/action"

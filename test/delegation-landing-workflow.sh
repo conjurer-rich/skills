@@ -348,7 +348,15 @@ require_text 'Whenever `ticket` is cleared, `ticket release` its marker' "a comp
 require_text 'adopt it as `ticket`' "a left-over marker of this chain is resumed"
 require_text 'never set it again over the other chain' "a lost ticket is dropped, never retaken"
 require_text 'On the CLI, where no hand-off is possible, the chain waits in place' "the CLI waits in place instead of ending the loop"
-require_text 'cannot hand off keeps its lease slot and its loop' "Hand-off on the CLI keeps the waiting loop"
+require_text 'cannot hand off keeps its loop' "Hand-off on the CLI keeps the waiting loop"
+# A Ready PR whose session had lost its slot was never landed: that session's
+# `lease take` read `full` and it exited, and every chain with a slot acted
+# only on its own ticket's PR.
+require_text 'On `full` (exit 5) the pass is **finish-only**' "a Run without a slot still finishes PRs"
+require_text 'it never runs Pick or Work' "a finish-only pass starts no new work"
+require_text 'A session that waits in place on the human, on the CLI or the web, first gives up its lease slot' "a waiting session holds no slot"
+reject_regex 'Only `full` \(exit 5\) ends the loop' "a full lease no longer ends a Run before Watch"
+require_text 'the open PRs that still wait for the human'"'"'s first look' "the PR budget counts first looks, not Ready or blocked PRs"
 require_text 'reminder 240 minutes out, only while the ticket has no PR' "the web's safety-net reminder runs only while the ticket has no PR"
 require_text 'The ticket marker stays' "a hand-off keeps the ticket marker"
 require_text 'writes it to `run-state.json` as `ticket` and resumes that ticket' "the session a hand-off creates resumes the ticket"

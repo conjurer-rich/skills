@@ -16,8 +16,8 @@ The calling command supplies these; defaults apply when it does not, and keep th
 | `label` | `agent-ready` | Only issues with this label are eligible |
 | `rank_labels` | `p1`, `p2` | Higher rank first; unranked last |
 | `max_worktrees` | 1 | Active `<branch_prefix>` worktrees. |
-| `max_chains` | 1 | Chains (a Run and successors) at once: slots on the `delegator-lease` issue; a Run beyond exits. The WIP limit; `max_worktrees` caps a checkout |
-| `max_open_prs` | 6 | Open PRs in the repository, all authors |
+| `max_chains` | 1 | Chains (a Run and successors) at once: slots on the `delegator-lease` issue; a Run beyond only finishes. The WIP limit; `max_worktrees` caps a checkout |
+| `max_open_prs` | 6 | Open PRs awaiting a first look |
 | `branch_prefix` | `delegated/` | Prefix of every delegated branch |
 | `pre_pr_gate` | the project's gate, else `mutation-testing`'s `pr-readiness.md` | The implementer runs it before the PR |
 | `tier_small_max_lines` | 150 | Most changed lines (insertions plus deletions) a tier S diff may have; `0` turns tier S off |
