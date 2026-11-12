@@ -1150,11 +1150,21 @@ pr_json() {
   printf '%s\n' "$result"
 }
 
-# Delegated worktrees left after reclaim, and open PRs from all authors.
+# Delegated worktrees left after reclaim, and the open PRs that still wait
+# for the human's first look. A delegated PR opens as a draft and only the
+# human takes it out of draft, so a delegated PR that is no longer a draft
+# (`ready_prs`) or is titled `[blocked]` (`blocked_prs`) has had that look,
+# or waits for an answer instead: it is reported and not counted. Every
+# other open PR counts, whoever wrote it.
 budget_json() {
-  jq -nc --argjson w "$1" --argjson prs "$2" --argjson mw "$MAX_WORKTREES" --argjson mp "$MAX_OPEN_PRS" '
-    ($w.keep | length) as $active | ($prs | length) as $open
+  jq -nc --argjson w "$1" --argjson prs "$2" --argjson mw "$MAX_WORKTREES" --argjson mp "$MAX_OPEN_PRS" --arg p "$PREFIX" '
+    ($w.keep | length) as $active
+    | [$prs[] | select(.headRefName | startswith($p))] as $ours
+    | ([$ours[] | select(.title | startswith("[blocked]"))] | length) as $blocked
+    | ([$ours[] | select((.title | startswith("[blocked]") | not) and (.isDraft | not))] | length) as $ready
+    | (($prs | length) - $blocked - $ready) as $open
     | {worktrees: $active, max_worktrees: $mw, open_prs: $open, max_open_prs: $mp,
+       ready_prs: $ready, blocked_prs: $blocked,
        at_limit: ($active >= $mw or $open >= $mp)}'
 }
 
@@ -1363,7 +1373,7 @@ next_action_of() {
   fi
   jq -c --argjson ticket "$ticket" '
     def budget_reason:
-      "budget at limit: \(.budget.worktrees)/\(.budget.max_worktrees) worktrees, \(.budget.open_prs)/\(.budget.max_open_prs) open PRs";
+      "budget at limit: \(.budget.worktrees)/\(.budget.max_worktrees) worktrees, \(.budget.open_prs)/\(.budget.max_open_prs) open PRs awaiting a first look";
     def for_ticket($t):
       (first(.issues[] | select(.number == $t.issue)) // null) as $i
       | ($t.pr // (if $i.state == "delegated" then $i.pr else null end)) as $pr
