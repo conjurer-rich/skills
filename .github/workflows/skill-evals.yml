@@ -30,6 +30,10 @@ on:
         description: "promptfoo --repeat"
         default: "1"
         type: string
+      filter:
+        description: "Routing suite only: a regex; run just the cases whose description matches"
+        default: ""
+        type: string
   schedule:
     - cron: "0 6 * * 1"
   pull_request:
@@ -61,6 +65,7 @@ jobs:
       SKILL_EVAL_MODEL: ${{ inputs.model || 'sonnet' }}
       SUITE: ${{ inputs.suite || 'all' }}
       REPEAT: ${{ inputs.repeat || '1' }}
+      FILTER: ${{ inputs.filter }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -83,6 +88,7 @@ jobs:
       # Fail in seconds, not after fifty cases: the helper must mint a token,
       # and the API must accept it in the two headers Claude Code sends.
       - name: Check the credential helper
+        id: credentials
         run: |
           token="$(evals/skills/ci-anthropic-token.sh)"
           echo "::add-mask::$token"
@@ -98,11 +104,20 @@ jobs:
       - name: Routing suite
         if: env.SUITE == 'all' || env.SUITE == 'routing'
         working-directory: evals/skills
-        run: ./run.sh --no-progress-bar --repeat "$REPEAT" | tee results/routing-report.txt
+        run: |
+          set -o pipefail
+          args=(--no-progress-bar --repeat "$REPEAT")
+          if [ -n "$FILTER" ]; then args+=(--filter-pattern "$FILTER"); fi
+          mkdir -p results
+          ./run.sh "${args[@]}" | tee results/routing-report.txt
+      # A routing miss fails the routing step, and the job with it, but says
+      # nothing about the quality suites, so they still run.
       - name: Quality suites
-        if: env.SUITE != 'routing'
+        if: ${{ !cancelled() && steps.credentials.outcome == 'success' && env.SUITE != 'routing' }}
         working-directory: evals/skills
         run: |
+          set -o pipefail
+          mkdir -p results
           suites="$SUITE"
           if [ "$suites" = "all" ]; then suites="tdd hexagonal ddd"; fi
           status=0
