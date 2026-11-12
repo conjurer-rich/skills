@@ -52,6 +52,17 @@ Do not duplicate what the repository already records: current code structure, Gi
 
 If a temporary artifact reveals a lasting constraint, promote the constraint to its owner before deleting the artifact. Git history remains the archive.
 
+## Records That Cannot Track the Code
+
+Code, tests and maintained documentation change in the same commit as the behaviour they describe. Some destinations do not: session notes, a retro, a status artifact, an ADR's context, a shared memory folder. A claim filed there goes stale without anyone noticing, so write it as a record of a moment rather than a description of the present:
+
+- Give every entry the date it was learned.
+- Pin any statement about code to the revision it held at, with its repository (`owner/repo@abc1234`).
+- Never write "currently", "now" or a bare "is" about code without that date or revision beside it.
+- When a fact changes, add a new dated entry and mark the old one superseded instead of editing it, so the earlier reasoning stays readable.
+
+Prefer an owner that moves with the code. Use these rules only where the learning has no such owner.
+
 ## Documentation Format
 
 ```markdown

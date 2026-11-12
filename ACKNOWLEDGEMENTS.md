@@ -33,8 +33,8 @@ here, or a row points at a notice that no longer exists.
 | `improve-codebase-architecture` | `mattpocock/skills` | MIT | Matt Pocock (2026) | `66898f60` | [`skills/architecture/improve-codebase-architecture/LICENSE`](skills/architecture/improve-codebase-architecture/LICENSE) |
 | `ask` | `mattpocock/skills` (`ask-matt`) | MIT | Matt Pocock (2026) | `b0618bc4` | [`skills/delivery/ask/LICENSE`](skills/delivery/ask/LICENSE) |
 | `retro` | `mattpocock/skills` | MIT | Matt Pocock (2026) | `b0618bc4` | [`skills/delivery/retro/LICENSE`](skills/delivery/retro/LICENSE) |
-| `review` | `mattpocock/skills` (`code-review`) | MIT | Matt Pocock (2026) | `b0618bc4` | [`skills/delivery/review/LICENSE`](skills/delivery/review/LICENSE) |
-| `grilling` | `mattpocock/skills` | MIT | Matt Pocock (2026) | `b0618bc4` | [`skills/delivery/grilling/LICENSE`](skills/delivery/grilling/LICENSE) |
+| `review` | `mattpocock/skills` (`code-review`) | MIT | Matt Pocock (2026) | `7739eaed` | [`skills/delivery/review/LICENSE`](skills/delivery/review/LICENSE) |
+| `grilling` | `mattpocock/skills` | MIT | Matt Pocock (2026) | `7739eaed` | [`skills/delivery/grilling/LICENSE`](skills/delivery/grilling/LICENSE) |
 | `grill-me` | `mattpocock/skills` | MIT | Matt Pocock (2026) | `b0618bc4` | [`skills/delivery/grill-me/LICENSE`](skills/delivery/grill-me/LICENSE) |
 | `grill-with-docs` | `mattpocock/skills` | MIT | Matt Pocock (2026) | `b0618bc4` | [`skills/delivery/grill-with-docs/LICENSE`](skills/delivery/grill-with-docs/LICENSE) |
 | `writing-for-agents` | `mattpocock/skills` | MIT | Matt Pocock (2026) | `b0618bc4` | [`skills/writing/writing-for-agents/LICENSE`](skills/writing/writing-for-agents/LICENSE) |

@@ -69,7 +69,7 @@ Follow representative behavior from entrypoint to observable outcome. Record:
 - which seams and adapters are real versus ceremonial;
 - what the current tests prove and what they cannot prove.
 
-Use parallel exploration when independent repository areas can be inspected without duplicating work. Give explorers raw scope and evidence, not a preferred diagnosis.
+Use parallel exploration when independent repository areas can be inspected without duplicating work. Start each explorer from a clean context, not a copy of this conversation, and give it raw scope and evidence, not a preferred diagnosis.
 
 ### 4. Generate evidence-backed candidates
 

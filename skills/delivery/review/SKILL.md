@@ -95,7 +95,8 @@ fix*:
 ## 4. Review both axes
 
 Run each axis in its own subagent, in parallel, so neither pollutes the other's
-context; where the harness has no subagents, run Standards and then Spec, and
+context. Start each subagent with a fresh context window, never a fork of this
+session: an axis that inherits the conversation inherits its opinions. Where the harness has no subagents, run Standards and then Spec, and
 do not let the first colour the second. Each subagent receives the diff
 command and commit list.
 

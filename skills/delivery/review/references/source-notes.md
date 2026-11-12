@@ -5,8 +5,8 @@ Adapted from Matt Pocock's `code-review`.
 ## Source
 
 - Repository: <https://github.com/mattpocock/skills>
-- Pinned revision: [`b0618bc4`](https://github.com/mattpocock/skills/tree/b0618bc436ad893b3c5e84e55fba86586d34a404)
-- Folder: [`skills/engineering/code-review`](https://github.com/mattpocock/skills/tree/b0618bc436ad893b3c5e84e55fba86586d34a404/skills/engineering/code-review)
+- Pinned revision: [`7739eaed`](https://github.com/mattpocock/skills/tree/7739eaed7f8f3915437a8def198a6d0d7206dbc7)
+- Folder: [`skills/engineering/code-review`](https://github.com/mattpocock/skills/tree/7739eaed7f8f3915437a8def198a6d0d7206dbc7/skills/engineering/code-review)
 - Licence: MIT, Copyright (c) 2026 Matt Pocock. The full notice is in
   [`../LICENSE`](../LICENSE).
 
@@ -22,6 +22,8 @@ Adapted from Matt Pocock's `code-review`.
 - The Fowler smell baseline (*Refactoring*, chapter 3) with its two binding
   rules: the repository overrides it, and every smell is a judgement call.
 - The subagent briefs and the per-axis summary line.
+- Starting each axis subagent with a fresh context window rather than a fork
+  (upstream `7739eaed`, 2026-10-29).
 
 ## Changed (Richard Allen, 2026-10-08)
 
