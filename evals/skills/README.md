@@ -60,7 +60,8 @@ offline guard that keeps the cases honest (every skill a case names must exist).
 `.github/workflows/skill-evals.yml` runs the suites on demand, weekly, or on a pull
 request labelled `run-evals` that touches a skill or the harness, and uploads
 results as artifacts. It authenticates by Anthropic workload identity
-federation, with no stored key; the federation rule accepts runs on `main`.
+federation, with no stored key: Claude Code runs `ci-anthropic-token.sh` as its
+credential helper. The federation rule accepts this workflow on `main` only.
 
 ### Reading a failure
 

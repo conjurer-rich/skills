@@ -9,11 +9,11 @@ name: Skill evals
 # The offline guards in test/run.sh (suite wiring, routing cases) run in ci.yml
 # on every push.
 #
-# Authentication is Anthropic workload identity federation, not an API key:
-# Claude Code exchanges the job's GitHub OIDC token for a short-lived access
-# token, using the ANTHROPIC_* variables below. The federation rule accepts
-# runs on main only, so a `run-evals` pull request does not authenticate until
-# the rule allows its subject.
+# Authentication is Anthropic workload identity federation, not an API key.
+# Claude Code runs evals/skills/ci-anthropic-token.sh as its credential helper;
+# each call exchanges a fresh GitHub OIDC token for a short-lived access token.
+# The federation rule accepts this workflow on main only, so a `run-evals` pull
+# request does not authenticate until the rule allows it.
 
 on:
   workflow_dispatch:
@@ -51,10 +51,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 120
     env:
-      ANTHROPIC_FEDERATION_RULE_ID: fdrl_01R7d3WtTugiDouWLQmkkVyi
-      ANTHROPIC_ORGANIZATION_ID: e2fc6ca7-ed9b-47bd-8517-229213660087
-      ANTHROPIC_SERVICE_ACCOUNT_ID: svac_01D6mZyodqT7Bdjwbgp4ve1D
-      ANTHROPIC_WORKSPACE_ID: wrkspc_01Us1Z4NxNPsoyFQNLcfcdWa
+      WIF_FEDERATION_RULE_ID: fdrl_01R7d3WtTugiDouWLQmkkVyi
+      WIF_ORGANIZATION_ID: e2fc6ca7-ed9b-47bd-8517-229213660087
+      WIF_SERVICE_ACCOUNT_ID: svac_01D6mZyodqT7Bdjwbgp4ve1D
+      WIF_WORKSPACE_ID: wrkspc_01Us1Z4NxNPsoyFQNLcfcdWa
+      # Refresh well inside the access token's ten-minute life.
+      CLAUDE_CODE_API_KEY_HELPER_TTL_MS: "240000"
       PROMPTFOO_DISABLE_TELEMETRY: "1"
       SKILL_EVAL_MODEL: ${{ inputs.model || 'sonnet' }}
       SUITE: ${{ inputs.suite || 'all' }}
@@ -72,22 +74,27 @@ jobs:
       - name: Install the harness
         working-directory: evals/skills
         run: pnpm install --frozen-lockfile
-      # A GitHub OIDC token lasts about five minutes and the suites run for
-      # much longer, so a background loop keeps the file fresh. Claude Code
-      # re-reads it on every exchange.
-      - name: Keep the GitHub identity token fresh
+      # Managed settings load whatever setting sources the harness asks for.
+      - name: Configure the credential helper
         run: |
-          ANTHROPIC_IDENTITY_TOKEN_FILE="$RUNNER_TEMP/anthropic-identity-token"
-          echo "ANTHROPIC_IDENTITY_TOKEN_FILE=$ANTHROPIC_IDENTITY_TOKEN_FILE" >> "$GITHUB_ENV"
-          fetch() {
-            curl -sSf -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-              "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=https://api.anthropic.com" \
-              | jq -er .value > "$ANTHROPIC_IDENTITY_TOKEN_FILE.tmp" \
-              && mv "$ANTHROPIC_IDENTITY_TOKEN_FILE.tmp" "$ANTHROPIC_IDENTITY_TOKEN_FILE"
-          }
-          fetch
-          (while sleep 180; do fetch || echo "identity token refresh failed" >&2; done) \
-            > "$RUNNER_TEMP/identity-token-refresh.log" 2>&1 &
+          sudo mkdir -p /etc/claude-code
+          jq -n --arg helper "$GITHUB_WORKSPACE/evals/skills/ci-anthropic-token.sh" \
+            '{apiKeyHelper: $helper}' | sudo tee /etc/claude-code/managed-settings.json
+      # Fail in seconds, not after fifty cases: the helper must mint a token,
+      # and the API must accept it in the two headers Claude Code sends.
+      - name: Check the credential helper
+        run: |
+          token="$(evals/skills/ci-anthropic-token.sh)"
+          echo "::add-mask::$token"
+          code="$(curl -sS -o "$RUNNER_TEMP/models.json" -w '%{http_code}' \
+            https://api.anthropic.com/v1/models \
+            -H "anthropic-version: 2023-06-01" \
+            -H "x-api-key: $token" -H "authorization: Bearer $token")"
+          echo "GET /v1/models with both headers: HTTP $code"
+          if [ "$code" != 200 ]; then
+            jq -c '.error // .' "$RUNNER_TEMP/models.json" || true
+            exit 1
+          fi
       - name: Routing suite
         if: env.SUITE == 'all' || env.SUITE == 'routing'
         working-directory: evals/skills
