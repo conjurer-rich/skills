@@ -1,5 +1,16 @@
 # @conjurer-rich/skills
 
+## 6.1.0
+
+### Minor Changes
+
+- dd56120: delegating-github-issues: a PR the human marked Ready or answered is now finished whatever the lease holds. A Run that finds the lease `full` does a finish-only pass (Review, Land and Sync, never Pick or Work) instead of exiting, a session waiting on the human releases its lease slot, and `delegate-fire` fires for `watch` or `land` even when chains are live or the lease is full; only `pick` still needs a free slot. `max_open_prs` now counts the open PRs awaiting a first look: a delegated PR that is no longer a draft, or is titled `[blocked]`, is reported as `ready_prs` or `blocked_prs` and no longer stops new work.
+
+### Patch Changes
+
+- 3cfa13f: delegating-github-issues: `delegate-status lease take` now deletes every chain-slot claim on the lease tracking issue that has gone twice `claim_ttl` without a heartbeat, so dead and lost chains no longer leave their claims behind for good. REST lists are paged by hand instead of with `gh api --paginate`, whose `/repositories/<id>/` Link URLs the Claude Code on the web proxy refuses, so a list longer than 100 items no longer fails.
+- 35c6f62: Upstream watch (mattpocock/skills, to `4ae2317d`). `review`, `grilling` and `improve-codebase-architecture` now start their subagents or explorers with a fresh context window instead of a fork of the session. `expectations` gains rules for learnings filed where they cannot track the code: date each entry, pin code claims to a `repo@commit`, and supersede rather than rewrite.
+
 ## 6.0.3
 
 ### Patch Changes
