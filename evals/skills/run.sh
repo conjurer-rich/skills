@@ -15,7 +15,8 @@
 #   SKILL_EVAL_MODEL=opus ./evals/skills/run.sh
 #
 # Authentication: uses your local Claude Code login by default. Set
-# ANTHROPIC_API_KEY to bill an API key instead.
+# ANTHROPIC_API_KEY to bill an API key instead. CI uses workload identity
+# federation (see .github/workflows/skill-evals.yml).
 #
 # Results are written to evals/skills/results/latest.json (gitignored) and can
 # be browsed with `pnpm exec promptfoo view` from evals/skills.
