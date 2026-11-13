@@ -45,6 +45,7 @@
     "./skills/delivery/planning",
     "./skills/delivery/retro",
     "./skills/delivery/review",
+    "./skills/delivery/review-requests",
     "./skills/delivery/specification",
     "./skills/delivery/stack-pull-requests",
     "./skills/delivery/story-splitting",

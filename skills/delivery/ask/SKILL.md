@@ -61,6 +61,9 @@ underneath.
    Claude Code, `codex review` in Codex). For high
    stakes, `double-check` gets an independent second opinion, preferably from
    another provider *(subagents)*.
+   - **Someone else's PR:** `/review-requests` drafts a review of each pull
+     request waiting on you and leaves it as your own pending review, for you
+     to edit and submit *(Claude Code)*.
 7. **Close the loop.** `retro` looks back over the session and suggests
    changes to the environment: checks, standards, navigation pointers, and
    skills you could have used but didn't *(subagents)*. Run it in the session

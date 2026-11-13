@@ -22,6 +22,7 @@ For a rigorous second opinion on finished work, load `double-check`. It selects 
 When the user is unsure which skill or flow fits, point them at `/ask` (the `ask` skill); it maps every craft skill, including shelved ones.
 At the end of a session, especially one that went sideways, suggest `/retro` (the `retro` skill) to turn what went wrong into changes to the environment.
 For delegating a labelled GitHub issue end to end, or watching and landing delegated pull requests, use `/delegate` (the `delegating-github-issues` skill).
+For drafting reviews of the pull requests that ask for the user's review, left on GitHub as their own pending review to edit and submit, use `/review-requests`.
 
 ## Discovery, specification and planning
 
