@@ -1,0 +1,5 @@
+interface:
+  display_name: "Review Requests"
+  short_description: "Claude Code first: draft reviews of PRs awaiting you"
+policy:
+  allow_implicit_invocation: false

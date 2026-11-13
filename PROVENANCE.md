@@ -21,7 +21,7 @@ transcripts (Claude Code keeps 30 days by default).
 | --- | --- |
 | **Shipped skills (45)** | used, a used item depends on them, or kept as dormant-but-useful: see `.claude-plugin/plugin.json` |
 | **Shipped agents (5)** | `tdd-guardian`, `refactor-scan`, `twelve-factor-audit`, `adr`, `learn` |
-| **Shipped commands (3)** | `/delegate`, `/plan`, `/continue` |
+| **Shipped commands (4)** | `/delegate`, `/review-requests`, `/plan`, `/continue` |
 | **Shelf** (in the repository, not installed) | skills `bff-design`, `cli-design`, `graph-engineering`, `panel-review`, `production-parity-skill-builder`, `render-code-shape`, `teach-me`; agents `docs-guardian`, `progress-guardian`, `ts-enforcer`, `use-case-data-patterns`; command `/setup` |
 | **Deprecated** | `folder-structure` (alias of `structure-codebase`; deleted after one release) |
 

@@ -18,7 +18,7 @@ claude plugin install craft@conjurer
 
 Skills load as `craft:<name>` (for example `craft:tdd`), agents as
 `craft:<name>` in the agent list. User-invoked skills such as `/delegate`,
-`/plan` and `/continue` run as slash commands. The plugin also installs a Stop
+`/review-requests`, `/plan` and `/continue` run as slash commands. The plugin also installs a Stop
 hook that warns about uncommitted or unpushed work.
 
 ### Codex
@@ -38,7 +38,7 @@ run in Codex:
 | --- | --- | --- |
 | **portable** | works as in Claude Code | every skill not listed below |
 | **degrades** | runs its subagent parts one after another | `review`, `double-check`, `retro`, `grilling`, `codebase-design`, `improve-codebase-architecture`, `tdd-guardian`, `refactor-scan` |
-| **claude-only** | not available | `delegating-github-issues`, `/delegate`, `browser-ux-walkthrough`, the `adr`, `learn`, `twelve-factor-audit` and `delegate-*` agents, the Stop hook |
+| **claude-only** | not available | `delegating-github-issues`, `/delegate`, `/review-requests`, `browser-ux-walkthrough`, the `adr`, `learn`, `twelve-factor-audit` and `delegate-*` agents, the Stop hook |
 
 `scripts/check-portability.py` keeps portable and degrades skills free of
 Claude Code tool names and `~/.claude` paths.
