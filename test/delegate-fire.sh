@@ -72,6 +72,17 @@ printf '%s login=%s\n' "$*" "${DELEGATE_STATUS_LOGIN:-}" >> "$W/status.calls"
 [ -f "$W/status-fails" ] && { echo "gh: HTTP 502" >&2; exit 1; }
 case "$1 $2" in
   "lease status") cat "$W/lease" ;;
+  "lease take")
+    taken=$(($(cat "$W/taken" 2> /dev/null || echo 0) + 1))
+    echo "$taken" > "$W/taken"
+    if [ -f "$W/take-full-after" ] && [ "$taken" -gt "$(cat "$W/take-full-after")" ]; then
+      echo '{"lease":5,"result":"full","holders":["x"],"slots":3}'; exit 5
+    fi
+    echo "{\"lease\":5,\"result\":\"won\",\"id\":$((700 + taken)),\"slot\":$taken,\"slots\":3}" ;;
+  "ticket set")
+    [ -f "$W/ticket-lost-$3" ] && { echo "{\"item\":$3,\"result\":\"lost\",\"id\":null,\"holder\":\"z\"}"; exit 4; }
+    echo "{\"item\":$3,\"result\":\"set\",\"id\":$((900 + $3))}" ;;
+  "lease release"|"ticket release") echo '{"result":"released"}' ;;
   next-action*) cat "$W/action" ;;
   *) echo "unexpected call: $*" >&2; exit 2 ;;
 esac
@@ -207,6 +218,120 @@ echo "$free" > "$W/lease"
 expect "--dry-run exits 0" fire --dry-run
 expect "--dry-run never calls the trigger" test ! -e "$W/curl.calls"
 expect "--dry-run says it would fire" grep -q "delegate-fire: would fire (pick: issue #9 is eligible)" "$W/out"
+
+# ---------------------------------------------------------------- reserve
+
+picks='{"action":"pick","reasons":["issue #9 is eligible"],"issue":9,"picks":[{"number":9,"title":"a"},{"number":11,"title":"b"},{"number":12,"title":"c"}],"finish":[]}'
+picks_land='{"action":"land","reasons":["PR #21 is marked ready","issue #9 is eligible"],"picks":[{"number":9,"title":"a"}],"finish":[21]}'
+land_only='{"action":"land","reasons":["PR #21 is marked ready"],"picks":[],"finish":[21]}'
+idle_picks='{"action":"idle","reasons":["no eligible issue"],"counts":{},"picks":[],"finish":[]}'
+full_picks='{"action":"pick","reasons":["issue #9 is eligible"],"issue":9,"picks":[{"number":9,"title":"a"}],"finish":[]}'
+
+setup
+echo "$picks" > "$W/action"
+echo "$free" > "$W/lease"
+expect "--reserve with two free slots exits 0" fire --reserve
+expect "--reserve asks the gate for picks up to max_chains" grep -q -- '^next-action .*--picks 3' "$W/status.calls"
+expect "--reserve fires once per free slot" test "$(wc -l < "$W/curl.calls")" -eq 2
+expect "--reserve takes a slot in each new session's name" test "$(grep -c '^lease take .*--session [0-9a-f]\{8\}' "$W/status.calls")" -eq 2
+expect "--reserve sets each ticket in the session's name as its chain" \
+  grep -qE '^ticket set 9 .*--session ([0-9a-f]{8}) --chain \1' "$W/status.calls"
+expect "the second slot goes to the second pick" grep -q '^ticket set 11 ' "$W/status.calls"
+refuse "no slot is taken beyond the free ones" grep -q '^ticket set 12 ' "$W/status.calls"
+name="$(sed -n 's/^ticket set 9 .*--session \([0-9a-f]\{8\}\) .*/\1/p' "$W/status.calls")"
+expect "the fire text carries a hand-off line with the session name and ticket" \
+  grep -q "Delegator hand-off from delegate-fire; session name $name; ticket #9 chain $name." "$W/curl.calls"
+expect "the report counts the fires" grep -q "delegate-fire: fired 2: #9 as $name (session_01abc); #11 as" "$W/out"
+
+setup
+echo "$picks" > "$W/action"
+echo "$empty" > "$W/lease"
+touch "$W/ticket-lost-11"
+expect "a pick another chain ticketed first is skipped, not failed" fire --reserve
+expect "the skipped pick's slot is released" grep -q '^lease release 702 ' "$W/status.calls"
+expect "the other picks still fire" test "$(wc -l < "$W/curl.calls")" -eq 2
+refuse "the skipped pick is never fired" grep -q 'ticket #11' "$W/curl.calls"
+
+setup
+echo "$picks" > "$W/action"
+echo "$empty" > "$W/lease"
+echo 1 > "$W/take-full-after"
+expect "a lease filled by another chain stops the picks" fire --reserve
+expect "only the reserved pick fires" test "$(wc -l < "$W/curl.calls")" -eq 1
+
+setup
+echo "$picks_land" > "$W/action"
+echo "$free" > "$W/lease"
+expect "picks and a PR to finish exit 0" fire --reserve
+expect "one more session fires to finish the PR" test "$(wc -l < "$W/curl.calls")" -eq 2
+expect "the finishing session's text names the PRs" grep -q 'Started by delegate-fire to finish PRs #21' "$W/curl.calls"
+refuse "the finishing session reserves nothing" grep -q '^ticket set 21' "$W/status.calls"
+
+setup
+echo "$land_only" > "$W/action"
+echo "$full" > "$W/lease"
+expect "a PR to finish fires on a full lease" fire --reserve
+expect "only the finishing session fires" test "$(wc -l < "$W/curl.calls")" -eq 1
+refuse "a full lease takes no slot" grep -q '^lease take' "$W/status.calls"
+
+setup
+echo "$full_picks" > "$W/action"
+echo "$full" > "$W/lease"
+expect "--reserve on a full lease exits 0" fire --reserve
+expect "--reserve on a full lease never fires" test ! -e "$W/curl.calls"
+expect "--reserve on a full lease names its holders" grep -q "delegate-fire: full (a, b, c)" "$W/out"
+
+setup
+echo "$idle_picks" > "$W/action"
+echo "$free" > "$W/lease"
+expect "--reserve on an idle board exits 0" fire --reserve
+expect "--reserve on an idle board never fires" test ! -e "$W/curl.calls"
+
+setup
+echo "$picks" > "$W/action"
+echo "$free" > "$W/lease"
+expect "--reserve --dry-run exits 0" fire --reserve --dry-run
+expect "--reserve --dry-run never fires" test ! -e "$W/curl.calls"
+refuse "--reserve --dry-run reserves nothing" grep -q '^lease take' "$W/status.calls"
+expect "--reserve --dry-run names the picks" grep -q "would fire a chain for each of #9, #11" "$W/out"
+
+setup
+echo "$picks" > "$W/action"
+echo "$free" > "$W/lease"
+touch "$W/curl-fails"
+refuse "a refused fire under --reserve exits non-zero" fire --reserve
+expect "a refused fire releases its ticket" grep -q '^ticket release 9 909 ' "$W/status.calls"
+expect "a refused fire releases its slot" grep -q '^lease release 701 ' "$W/status.calls"
+expect "every pick is still tried" grep -q '^ticket set 11 ' "$W/status.calls"
+expect "the failures are reported" grep -q "failed 2: #9: the trigger refused the fire" "$W/out"
+
+# ---------------------------------------------------------------- weekdays
+
+weekday() { # settings day: 2026-11-14 is a Saturday, 2026-11-16 a Monday
+  printf '| `weekdays_only` | on |\n' >> "$W/project/.claude/delegation.md"
+}
+
+setup
+weekday
+echo "$pick" > "$W/action"
+echo "$free" > "$W/lease"
+DELEGATE_STATUS_NOW=1794657600 expect "weekdays_only exits 0 on a Saturday" fire
+expect "weekdays_only never fires on a Saturday" test ! -e "$W/curl.calls"
+expect "weekdays_only never asks the gate on a Saturday" test ! -e "$W/status.calls"
+expect "the weekend is reported" grep -q "delegate-fire: weekend" "$W/out"
+DELEGATE_STATUS_NOW=1794657600 expect "--force fires on a Saturday" fire --force
+expect "--force on a Saturday calls the trigger" test "$(wc -l < "$W/curl.calls")" -eq 1
+
+setup
+weekday
+echo "$pick" > "$W/action"
+echo "$free" > "$W/lease"
+DELEGATE_STATUS_NOW=1794830400 expect "weekdays_only fires on a Monday" fire
+expect "weekdays_only on a Monday calls the trigger" test "$(wc -l < "$W/curl.calls")" -eq 1
+
+setup
+printf '| `weekdays_only` | sometimes |\n' >> "$W/project/.claude/delegation.md"
+refuse "a weekdays_only that is not on or off is refused" fire
 
 # ---------------------------------------------------------------- outputs
 
