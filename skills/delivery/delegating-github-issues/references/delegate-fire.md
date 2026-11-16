@@ -33,6 +33,8 @@ With a reserve token (`--reserve`, the `reserve-token` secret below) one run sta
 
 A started session whose issue was closed, unlabelled or taken by the time it ran finds its ticket complete, and Picks as usual with the slot it already holds. A reservation for a session that never starts lapses after `claim_ttl`, the slot and the ticket alike: a ticket marker keeps its 12-hour `ticket_ttl` only once a session has claimed the issue under it. When a fire fails, the gate releases that session's ticket and slot, goes on with the rest, and exits 1.
 
+An issue whose chain was waiting on you is picked the same way once you answer. A 👍 on its derived criteria, or a reply to its question, lapses the old chain's ticket (**Ticket** in `references/run.md`), the issue reads `free`, and the next run reserves it for a new chain. Neither a reaction nor a comment fires the workflow, so the next cron run is the one that notices.
+
 `max_chains` is the only cap on spend: set it to the chains you are willing to pay for at once.
 
 ### Weekdays only

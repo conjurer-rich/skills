@@ -1580,6 +1580,131 @@ on_issue 31 "$(ticket_comment 3190 "$OURS" none "$T_ORPHAN")"
 check "ticket set takes this chain's own orphaned marker back" "$(run ticket set 31)" '.result == "set" and .id == 3190'
 check "the marker taken back is live again" "$(run status)" "$(issue 31) | .state == \"free\" and .ticket_id == 3190"
 
+# The human unblocks a ticketed issue: a 👍 on its derived criteria, or a
+# reply to its question, after the chain's last renewal of its marker. A
+# reaction moves neither updatedAt nor an issue event, and a waiting web
+# session sleeps for hours, so the marker lapses there and then, and the
+# issue reads free for any chain to pick. Here the marker was posted and
+# last renewed at 06:00, and the chain worked the issue (a released claim).
+T_VOTE=2026-10-02T09:00:00Z
+vote() { # n at -> the human's 👍 on the derived criteria (id n*100+2) at <at>
+  jq -nc --arg at "$2" '[{content: "+1", user: {login: "rich"}, created_at: $at}]' > "$FAKE_STATE/reactions-$(($1 * 100 + 2)).json"
+}
+late_reply() { # a human reply at <at>
+  reply_by rich User 'B, please.' | jq -c --arg at "$1" '.created_at = $at | .updated_at = $at'
+}
+wake_case() { # n comments [chain]
+  question_case "$1" 'Fix it.' "$2"
+  on_issue "$1" "$(ticket_comment "$(($1 * 100 + 90))" "${3:-$OTHER}" none "$T_LIVE")"
+  worked "$1"
+  jq --slurpfile a "$FAKE_STATE/issue-$1.json" '. + $a' "$FAKE_STATE/issues.json" > "$FAKE_STATE/issues.tmp" && mv "$FAKE_STATE/issues.tmp" "$FAKE_STATE/issues.json"
+}
+
+use status
+wake_case 91 "[$DERIVED]"
+vote 91 "$T_VOTE"
+out="$(run issue 91)"
+check "a 👍 on a ticketed issue's criteria after the marker's last renewal frees the issue" "$out" \
+  '.state == "free" and .criteria == "confirmed"'
+check "the issue names the ticket the human's answer released" "$out" \
+  ".lapsed_ticket == {\"chain\": \"$OTHER\", \"why\": \"answered\"}"
+out="$(run next-action --max-worktrees 5 --max-open-prs 20 --picks 10)"
+check "the gate lists an issue whose ticket the human's 👍 released" "$out" 'any(.picks[]; .number == 91)'
+
+use status
+wake_case 91 "[$DERIVED]"
+vote 91 2026-10-02T05:00:00Z
+check "a 👍 the chain already saw keeps its ticket" "$(run issue 91)" ".state == \"ticketed\" and .holder == \"$OTHER\""
+use status
+wake_case 91 "[$DERIVED]"
+check "derived criteria without a 👍 keep the ticket" "$(run issue 91)" \
+  ".state == \"ticketed\" and .reason == \"criteria-unconfirmed\" and (has(\"lapsed_ticket\") | not)"
+use status
+wake_case 91 "[$DERIVED]"
+echo '[{"content": "+1", "user": {"login": "someone-else"}, "created_at": "2026-10-02T09:00:00Z"}]' > "$FAKE_STATE/reactions-9102.json"
+check "a 👍 from another login keeps the ticket" "$(run issue 91)" ".state == \"ticketed\""
+
+use status
+wake_case 92 "[$QUESTION, $(late_reply 2026-10-02T09:00:00Z)]"
+out="$(run issue 92)"
+check "a human reply to a ticketed issue's question after the last renewal frees it" "$out" \
+  ".state == \"free\" and .criteria == \"none\" and .lapsed_ticket.why == \"answered\""
+use status
+wake_case 92 "[$QUESTION, $(reply_by rich User 'Not this.' | jq -c '.user.login = "copilot[bot]" | .user.type = "Bot" | .created_at = "2026-10-02T09:00:00Z"')]"
+check "a bot's reply keeps the ticket" "$(run issue 92)" ".state == \"ticketed\" and .reason == \"question-unanswered\""
+use status
+wake_case 92 "[$DERIVED, $QUESTION, $(late_reply 2026-10-02T09:00:00Z)]"
+check "a reply does not free an issue whose derived criteria still wait on a 👍" "$(run issue 92)" \
+  ".state == \"ticketed\" and .reason == \"criteria-unconfirmed\""
+
+# A reservation is not a wait: a fresh marker on an issue the human already
+# confirmed is the new chain's, and holds until its session claims.
+use status
+question_case 93 'Fix it.' "[$DERIVED]"
+vote 93 "$T_VOTE"
+on_issue 93 "$(ticket_comment 9390 "$OTHER" none "$T_FRESH")"
+check "a reserved, unworked marker on a confirmed issue holds it" "$(run issue 93)" ".state == \"ticketed\""
+
+# Sticky: the owner's renewal is refused, and a later chain's claim on the
+# issue never revives the old marker.
+use status
+wake_case 91 "[$DERIVED]" "$OURS"
+vote 91 "$T_VOTE"
+status=0
+out="$(run ticket renew 91 9190 2> /dev/null)" || status=$?
+check "the owner's renewal of a ticket the human answered is refused" "$out" '.result == "lost" and .id == 9190'
+if [ "$status" -eq 4 ]; then pass "renewing an answered ticket exits 4, so a waiting heartbeat wakes"; else fail "renewing an answered ticket exits 4 (got $status)"; fi
+check_not_called "-X PATCH" "an answered ticket is not renewed"
+use status
+wake_case 91 "[$DERIVED]"
+vote 91 "$T_VOTE"
+check "another chain sets a ticket over one the human answered" "$(run ticket set 91 --chain "$NEXT_CHAIN")" '.result == "set" and .id == 900'
+on_issue 91 "$(released_claim 9156 2026-10-02T11:30:00Z)"
+out="$(run issue 91 --chain "$NEXT_CHAIN")"
+check "the new chain holds the issue" "$out" '.state == "free" and .ticket_id == 900'
+check "the answered marker stays lapsed once a later chain works the issue" "$(run issue 91 --chain "$OTHER")" \
+  ".state == \"ticketed\" and .holder == \"$NEXT_CHAIN\""
+# The owner that wakes first takes its ticket back: Work claims, then sets it.
+use status
+wake_case 91 "[$DERIVED]" "$OURS"
+vote 91 "$T_VOTE"
+check "the owner takes back a ticket the human answered" "$(run ticket set 91)" '.result == "set" and .id == 9190'
+check "the ticket taken back is live" "$(run issue 91)" '.state == "free" and .ticket_id == 9190'
+
+# The Watch digest sees a 👍 without a full pass. Only issues carrying the
+# answer label are read, one comment list each: the rollup GitHub puts on
+# every listed comment holds the 👍 count, so no reactions call is made.
+use status
+jq 'map(if .number == 32 then .labels += [{name: "needs-answer"}] else . end)' \
+  "$FAKE_STATE/issues.json" > "$FAKE_STATE/issues.tmp" && mv "$FAKE_STATE/issues.tmp" "$FAKE_STATE/issues.json"
+jq 'map(.reactions = {"+1": 0})' "$FAKE_STATE/comments-32.json" > "$FAKE_STATE/c.tmp" && mv "$FAKE_STATE/c.tmp" "$FAKE_STATE/comments-32.json"
+DIGEST="$FAKE_STATE/digest.json"
+run watch-digest --state "$DIGEST" --record > /dev/null
+check "the baseline holds the 👍 count of a waiting issue's criteria" "$(cat "$DIGEST")" '.digest.issues["32"].votes == 0'
+check "the baseline reads no comments of an issue not waiting on the human" "$(cat "$DIGEST")" '.digest.issues["31"] | has("votes") | not'
+check_not_called "issues/31/comments" "the digest reads no comments of an issue without the answer label"
+check_not_called "reactions" "the digest makes no reactions call"
+check "an unchanged waiting issue is not news" "$(run watch-digest --state "$DIGEST" || true)" '.changed == false'
+jq 'map(.reactions = {"+1": 1})' "$FAKE_STATE/comments-32.json" > "$FAKE_STATE/c.tmp" && mv "$FAKE_STATE/c.tmp" "$FAKE_STATE/comments-32.json"
+out="$(run watch-digest --state "$DIGEST" || true)"
+check "a 👍 on a waiting issue's criteria is news, naming the issue" "$out" \
+  '.changed and .reasons == ["issue #32: new 👍 on its derived criteria"]'
+run watch-digest --state "$DIGEST" --record > /dev/null
+jq 'map(.reactions = {"+1": 0})' "$FAKE_STATE/comments-32.json" > "$FAKE_STATE/c.tmp" && mv "$FAKE_STATE/c.tmp" "$FAKE_STATE/comments-32.json"
+check "a 👍 taken back is not news" "$(run watch-digest --state "$DIGEST" || true)" '.changed == false'
+# A label the full pass adds after recording is not news on its own.
+use status
+DIGEST="$FAKE_STATE/digest.json"
+run watch-digest --state "$DIGEST" --record > /dev/null
+jq 'map(if .number == 32 then .labels += [{name: "needs-answer"}] else . end)' \
+  "$FAKE_STATE/issues.json" > "$FAKE_STATE/issues.tmp" && mv "$FAKE_STATE/issues.tmp" "$FAKE_STATE/issues.json"
+jq 'map(.reactions = {"+1": 0})' "$FAKE_STATE/comments-32.json" > "$FAKE_STATE/c.tmp" && mv "$FAKE_STATE/c.tmp" "$FAKE_STATE/comments-32.json"
+check "an issue newly waiting on the human is not news" "$(run watch-digest --state "$DIGEST" || true)" '.changed == false'
+# A human reply moves the comment count, which the digest already compares.
+jq 'map(if .number == 32 then .comments = 2 else . end)' "$FAKE_STATE/issues.json" > "$FAKE_STATE/issues.tmp" && mv "$FAKE_STATE/issues.tmp" "$FAKE_STATE/issues.json"
+check "a reply on a waiting issue is news, naming the issue" "$(run watch-digest --state "$DIGEST" || true)" \
+  '.changed and .reasons == ["issue #32 changed"]'
+
 # usage
 use status
 for args in "ticket" "ticket bogus 31" "ticket set" "ticket set x" "ticket renew 31" "ticket release 31" "ticket set 31 --pr x" "ticket set 31 --chain x-->" "status --ticket-ttl x"; do
