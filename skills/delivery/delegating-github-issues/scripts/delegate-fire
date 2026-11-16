@@ -23,7 +23,8 @@
 #                  does a finish-only pass;
 #   idle           never fires.
 #
-# With --reserve (GH_TOKEN then writes as the delegator's login) it fills
+# With --reserve (DELEGATE_FIRE_RESERVE_TOKEN writes as the delegator's
+# login; the gate's reads keep GH_TOKEN) it fills
 # every free slot that has work in one run. For each issue `next-action
 # --picks` lists, up to the free slots, it names a new session, takes a
 # lease slot and sets the issue's ticket marker in that name, and fires with
@@ -45,16 +46,19 @@
 # Options:
 #   --repo <owner/repo>   default: the origin remote
 #   --reserve             fill every free slot, reserving each one first;
-#                         GH_TOKEN must write issues as the delegator's login
+#                         DELEGATE_FIRE_RESERVE_TOKEN (else GH_TOKEN) must
+#                         write issues as the delegator's login
 #   --force               fire whatever the gate says (to test the trigger)
 #   --dry-run             decide and report, but never fire; needs no secrets
 #
 # Environment:
 #   DELEGATE_FIRE_URL     the scheduled task's API trigger URL
 #   DELEGATE_FIRE_TOKEN   the trigger's bearer token
-#   GH_TOKEN              read access to the repository's issues and PRs;
-#                         with --reserve, write access to issues as the
-#                         delegator's login
+#   GH_TOKEN              read access to the repository's issues and PRs
+#   DELEGATE_FIRE_RESERVE_TOKEN
+#                         with --reserve, the token the reservations use:
+#                         issues read and write, pull requests read, as the
+#                         delegator's login. Unset, GH_TOKEN does both jobs
 #   DELEGATE_STATUS_LOGIN the login the delegator posts as; required when
 #                         GH_TOKEN is no user (a GitHub Actions token)
 #
@@ -244,6 +248,17 @@ if [ "$DRY_RUN" -eq 1 ]; then
   exit 0
 fi
 
+# The reservations write as the delegator's login. Every other call keeps
+# GH_TOKEN, which in GitHub Actions is the workflow token: it reads PRs,
+# reviews and timelines that a narrowly scoped reserve token cannot.
+reserve() {
+  if [ -n "${DELEGATE_FIRE_RESERVE_TOKEN:-}" ]; then
+    GH_TOKEN="$DELEGATE_FIRE_RESERVE_TOKEN" "$STATUS" "$@"
+  else
+    "$STATUS" "$@"
+  fi
+}
+
 fired=()
 failed=()
 ERR="$(mktemp)"
@@ -251,7 +266,7 @@ trap 'rm -f "$ERR"' EXIT
 
 for n in $picks; do
   name="$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n')"
-  if ! taken="$("$STATUS" lease take "${GATE_ARGS[@]}" --max-chains "$MAX_CHAINS" --session "$name" 2> "$ERR")"; then
+  if ! taken="$(reserve lease take "${GATE_ARGS[@]}" --max-chains "$MAX_CHAINS" --session "$name" 2> "$ERR")"; then
     case "$taken" in
       *'"result":"full"'*) break ;; # Another chain took the last slot.
     esac
@@ -259,8 +274,8 @@ for n in $picks; do
     continue
   fi
   slot="$(printf '%s' "$taken" | jq -r '.id')"
-  if ! ticket="$("$STATUS" ticket set "$n" "${GATE_ARGS[@]}" --session "$name" --chain "$name" 2> "$ERR")"; then
-    "$STATUS" lease release "$slot" "${GATE_ARGS[@]}" --max-chains "$MAX_CHAINS" --session "$name" > /dev/null 2>&1 || true
+  if ! ticket="$(reserve ticket set "$n" "${GATE_ARGS[@]}" --session "$name" --chain "$name" 2> "$ERR")"; then
+    reserve lease release "$slot" "${GATE_ARGS[@]}" --max-chains "$MAX_CHAINS" --session "$name" > /dev/null 2>&1 || true
     case "$ticket" in
       *'"result":"lost"'*) continue ;; # Another chain took the issue first.
     esac
@@ -270,8 +285,8 @@ for n in $picks; do
   marker="$(printf '%s' "$ticket" | jq -r '.id')"
   text="Started by delegate-fire for issue #$n. Delegator hand-off from delegate-fire; session name $name; ticket #$n chain $name."
   if ! answer="$(fire_one "$text")"; then
-    "$STATUS" ticket release "$n" "$marker" "${GATE_ARGS[@]}" --session "$name" --chain "$name" > /dev/null 2>&1 || true
-    "$STATUS" lease release "$slot" "${GATE_ARGS[@]}" --max-chains "$MAX_CHAINS" --session "$name" > /dev/null 2>&1 || true
+    reserve ticket release "$n" "$marker" "${GATE_ARGS[@]}" --session "$name" --chain "$name" > /dev/null 2>&1 || true
+    reserve lease release "$slot" "${GATE_ARGS[@]}" --max-chains "$MAX_CHAINS" --session "$name" > /dev/null 2>&1 || true
     failed+=("#$n: the trigger refused the fire: $answer")
     continue
   fi

@@ -49,7 +49,7 @@ With `weekdays_only` set to `on` in the Parameters table, the gate fires nothing
    - no schedule of its own: the workflow decides when it fires.
 2. **Add an API trigger** to the task and copy its URL and token. The token is shown once.
 3. **Add two repository secrets** in the project, for example `DELEGATOR_FIRE_URL` and `DELEGATOR_FIRE_TOKEN`.
-4. **Add a reserve token**, to fill every free slot in one run: a fine-grained personal access token of the login the delegator posts as, for the project repository alone, with **Issues: read and write**, saved as a third secret such as `DELEGATOR_RESERVE_TOKEN`. Ticket markers and lease claims count only when that login posts them, which the workflow's own token cannot do. Without it a run fires at most once.
+4. **Add a reserve token**, to fill every free slot in one run: a fine-grained personal access token of the login the delegator posts as, for the project repository alone, with **Issues: read and write** and **Pull requests: read-only** (setting a ticket reads the open PRs), saved as a third secret such as `DELEGATOR_RESERVE_TOKEN`. Ticket markers and lease claims count only when that login posts them, which the workflow's own token cannot do. Only the reservations use it; the gate's reads keep the workflow token. Without it a run fires at most once.
 5. **Add the caller workflow** below as `.github/workflows/delegator-fire.yml`. Pin both `uses:` and `craft-ref` to the same craft release tag, so the workflow and the script it runs come from one version.
 6. **Test the trigger.** Run the workflow by hand with `force` on, then check that the fired session takes a lease slot and starts a pass. Run it with `dry-run` on to see what the gate would decide without firing; a dry run needs no fire secrets, and with the reserve token it lists the issues it would start chains for.
 
@@ -110,7 +110,7 @@ The script runs anywhere with `bash`, `git`, `gh`, `jq` and `curl`, from the pro
 DELEGATE_FIRE_URL=… DELEGATE_FIRE_TOKEN=… GH_TOKEN=… DELEGATE_STATUS_LOGIN=… scripts/delegate-fire --dry-run
 ```
 
-Add `--reserve` when `GH_TOKEN` writes issues as the delegator's login.
+Add `--reserve`, with `DELEGATE_FIRE_RESERVE_TOKEN` set to a token that writes issues as the delegator's login; unset, `GH_TOKEN` must do both.
 
 `DELEGATE_STATUS_LOGIN` is the login the delegator posts as. Only markers and claims that login posted count, so the gate must know it. With a personal token it can be left unset: the token's user is the login.
 
@@ -121,7 +121,7 @@ It exits 0 when it fired or had nothing to do, 1 when the gate or the trigger fa
 - **The gate sees no worktrees.** A runner has no delegated worktrees, so the `max_worktrees` budget always reads empty there. `max_open_prs` (drafts awaiting a first look, **Count** in `references/work.md`) and the lease are the limits that hold.
 - **Whose markers count.** The delegator trusts only markers and claims posted by its own login. A workflow token is no user, so the reusable workflow passes the caller repository's owner as that login. When the delegator posts as someone else, for example in a repository an organisation owns, set the `delegator-login` input to that login.
 - **A race ends the fired chain early, without a reserve token.** The gate reads the lease a minute or so before the fired session starts, and another chain may take the last slot in between. The fired chain's `lease take` then prints `full`, and its pass is finish-only: it reviews, lands and syncs what needs it, picks nothing, and ends. The workflow's `concurrency` group stops two runs from overlapping. With a reserve token the gate takes the slot before it fires, so the race cannot happen.
-- **The reserve token is a credential.** It can write every issue and comment in the repository as the delegator's login. Scope it to the one repository and to Issues alone, and give it an expiry.
+- **The reserve token is a credential.** It can write every issue and comment in the repository as the delegator's login. Scope it to the one repository, to Issues and read-only Pull requests, and give it an expiry.
 - **A waiting chain's slot lapses.** In a cloud container a chain waiting on a human loses its heartbeat with the reclaimed container, and its slot lapses after `claim_ttl`. The gate then counts the slot as free and fires a chain for other work. That is intended: `max_chains` caps active chains, and `max_open_prs` caps work waiting on a first look. A chain with a slot acts only on its own ticket's PR, so the waiting PR is answered and landed by the session that owns it when its subscription wakes it, with or without a slot (**Finish-only** in `references/run.md`). When that session is gone, the gate fires one for it: `watch` and `land` name only PRs no session holds a claim on, and fire whatever the lease holds.
 - **Trigger limits.** A scheduled task's API trigger accepts 30 fires per hour. A reserving run fires at most `max_chains` plus one, and reservations stop the next run from firing for the same slots, so the limit binds only when `max_chains` nears 30.
 - **A private craft copy.** The reusable workflow checks out `conjurer-rich/skills` without a token. A fork kept private needs its own checkout step with a token that can read it.
