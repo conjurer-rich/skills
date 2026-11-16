@@ -48,7 +48,7 @@ on:
         description: The trigger's token
         required: false
       reserve-token:
-        description: A token that writes issues as the delegator's login. When set, one run fills every free lease slot, reserving each one first; without it a run fires at most once
+        description: A token of the delegator's login with Issues read and write and Pull requests read. When set, one run fills every free lease slot, reserving each one first; without it a run fires at most once. Only the reservations use it
         required: false
     outputs:
       fired:
@@ -91,7 +91,10 @@ jobs:
       - name: Fire the delegator when it has work
         id: fire
         env:
-          GH_TOKEN: ${{ secrets.reserve-token || github.token }}
+          # Reads use the workflow token; only the reservations use the
+          # reserve token, which writes as the delegator's login.
+          GH_TOKEN: ${{ github.token }}
+          DELEGATE_FIRE_RESERVE_TOKEN: ${{ secrets.reserve-token }}
           RESERVE: ${{ secrets.reserve-token != '' }}
           # The Actions token is no user, so the gate cannot ask GitHub whose
           # markers are the delegator's own.

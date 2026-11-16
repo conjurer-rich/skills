@@ -69,6 +69,7 @@ EOF
   cat > "$W/bin/delegate-status" <<'EOF'
 #!/usr/bin/env bash
 printf '%s login=%s\n' "$*" "${DELEGATE_STATUS_LOGIN:-}" >> "$W/status.calls"
+printf '%s %s token=%s\n' "$1" "$2" "${GH_TOKEN:-}" >> "$W/tokens"
 [ -f "$W/status-fails" ] && { echo "gh: HTTP 502" >&2; exit 1; }
 case "$1 $2" in
   "lease status") cat "$W/lease" ;;
@@ -246,6 +247,22 @@ name="$(sed -n 's/^ticket set 9 .*--session \([0-9a-f]\{8\}\) .*/\1/p' "$W/statu
 expect "the fire text carries a hand-off line with the session name and ticket" \
   grep -q "Delegator hand-off from delegate-fire; session name $name; ticket #9 chain $name." "$W/curl.calls"
 expect "the report counts the fires" grep -q "delegate-fire: fired 2: #9 as $name (session_01abc); #11 as" "$W/out"
+
+setup
+echo "$picks" > "$W/action"
+echo "$free" > "$W/lease"
+GH_TOKEN=workflow DELEGATE_FIRE_RESERVE_TOKEN=reserver fire --reserve
+expect "the gate reads with GH_TOKEN, not the reserve token" grep -q '^next-action .* token=workflow$' "$W/tokens"
+expect "the lease status reads with GH_TOKEN" grep -q '^lease status token=workflow$' "$W/tokens"
+expect "lease take writes with the reserve token" grep -q '^lease take token=reserver$' "$W/tokens"
+expect "ticket set writes with the reserve token" grep -q '^ticket set token=reserver$' "$W/tokens"
+refuse "no read uses the reserve token" grep -qE '^(next-action|lease status).* token=reserver$' "$W/tokens"
+
+setup
+echo "$picks" > "$W/action"
+echo "$free" > "$W/lease"
+GH_TOKEN=only fire --reserve
+expect "without a reserve token, GH_TOKEN reserves too" grep -q '^lease take token=only$' "$W/tokens"
 
 setup
 echo "$picks" > "$W/action"
