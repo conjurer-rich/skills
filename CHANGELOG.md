@@ -1,5 +1,15 @@
 # @conjurer-rich/skills
 
+## 6.3.3
+
+### Patch Changes
+
+- d2ea3bb: `delegating-github-issues`: when the human unblocks an issue another chain holds as its ticket, by a 👍 on its derived criteria or a reply to its question, the ticket now lapses at once and Pick takes the issue. Previously a waiting web session woke only on its 240-minute safety net, and no other chain could take the approved work. `delegate-fire`'s next run reserves the issue for a fresh chain, and the owning chain takes the ticket back if it wakes first. `watch-digest` now reports a 👍 on the derived criteria of any issue carrying `needs-answer` (`issue #N: new 👍 on its derived criteria`), reading one comment list per waiting issue and no reactions.
+- d2ea3bb: `delegating-github-issues`: issues whose blockers form a loop are now named as a cycle. `delegate-status status` gives each member a `cycle` field and lists each loop once under `cycles`, and `next-action` carries them, with an idle reason telling the human to remove one of the links. The members stay `blocked`, so labels and tickets behave as before. Previously Pick reported them as plain `blocked` on every pass, with nothing to say they could never free themselves.
+- d2ea3bb: `delegate-fire` no longer starts a session for a PR another session has claimed. Just before a `watch` or `land` fire, and before the finishing fire under `--reserve`, it re-reads each PR's live claim with the new read-only `delegate-status holder <n>` and leaves out the claimed ones, reporting `claimed (PR #N by <session>)`. A Ready click wakes the PR's own session at the same moment it starts the workflow, so the gate's first read could be stale, and the session it started could only see the claim and stop.
+- d2ea3bb: `delegating-github-issues`: a ticket marker that no delegator session ever claimed the issue under (an orphan, typically reserved by `delegate-fire` for a session that never started) now lapses after `claim_ttl` instead of holding the issue for the 12-hour `ticket_ttl`. The longer lifetime applies once a claim on the issue shows the chain worked it. Status names such an issue's lapsed marker as `lapsed_ticket`, and Pick reads the issue as `free`.
+- d2ea3bb: `delegating-github-issues`: `--sync-labels` now puts `needs-answer` and `blocked` on issues another chain holds as its ticket, by the same rules as any other issue. Only an issue under another session's live claim is left alone. A ticketed issue's status keeps its `reason`, `criteria` and `blocked_by` beside its holder. Previously an issue whose chain was waiting on the human carried neither `in-progress` nor `needs-answer`, so it looked like nobody's work.
+
 ## 6.3.2
 
 ### Patch Changes
