@@ -21,6 +21,8 @@ Without a reserve token the script fires at most once per run:
 | `watch` or `land` | always. These name only a PR no session holds a claim on, and a live chain acts only on its own ticket's PR, so no running chain would reach it. On a full lease the fired session's pass is finish-only |
 | `idle` | never |
 
+Before a `watch` or `land` fire, the gate re-reads the live claim on each PR it would finish with `delegate-status holder <n>`, the rule `claim` decides by, and leaves out the claimed ones. A Ready click both starts the workflow and wakes the PR's own subscribed session, which claims the PR to land it, so the first read can be stale by the time the gate fires. With every such PR claimed it fires nothing and reports `claimed (PR #N by <session>)`, unless a pick has a free slot, when it fires for the pick instead. A session started for a PR another session holds could only see the claim and stop.
+
 It reads the same parameters `/delegate` does from the project's `.claude/delegation.md` (`label`, `rank_labels`, `branch_prefix`, `progress_label`, `max_worktrees`, `max_open_prs`, `land`, `claim_ttl` and `max_chains`), plus `weekdays_only`, and refuses to run without that file.
 
 ### Filling every free slot
@@ -29,9 +31,11 @@ With a reserve token (`--reserve`, the `reserve-token` secret below) one run sta
 
 1. `next-action --picks <max_chains>` lists the eligible issues no chain holds, in rank order, cut to the room left under `max_open_prs`, and the PRs a chain-less session would finish.
 2. For each listed issue, up to the lease's free slots, the gate names a new session with 8 random hex characters, runs `lease take` and `ticket set <n>` in that name, and fires with the hand-off line `Delegator hand-off from delegate-fire; session name <name>; ticket #<n> chain <name>.` The session starts holding its slot and its issue, as a hand-off successor does (`references/handoff.md`), so two sessions started together never race for one issue, and a run a minute later sees both as taken. When another chain took the issue first, the gate releases the slot and skips it; when the lease filled first, it stops.
-3. When `finish` names PRs, it fires one more session, holding nothing, to finish them all. It runs as the one-fire `watch` or `land` fire does.
+3. When `finish` names PRs, it re-reads their claims as the one fire does, then fires one more session, holding nothing, to finish those no session has claimed. It runs as the one-fire `watch` or `land` fire does.
 
-A started session whose issue was closed, unlabelled or taken by the time it ran finds its ticket complete, and Picks as usual with the slot it already holds. A reservation for a session that never starts lapses: the slot after `claim_ttl`, the ticket after `ticket_ttl`. When a fire fails, the gate releases that session's ticket and slot, goes on with the rest, and exits 1.
+A started session whose issue was closed, unlabelled or taken by the time it ran finds its ticket complete, and Picks as usual with the slot it already holds. A reservation for a session that never starts lapses after `claim_ttl`, the slot and the ticket alike: a ticket marker keeps its 12-hour `ticket_ttl` only once a session has claimed the issue under it. When a fire fails, the gate releases that session's ticket and slot, goes on with the rest, and exits 1.
+
+An issue whose chain was waiting on you is picked the same way once you answer. A 👍 on its derived criteria, or a reply to its question, lapses the old chain's ticket (**Ticket** in `references/run.md`), the issue reads `free`, and the next run reserves it for a new chain. Neither a reaction nor a comment fires the workflow, so the next cron run is the one that notices.
 
 `max_chains` is the only cap on spend: set it to the chains you are willing to pay for at once.
 

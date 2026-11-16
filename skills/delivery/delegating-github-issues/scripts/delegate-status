@@ -22,6 +22,7 @@
 #   delegate-status issue       <n>            [options]
 #   delegate-status pr          <n>            [options]
 #   delegate-status claim       <n>            [options]
+#   delegate-status holder      <n>            [options]
 #   delegate-status confirm     <n> <id>       [options]
 #   delegate-status renew       <n> <id>       [options]
 #   delegate-status heartbeat   <n> <id> [--every 900]                 [options]
@@ -71,7 +72,7 @@
 #                            session would finish, as `finish`
 #
 # Run it from the main checkout. status (without --sync-labels), next-action,
-# budget, issue, pr, checks, watch-digest, cost, merged-sizes and lease status
+# budget, issue, pr, holder, checks, watch-digest, cost, merged-sizes and lease status
 # write nothing to GitHub. Exit status:
 # 0 done, 1 a gh or git call failed, 2 usage, 3 refused (the comment is
 # another session's, or a live claim backs the label), 4 another session
@@ -261,17 +262,77 @@ def body_blockers:
         .line // empty),
       ($lines[] | select(test("blocked by"; "i")) | sub("^.*?blocked by"; ""; "i")) ]
   | [.[] | scan("(?<![\\w/&])#([0-9]+)\\b") | .[0] | tonumber] | unique;
-# The live ticket markers among the comments of an issue, lowest id first.
-# Only a marker the login of the delegator posted counts. One with a PR lives
-# while that PR is open; one without lapses $ttl after its last renewal.
-def ticket_markers($login; $now; $ttl; $open):
-  [ .[]
-    | select((.body // "" | contains("<!-- delegator ticket: ")) and ((.user.login // "") == $login))
-    | (.body | capture("<!-- delegator ticket: (?<c>[^ ]+) pr=(?<p>[0-9]+|none) -->")) as $m
-    | {id, chain: $m.c, pr: (if $m.p == "none" then null else ($m.p | tonumber) end), updated_at}
-    | select(if .pr == null then ($now - (.updated_at | fromdateiso8601) < $ttl)
-             else (.pr as $p | $open | index($p)) != null end) ]
+# When the human last unblocked the issue, as epoch seconds, or null while it
+# still waits on them: the 👍 of the delegator login on the latest derived
+# criteria ($confirmed, given at $vote_at), and a human reply to the latest
+# delegator question, whichever is later. An unanswered question, or derived
+# criteria without that 👍, still wait. These are the rules Pick frees an
+# issue by. Read over the comments of an issue.
+def unblock_at($confirmed; $vote_at):
+  . as $c
+  | ([$c | to_entries[] | select(.value.body // "" | startswith("**Question before delegation**")) | .key] | last) as $q
+  | (if $q == null then null else ($c[$q + 1:] | map(select(human_reply)) | first // null) end) as $reply
+  | any($c[]; .body // "" | startswith("**Acceptance criteria (derived by the delegator")) as $derived
+  | if ($q != null and $reply == null) or ($derived and ($confirmed | not)) then null
+    else [ (if $derived and $vote_at != null then ($vote_at | fromdateiso8601) else empty end),
+           (if $reply != null then (($reply.created_at // $reply.updated_at) | fromdateiso8601) else empty end) ]
+         | max end;
+# Every ticket marker among the comments of an issue, lowest id first, each
+# with why it lapsed (`lapse`), or null while it is live. Only a marker the
+# login of the delegator posted counts. One with a PR lives while that PR is
+# open ("closed" once it is not). One without is worked once a delegator
+# claim on the issue was touched after the marker was posted and made before
+# the marker lapsed unworked: Work claims, then sets its ticket, and a
+# reserved session claims after the marker. A worked marker lapses $ttl
+# after its last renewal ("ttl"); an unworked one, an orphan whose session
+# never started, $cttl after it ("unworked"). The second bound keeps a
+# lapsed orphan lapsed when a later chain works the issue. A worked marker
+# also lapses once the human unblocked the issue ($unblock, from unblock_at)
+# after its last renewal ("answered"): its chain is asleep on a wait that is
+# over, so the issue goes back to Pick. Only `ticket set` revives a lapsed
+# marker, for its own chain; a renewal is refused.
+def ticket_marks($login; $now; $ttl; $cttl; $open; $unblock):
+  . as $c
+  | [ $c[] | select((.body // "" | test("<!-- delegator claim(-released)?: ")) and ((.user.login // "") == $login))
+      | {made: ((.created_at // .updated_at) | fromdateiso8601), touched: (.updated_at | fromdateiso8601)} ] as $claims
+  | [ $c[]
+      | select((.body // "" | contains("<!-- delegator ticket: ")) and ((.user.login // "") == $login))
+      | (.body | capture("<!-- delegator ticket: (?<c>[^ ]+) pr=(?<p>[0-9]+|none) -->")) as $m
+      | {id, chain: $m.c, pr: (if $m.p == "none" then null else ($m.p | tonumber) end),
+         posted: ((.created_at // .updated_at) | fromdateiso8601), renewed: (.updated_at | fromdateiso8601)}
+      | . as $t
+      | (any($claims[]; .touched > $t.posted and .made < $t.renewed + $cttl)) as $worked
+      | {id, chain, pr,
+         lapse: (if .pr != null then (if (.pr as $p | $open | index($p)) != null then null else "closed" end)
+                 elif $worked and $now - .renewed >= $ttl then "ttl"
+                 elif $worked and $unblock != null and $unblock > .renewed then "answered"
+                 elif $worked then null
+                 elif $now - .renewed < $cttl then null
+                 else "unworked" end)} ]
   | sort_by(.id);
+# The live ticket markers, lowest id first.
+def ticket_markers($login; $now; $ttl; $cttl; $open; $unblock):
+  [ticket_marks($login; $now; $ttl; $cttl; $open; $unblock)[] | select(.lapse == null) | del(.lapse)];
+# Whether the comments hold a PR-less ticket marker the login posted.
+def prless_marker($login):
+  any(.[]; (.body // "" | test("<!-- delegator ticket: [^ ]+ pr=none -->")) and ((.user.login // "") == $login));
+# The cycles among classified issues: each group of two or more issues whose
+# open blockers lead from every member to every other, as sorted numbers,
+# lowest first. Only blockers that are themselves classified issues are
+# followed: Pick never reads the blockers of an issue without the label.
+def blocker_cycles:
+  ([.[] | select((.blocked_by // []) != []) | {key: (.number | tostring), value: [.blocked_by[] | numbers]}] | from_entries) as $g
+  | def reach($n): {seen: [], todo: ($g[$n | tostring] // [])}
+      | until(.todo == []; .todo[0] as $x | .todo |= .[1:]
+          | if (.seen | index($x)) != null then . else .seen += [$x] | .todo += ($g[$x | tostring] // []) end)
+      | .seen;
+    [ $g | keys[] | tonumber as $n | reach($n) as $r | select($r | index($n))
+      | [$n] + [$r[] | select(. != $n and (reach(.) | index($n)) != null)] | unique ]
+    | unique | map(select(length > 1));
+# The one line that tells the human how to free a cycle.
+def cycle_line:
+  if length == 2 then "issues #\(.[0]) and #\(.[1]) block each other: remove one of the links"
+  else "issues \(.[:-1] | map("#\(.)") | join(", ")) and #\(.[-1]) block each other in a loop: remove one of the links" end;
 def issue_norm:
   { number, title, labels: [.labels[]? | {name}], createdAt: .created_at,
     updatedAt: .updated_at, body, state: (.state | ascii_upcase) };
@@ -451,6 +512,17 @@ cmd_claim() {
   gh_json api -X POST "repos/$REPO/issues/$n/labels" -f "labels[]=$PROGRESS_LABEL" > /dev/null
   jq -nc --argjson n "$n" --argjson id "$mine" --argjson pr "$(open_pr_for "$n")" \
     '{item: $n, result: "won", id: $id, open_pr: $pr}'
+}
+
+# The live claim on item <n>, by the rule claim decides with, as {item,
+# holder, id}; holder and id are null when no claim is live. Read-only and
+# needs no session: a spawner re-reads it just before it starts a session
+# for the item, so it never starts one another session has since claimed.
+cmd_holder() {
+  need_args 2
+  local n="${POSITIONAL[1]}"
+  jq -nc --argjson n "$n" --argjson w "$(winner_of "$(comments_of "$n")")" \
+    '{item: $n, holder: ($w.session // null), id: ($w.id // null)}'
 }
 
 # Prints live or lost for claim <id> on item <n>. An item has one holder; the
@@ -762,17 +834,37 @@ cmd_lease() {
 # human releases a ticket by deleting the marker. Two chains that set a ticket
 # at once both re-read, and the lower id keeps it.
 
+# The 👍 of <login> on the latest derived-criteria comment among <comments>,
+# as {id, confirmed, at}, reading that comment's reactions. With "prless" as
+# the third argument it reads them only when a PR-less ticket marker of the
+# login stands on the issue, and otherwise reports none.
+criteria_vote() {
+  local comments="$1" login="$2" derived reactions
+  derived="$(printf '%s' "$comments" | jq '[.[] | select(.body // "" | startswith("**Acceptance criteria (derived by the delegator"))] | last | .id // null')"
+  if [ "$derived" = null ] || { [ "${3:-}" = prless ] \
+    && ! printf '%s' "$comments" | jq -e --arg l "$login" "$JQ_DEFS"'prless_marker($l)' > /dev/null; }; then
+    jq -nc --argjson d "$derived" '{id: $d, confirmed: false, at: null}'
+    return
+  fi
+  reactions="$(list_of "repos/$REPO/issues/comments/$derived/reactions")"
+  printf '%s' "$reactions" | jq -c --arg l "$login" --argjson d "$derived" \
+    '[.[] | select(.content == "+1" and .user.login == $l)] | first // null
+     | {id: $d, confirmed: (. != null), at: (if . == null then null else .created_at end)}'
+}
+
 TICKET_COMMENTS=""
 TICKET_LIVE="[]"
 # Reads issue <n>'s comments into $TICKET_COMMENTS and its live markers into
 # $TICKET_LIVE. Call it directly, not in $(...).
 read_tickets() {
-  local login open
+  local login open vote
   login="$(delegator_login)"
   open="$(open_prs | jq -c 'map(.number)')"
   TICKET_COMMENTS="$(comments_of "$1")"
+  vote="$(criteria_vote "$TICKET_COMMENTS" "$login" prless)"
   TICKET_LIVE="$(printf '%s' "$TICKET_COMMENTS" | jq -c --arg l "$login" --argjson open "$open" \
-    --argjson now "$NOW" --argjson ttl "$TICKET_TTL" "$JQ_DEFS"'ticket_markers($l; $now; $ttl; $open)')"
+    --argjson now "$NOW" --argjson ttl "$TICKET_TTL" --argjson cttl "$CLAIM_TTL" --argjson v "$vote" "$JQ_DEFS"'
+    unblock_at($v.confirmed; $v.at) as $u | ticket_markers($l; $now; $ttl; $cttl; $open; $u)')"
 }
 
 # Prints the first live marker of another chain, or null.
@@ -791,7 +883,7 @@ ticket_body() { # pr or empty, renewed or empty
   local pr="${1:-none}" first
   first="Ticket held by delegator chain \`$CHAIN\`: Pick skips this issue until the chain's PR merges or closes, or the human deletes this comment"
   if [ "$pr" = none ]; then
-    first="$first. With no PR it lapses $(ttl_text "$TICKET_TTL") after its last renewal"
+    first="$first. With no PR it lapses $(ttl_text "$TICKET_TTL") after its last renewal, or $(ttl_text) if no delegator session claims the issue"
   fi
   [ -n "${2:-}" ] && first="$first; renewed $2"
   printf '%s\n<!-- delegator ticket: %s pr=%s -->' "$first" "$CHAIN" "$pr"
@@ -1024,28 +1116,35 @@ blockers_of() {
 }
 
 # Classify one issue from its comments and its blockers (blockers_of): held,
-# claimed, blocked, or free / waiting on the human, with how its acceptance
-# criteria stand. A live claim comes first; then an open blocker, so an issue
+# claimed, ticketed, blocked, or free / waiting on the human, with how its
+# acceptance criteria stand. A ticketed issue keeps those (a reason, criteria
+# or blockers) beside its holder, so its derived labels follow the same rules
+# as any other issue's. A live claim comes first; then an open blocker, so an issue
 # stuck on a dependency is not also asking the human for anything; then an
 # open delegator question: the delegator is waiting on its answer whatever
 # criteria the body or a derived comment holds. Only a human comment after
 # the question answers it; an edit to the body does not (REST exposes no
 # time for the last body edit).
 issue_from_comments() {
-  local issue="$1" comments="$2" login="$3" blockers="${4:-[]}" open="${5:-[]}" winner derived reactions confirmed=false
+  local issue="$1" comments="$2" login="$3" blockers="${4:-[]}" open="${5:-[]}" winner derived vote
   winner="$(winner_of "$comments")"
   derived="$(printf '%s' "$comments" | jq '[.[] | select(.body // "" | startswith("**Acceptance criteria (derived by the delegator"))] | last | .id // null')"
+  # The 👍 is read when the criteria decide the state, and on a ticketed
+  # issue, where it also decides whether the human has released the ticket.
   if [ "$derived" != null ] \
     && ! printf '%s' "$blockers" | jq -e 'any(.[]; .open)' > /dev/null \
     && ! printf '%s' "$issue" | jq -e "$JQ_DEFS"'body_criteria' > /dev/null; then
-    reactions="$(list_of "repos/$REPO/issues/comments/$derived/reactions")"
-    confirmed="$(printf '%s' "$reactions" | jq --arg l "$login" 'any(.[]; .content == "+1" and .user.login == $l)')"
+    vote="$(criteria_vote "$comments" "$login")"
+  else
+    vote="$(criteria_vote "$comments" "$login" prless)"
   fi
   jq -nc --slurpfile i "$(json_file "$issue")" --slurpfile c "$(json_file "$comments")" --argjson w "$winner" --arg s "$SESSION" \
-    --arg pl "$PROGRESS_LABEL" --argjson derived "$derived" --argjson confirmed "$confirmed" --argjson b "$blockers" \
-    --arg login "$login" --argjson open "$open" --argjson now "$NOW" --argjson tttl "$TICKET_TTL" --arg chain "$CHAIN" "$JQ_DEFS"'
-    $i[0] as $i | $c[0] as $c
-    | ($c | ticket_markers($login; $now; $tttl; $open) | first // null) as $tk
+    --arg pl "$PROGRESS_LABEL" --argjson derived "$derived" --argjson v "$vote" --argjson b "$blockers" \
+    --arg login "$login" --argjson open "$open" --argjson now "$NOW" --argjson tttl "$TICKET_TTL" --argjson cttl "$CLAIM_TTL" \
+    --arg chain "$CHAIN" "$JQ_DEFS"'
+    $i[0] as $i | $c[0] as $c | $v.confirmed as $confirmed
+    | ($c | ticket_marks($login; $now; $tttl; $cttl; $open; ($c | unblock_at($v.confirmed; $v.at)))) as $marks
+    | ([$marks[] | select(.lapse == null)] | first // null) as $tk
     | [$b[] | select(.open) | .ref] as $open_blockers
     | ($i | body_criteria) as $in_body
     | ([$c | to_entries[] | select(.value.body // "" | startswith("**Question before delegation**")) | .key] | last) as $q
@@ -1060,10 +1159,13 @@ issue_from_comments() {
        elif $derived != null then {state: "waiting-on-human", reason: "criteria-unconfirmed"}
        else {state: "free", criteria: "none"} end) as $criteria
     | . + if $w != null and $w.session != $s then {state: "claimed", holder: $w.session}
-          elif $tk != null and $tk.chain != $chain then {state: "ticketed", holder: $tk.chain}
+          elif $tk != null and $tk.chain != $chain then $criteria + {state: "ticketed", holder: $tk.chain}
           elif $w != null then $criteria + {state: "held"}
           else $criteria end
-    | if $tk != null and $tk.chain == $chain then .ticket_id = $tk.id else . end'
+    | if $tk != null and $tk.chain == $chain then .ticket_id = $tk.id else . end
+    | if $tk != null then .
+      else ([$marks[] | select(.pr == null and (.lapse == "unworked" or .lapse == "answered"))] | last) as $gone
+        | if $gone == null then . else .lapsed_ticket = {chain: $gone.chain, why: $gone.lapse} end end'
 }
 
 # Every review thread of a PR as [{resolved, path, line, comment_ids}], oldest
@@ -1230,8 +1332,8 @@ cmd_status() {
       # ticket whose PR is open, and never picks while that PR waits.
       result="$(comments_of "$number" | jq -c --argjson i "$issue" --argjson pr "$pr" --arg l "$login" \
         --argjson open "$(printf '%s' "$prs" | jq -c 'map(.number)')" --argjson now "$NOW" --argjson ttl "$TICKET_TTL" \
-        --arg chain "$CHAIN" "$JQ_DEFS"'
-        (ticket_markers($l; $now; $ttl; $open) | map(select(.chain == $chain)) | first // null) as $tk
+        --argjson cttl "$CLAIM_TTL" --arg chain "$CHAIN" "$JQ_DEFS"'
+        (ticket_markers($l; $now; $ttl; $cttl; $open; null) | map(select(.chain == $chain)) | first // null) as $tk
         | {number: $i.number, title: $i.title, state: "delegated", pr: $pr, stale_label: false}
         + if $tk == null then {} else {ticket_id: $tk.id} end')"
     else
@@ -1291,7 +1393,10 @@ cmd_status() {
   fi
 
   jq -nc --argjson w "$worktrees" --argjson b "$budget" --argjson i "$results" --argjson p "$pr_results" --argjson s "$synced" \
-    '{worktrees: $w, budget: $b, issues: $i, prs: $p,
+    "$JQ_DEFS"'($i | blocker_cycles) as $cycles
+    | ($i | map(.number as $n | (first($cycles[] | select(index($n) != null)) // null) as $cy
+                | if $cy == null then . else .cycle = $cy end)) as $i
+    | {worktrees: $w, budget: $b, issues: $i, prs: $p, cycles: $cycles,
       pick: ((first($i[] | select(.state == "free" or (.state == "held" and .criteria != null and .reason == null)))
               | {number, title}) // null),
       counts: ($i | group_by(.state) | map({(.[0].state): length}) | add // {}),
@@ -1318,7 +1423,9 @@ blockers_unmoved() {
 # awaiting the human's review, and none anywhere else. All are recomputed
 # from this pass's classification and never read to decide a state, so a
 # label a human adds or removes by hand is put right here. An item another
-# session holds, or another chain holds as its ticket, is left to that one.
+# session holds a live claim on is left to that session, whose own pass reads
+# it as held and syncs it; an issue another chain holds as its ticket is not,
+# so every issue waiting on the human carries the label, whoever holds it.
 # Sets $SYNCED to
 # {<label>: {added: [n], removed: [n]}}; call it directly, not in $(...).
 SYNCED="{}"
@@ -1327,7 +1434,7 @@ sync_labels() {
   ops="$(jq -nc --argjson i "$issues" --argjson r "$results" --argjson p "$prs" --argjson pr "$pr_results" \
       --arg a "$ANSWER_LABEL" --arg bl "$BLOCKED_LABEL" --arg rl "$REVIEW_LABEL" '
     ($i + $p | map({key: (.number | tostring), value: [.labels[].name]}) | from_entries) as $has
-    | [ ( $r[] | select(.state != "claimed" and .state != "ticketed") | .number as $n | ($has[$n | tostring] // []) as $l
+    | [ ( $r[] | select(.state != "claimed") | .number as $n | ($has[$n | tostring] // []) as $l
           | ({label: $a, want: (.reason != null)}, {label: $bl, want: ((.blocked_by // []) != [])})
           | {number: $n, label, want, l: $l} ),
         ( $pr[] | select(.holder == null) | .number as $n
@@ -1381,8 +1488,9 @@ next_action_of() {
   if [ -n "$TICKET" ]; then
     ticket="$(jq -nc --argjson i "$TICKET" --arg p "$PR" '{issue: $i, pr: (if $p == "" then null else ($p | tonumber) end)}')"
   fi
-  jq -c --argjson ticket "$ticket" --argjson picks "${PICKS:-null}" '
-    def budget_reason:
+  jq -c --argjson ticket "$ticket" --argjson picks "${PICKS:-null}" "$JQ_DEFS"'
+    (.cycles // []) as $cycles
+    | def budget_reason:
       "budget at limit: \(.budget.worktrees)/\(.budget.max_worktrees) worktrees, \(.budget.open_prs)/\(.budget.max_open_prs) open PRs awaiting a first look";
     def for_ticket($t):
       (first(.issues[] | select(.number == $t.issue)) // null) as $i
@@ -1419,7 +1527,8 @@ next_action_of() {
       elif ($pick | length) > 0 then {action: "pick", reasons: $pick, issue: .pick.number}
       else {action: "idle",
             reasons: (if .pick != null and .budget.at_limit then [budget_reason] else ["no eligible issue"] end
-                      + [.prs[] | select(.class == "claimed") | "PR #\(.number) is claimed by \(.holder)"]),
+                      + [.prs[] | select(.class == "claimed") | "PR #\(.number) is claimed by \(.holder)"]
+                      + [$cycles[] | cycle_line]),
             counts: .counts}
       end
       + (if $t == null then {} else {ticket: null} end)
@@ -1429,7 +1538,8 @@ next_action_of() {
                 else [.issues[] | select(.state == "free" or (.state == "held" and .criteria != null and .reason == null))
                       | {number, title}][:([$picks, .budget.max_open_prs - .budget.open_prs] | min | [., 0] | max)] end),
         finish: [.prs[] | select(.class == "needs-review" or .class == "conflicted" or .class == "ready") | .number]}
-      end)'
+      end)
+    + (if $cycles == [] then {} else {cycles: $cycles} end)'
 }
 
 cmd_next_action() {
@@ -1674,8 +1784,12 @@ cmd_checks() {
 # comment and review that needs an answer (so the delegator's own replies and
 # claims never count as news), and each eligible issue's comment count, labels
 # and body length (so a renewed claim, an edit to a comment, does not either).
+# An issue carrying the answer label waits on the human, ticketed or not, and
+# a 👍 on its derived criteria moves nothing above: for those issues alone it
+# reads the comments and keeps the 👍 count GitHub rolls up on the latest
+# derived-criteria comment, as `votes`. No reactions call is made.
 digest_json() {
-  local prs_only="$1" prs="{}" issues="{}" n pull marks
+  local prs_only="$1" prs="{}" issues="{}" n pull marks votes list
   while IFS= read -r n; do
     [ -n "$n" ] || continue
     pull="$(gh_json api "repos/$REPO/pulls/$n")"
@@ -1686,10 +1800,17 @@ digest_json() {
                     comment: $m[0], review_comment: $m[1], review: $m[2]}}' <<< "$prs")"
   done < <(open_prs | jq -r --arg p "$PREFIX" '.[] | select(.headRefName | startswith($p)) | .number')
   if [ "$prs_only" -eq 0 ]; then
-    issues="$(list_of "repos/$REPO/issues?state=open&per_page=100&labels=$(jq -nr --arg l "$LABEL" '$l | @uri')" \
-      | jq -c --arg a "$ANSWER_LABEL" --arg bl "$BLOCKED_LABEL" 'map(select(has("pull_request") | not)
-                   | {key: (.number | tostring), value: {comments: (.comments // 0), labels: ([.labels[]?.name] - [$a, $bl] | sort), body: (.body // "" | length)}})
-               | from_entries')"
+    list="$(list_of "repos/$REPO/issues?state=open&per_page=100&labels=$(jq -nr --arg l "$LABEL" '$l | @uri')" \
+      | jq -c 'map(select(has("pull_request") | not))')"
+    issues="$(printf '%s' "$list" | jq -c --arg a "$ANSWER_LABEL" --arg bl "$BLOCKED_LABEL" '
+      map({key: (.number | tostring), value: {comments: (.comments // 0), labels: ([.labels[]?.name] - [$a, $bl] | sort), body: (.body // "" | length)}})
+      | from_entries')"
+    while IFS= read -r n; do
+      [ -n "$n" ] || continue
+      votes="$(comments_of "$n" | jq '[.[] | select(.body // "" | startswith("**Acceptance criteria (derived by the delegator"))] | last
+        | if . == null then null else (.reactions["+1"] // 0) end')"
+      [ "$votes" = null ] || issues="$(jq -c --arg n "$n" --argjson v "$votes" '.[$n].votes = $v' <<< "$issues")"
+    done < <(printf '%s' "$list" | jq -r --arg a "$ANSWER_LABEL" '.[] | select(any(.labels[]?; .name == $a)) | .number')
   fi
   jq -nc --argjson p "$prs" --argjson i "$issues" '{prs: $p, issues: $i}'
 }
@@ -1708,8 +1829,9 @@ digest_reasons() {
              then "PR #\($k): new comment or review" else empty end) ),
         ( ($b.issues | keys) - ($a.issues | keys) | .[] | "issue #\(.) is eligible" ),
         ( ($a.issues | keys) - ($b.issues | keys) | .[] | "issue #\(.) left the label" ),
-        ( $b.issues | to_entries[] | .key as $k | select(($a.issues[$k] // null) != null and $a.issues[$k] != .value)
-          | "issue #\($k) changed" ) ]'
+        ( $b.issues | to_entries[] | .key as $k | select(($a.issues[$k] // null) != null)
+          | (if ($a.issues[$k] | del(.votes)) != (.value | del(.votes)) then "issue #\($k) changed" else empty end),
+            (if (.value.votes // 0) > ($a.issues[$k].votes // 0) then "issue #\($k): new 👍 on its derived criteria" else empty end) ) ]'
 }
 
 # The cheap first step of a /loop pass. Without --record it compares GitHub
@@ -1854,6 +1976,7 @@ case "$COMMAND" in
   issue) cmd_issue ;;
   pr) cmd_pr ;;
   claim) cmd_claim ;;
+  holder) cmd_holder ;;
   confirm) cmd_confirm ;;
   renew) cmd_renew ;;
   heartbeat) cmd_heartbeat ;;

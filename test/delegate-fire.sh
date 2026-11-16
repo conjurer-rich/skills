@@ -84,6 +84,13 @@ case "$1 $2" in
     [ -f "$W/ticket-lost-$3" ] && { echo "{\"item\":$3,\"result\":\"lost\",\"id\":null,\"holder\":\"z\"}"; exit 4; }
     echo "{\"item\":$3,\"result\":\"set\",\"id\":$((900 + $3))}" ;;
   "lease release"|"ticket release") echo '{"result":"released"}' ;;
+  holder*)
+    [ -f "$W/holder-fails" ] && { echo "gh: HTTP 502" >&2; exit 1; }
+    if [ -f "$W/holder-$2" ]; then
+      echo "{\"item\":$2,\"holder\":\"$(cat "$W/holder-$2")\",\"id\":5}"
+    else
+      echo "{\"item\":$2,\"holder\":null,\"id\":null}"
+    fi ;;
   next-action*) cat "$W/action" ;;
   *) echo "unexpected call: $*" >&2; exit 2 ;;
 esac
@@ -294,6 +301,71 @@ echo "$full" > "$W/lease"
 expect "a PR to finish fires on a full lease" fire --reserve
 expect "only the finishing session fires" test "$(wc -l < "$W/curl.calls")" -eq 1
 refuse "a full lease takes no slot" grep -q '^lease take' "$W/status.calls"
+
+# A PR another session claimed between the gate's read and the fire (a
+# Ready click wakes the PR's own subscribed session as it starts this
+# workflow) is never fired for: the gate re-reads each PR's claim just
+# before it fires, by the rule `delegate-status claim` uses.
+land_claimed='{"action":"land","reasons":["PR #21 is marked ready"],"picks":[],"finish":[21]}'
+watch_two='{"action":"watch","reasons":["PR #20 needs review","PR #21 is marked ready"],"picks":[],"finish":[20,21]}'
+land_or_pick='{"action":"land","reasons":["PR #21 is marked ready","issue #9 is eligible"],"picks":[{"number":9,"title":"a"}],"finish":[21]}'
+
+setup
+echo "$land_claimed" > "$W/action"
+echo "$free" > "$W/lease"
+echo e5f6a7b8 > "$W/holder-21"
+expect "a claimed PR to land exits 0" fire
+expect "a claimed PR to land never fires" test ! -e "$W/curl.calls"
+expect "the gate re-reads the PR's claim" grep -q '^holder 21 ' "$W/status.calls"
+expect "the report names the PR and its holder" grep -q "delegate-fire: claimed (PR #21 by e5f6a7b8)" "$W/out"
+expect "one fire asks the gate for the PRs it would finish" grep -q -- '^next-action .*--picks 3' "$W/status.calls"
+
+setup
+echo "$watch_two" > "$W/action"
+echo "$free" > "$W/lease"
+echo e5f6a7b8 > "$W/holder-21"
+expect "one claimed PR of two still fires" fire
+expect "it fires once" test "$(wc -l < "$W/curl.calls")" -eq 1
+expect "the fire skips the claimed PR" grep -q 'skipped PR #21, claimed by e5f6a7b8' "$W/curl.calls"
+
+setup
+echo "$land_or_pick" > "$W/action"
+echo "$free" > "$W/lease"
+echo e5f6a7b8 > "$W/holder-21"
+expect "a claimed PR with a pick and a free slot fires for the pick" fire
+expect "the pick fires once" test "$(wc -l < "$W/curl.calls")" -eq 1
+expect "the fire is a pick" grep -q '"text":"Started by delegate-fire. pick: issue #9 is eligible' "$W/curl.calls"
+
+setup
+echo "$land_claimed" > "$W/action"
+echo "$free" > "$W/lease"
+echo e5f6a7b8 > "$W/holder-21"
+expect "--force fires whatever the claim" fire --force
+expect "--force fires once" test "$(wc -l < "$W/curl.calls")" -eq 1
+
+setup
+echo "$land_claimed" > "$W/action"
+echo "$free" > "$W/lease"
+touch "$W/holder-fails"
+refuse "a failed claim read exits non-zero" fire
+expect "a failed claim read never fires" test ! -e "$W/curl.calls"
+
+setup
+echo "$picks_land" > "$W/action"
+echo "$free" > "$W/lease"
+echo e5f6a7b8 > "$W/holder-21"
+expect "--reserve with a claimed PR to finish exits 0" fire --reserve
+expect "--reserve fires the pick, not the claimed PR" test "$(wc -l < "$W/curl.calls")" -eq 1
+refuse "--reserve starts no session to finish a claimed PR" grep -q 'to finish PRs' "$W/curl.calls"
+expect "--reserve re-reads the claim just before the finishing fire" grep -q '^holder 21 ' "$W/status.calls"
+
+setup
+echo "$land_only" > "$W/action"
+echo "$full" > "$W/lease"
+echo e5f6a7b8 > "$W/holder-21"
+expect "--reserve with only a claimed PR exits 0" fire --reserve
+expect "--reserve with only a claimed PR never fires" test ! -e "$W/curl.calls"
+expect "--reserve reports the claimed PR" grep -q "claimed (PR #21 by e5f6a7b8)" "$W/out"
 
 setup
 echo "$full_picks" > "$W/action"

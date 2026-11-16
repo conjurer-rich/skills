@@ -162,6 +162,17 @@ use claims
 out="$(run claim 12)"
 check "a won claim names an open delegated PR for the issue" "$out" '.result == "won" and .open_pr == 40'
 
+# holder: the live claim on an item, read-only, by the rule claim uses. The
+# gate re-reads it just before it fires, so it never starts a session for a
+# PR another session has claimed since its first read.
+use claims
+check "holder names the session with the live claim" \
+  "$(PATH="$FIXTURES/bin:$PATH" DELEGATE_STATUS_NOW="$NOW" "$STATUS" holder 7 --repo acme/widgets --claim-ttl 14400)" \
+  ".item == 7 and .holder == \"$OTHER\" and .id == 100"
+check "a lapsed claim is no holder" "$(run holder 8)" '.item == 8 and .holder == null and .id == null'
+check "holder reads the claim our session holds too" "$(run holder 9)" ".holder == \"$OURS\""
+if grep -E -- '-X (POST|PATCH|DELETE)' "$FAKE_STATE/calls.log" > /dev/null; then fail "holder writes nothing"; else pass "holder writes nothing"; fi
+
 # ---------------------------------------------------------------- confirm and renew
 
 use claims
@@ -918,6 +929,45 @@ check_called "issues/71/comments" "a blocker closing re-checks the issue though 
 check "the issue frees itself once its blocker closes" "$out" "$(issue 71) | .state == \"free\" and .criteria == \"body\""
 check "a freed blocked issue is picked in its turn" "$out" '.pick.number == 71'
 
+# Blocker cycles: issues whose blockers form a loop never free themselves.
+# Status names each cycle once; its members stay blocked.
+add_issue() { # n
+  jq --slurpfile a "$FAKE_STATE/issue-$1.json" '. + $a' "$FAKE_STATE/issues.json" > "$FAKE_STATE/issues.tmp" && mv "$FAKE_STATE/issues.tmp" "$FAKE_STATE/issues.json"
+}
+use status
+question_case 85 'Fix it.\n\nBlocked by #86' '[]'
+question_case 86 'Fix it.\n\n## Dependencies\n\n- #85\n' '[]'
+question_case 87 'Fix it.\n\nBlocked by #85 and #86' '[]'
+for n in 85 86 87; do add_issue "$n"; done
+CACHE="$FAKE_STATE/pick-cache.json"
+out="$(run status --cache "$CACHE")"
+check "two issues blocking each other are named as a cycle" "$out" \
+  "$(issue 85) | .state == \"blocked\" and .blocked_by == [86] and .cycle == [85, 86]"
+check "each member of the cycle names it" "$out" "$(issue 86) | .cycle == [85, 86]"
+check "an issue blocked by a cycle is plain blocked" "$out" "$(issue 87) | .state == \"blocked\" and (has(\"cycle\") | not)"
+check "status lists each cycle once" "$out" '.cycles == [[85, 86]]'
+out="$(run status --cache "$CACHE")"
+check "a cycle is named from cached skips too" "$out" '.cycles == [[85, 86]] and ([.issues[] | select(.number == 85) | .cached] == [true])'
+use status
+question_case 85 'Fix it.\n\nBlocked by #86' '[]'
+question_case 86 'Fix it.\n\nBlocked by #87' '[]'
+question_case 87 'Fix it.\n\nBlocked by #85' '[]'
+for n in 85 86 87; do add_issue "$n"; done
+check "a longer loop is one cycle" "$(run status)" '.cycles == [[85, 86, 87]]'
+use status
+check "no blockers, no cycles" "$(run status)" '.cycles == []'
+
+cycle_status='{"prs": [], "issues": [{"number": 85, "state": "blocked", "blocked_by": [86], "cycle": [85, 86]}, {"number": 86, "state": "blocked", "blocked_by": [85], "cycle": [85, 86]}, {"number": 1, "state": "blocked", "blocked_by": [2], "cycle": [1, 2, 3]}],
+  "cycles": [[1, 2, 3], [85, 86]], "pick": null, "counts": {"blocked": 3},
+  "budget": {"worktrees": 0, "max_worktrees": 1, "open_prs": 0, "max_open_prs": 6, "at_limit": false}}'
+printf '%s' "$cycle_status" > "$TMP/status.json"
+out="$(run next-action --from "$TMP/status.json")"
+check "next-action carries the cycles" "$out" '.cycles == [[1, 2, 3], [85, 86]]'
+check "an idle gate tells the human to break each cycle, once" "$out" \
+  '.action == "idle" and (.reasons | index("issues #85 and #86 block each other: remove one of the links")) and (.reasons | index("issues #1, #2 and #3 block each other in a loop: remove one of the links"))'
+check "next-action without cycles carries no cycles key" \
+  "$(printf '%s' "$cycle_status" | jq '.cycles = []' > "$TMP/status.json"; run next-action --from "$TMP/status.json")" 'has("cycles") | not'
+
 # ---------------------------------------------------------------- derived labels
 
 # With --sync-labels, status recomputes needs-answer (waiting on the human)
@@ -1271,11 +1321,28 @@ on_issue() { # n, comment json objects -> appended to comments-n.json
 }
 T_LIVE=2026-10-02T06:00:00Z     # 6 hours old
 T_LAPSED=2026-10-01T23:00:00Z   # 13 hours old
+T_ORPHAN=2026-10-02T07:00:00Z   # 5 hours old: past the 4-hour claim_ttl of these tests
+T_FRESH=2026-10-02T11:00:00Z    # 1 hour old
 TICKET_TTL=43200
 NEXT_CHAIN=f0e1d2c3
+WORKER=0a0b0c0d
+
+# A released claim of a delegator session, made at <at> and rewritten a
+# minute later. Posted beside a marker made at <at>, it shows the chain
+# worked the issue after setting its ticket, so the marker keeps ticket_ttl.
+# released_claim <id> <made> [rewritten] [session]
+released_claim() {
+  jq -nc --argjson id "$1" --arg at "$2" --arg up "${3:-}" --arg s "${4:-$WORKER}" \
+    '{id: $id, body: "Released by delegator session `\($s)`: waiting on the human.\n<!-- delegator claim-released: \($s) -->",
+      created_at: $at, updated_at: (if $up == "" then ($at | fromdateiso8601 + 60 | todate) else $up end), user: {login: "rich"}}'
+}
+worked() { # n [at]
+  on_issue "$1" "$(released_claim "$(( $1 * 100 + 55 ))" "${2:-$T_LIVE}")"
+}
 
 use status
 on_issue 31 "$(ticket_comment 3190 "$OTHER" none "$T_LIVE")"
+worked 31
 out="$(run status)"
 check "another chain's PR-less ticket marker makes the issue ticketed, with the chain" "$out" \
   "$(issue 31) | .state == \"ticketed\" and .holder == \"$OTHER\""
@@ -1299,16 +1366,18 @@ check "a ticket marker posted by another login is ignored" "$(run status)" "$(is
 # A host with no user token (a GitHub Actions gate) names the delegator's
 # login instead of asking GitHub whose token it holds.
 use status
-on_issue 31 "$(ticket_comment 3190 "$OTHER" none "$T_LIVE" mallory)"
+on_issue 31 "$(ticket_comment 3190 "$OTHER" none "$T_LIVE" mallory)" "$(released_claim 3155 "$T_LIVE" | jq -c '.user.login = "mallory"')"
 check "DELEGATE_STATUS_LOGIN names the login whose markers count" \
   "$(DELEGATE_STATUS_LOGIN=mallory run status)" "$(issue 31) | .state == \"ticketed\" and .holder == \"$OTHER\""
 check_not_called "api user" "DELEGATE_STATUS_LOGIN never asks GitHub for the token's user"
 
 use status
 on_issue 31 "$(ticket_comment 3190 "$OTHER" none "$T_LAPSED")"
+worked 31 "$T_LAPSED"
 check "a PR-less ticket marker lapses ticket_ttl after its last renewal" "$(run status)" "$(issue 31) | .state == \"free\""
 use status
 on_issue 31 "$(ticket_comment 3190 "$OTHER" none "$T_LIVE")"
+worked 31
 check "a PR-less ticket marker exactly ticket_ttl old has lapsed" \
   "$(RUN_NOW=$(($(jq -n --arg t "$T_LIVE" '$t | fromdateiso8601') + TICKET_TTL)) run status)" "$(issue 31) | .state == \"free\""
 check "a PR-less ticket marker one second short of ticket_ttl is live" \
@@ -1324,21 +1393,43 @@ check "a ticket marker whose PR merged or closed is not honoured" "$(run status)
 
 use status
 on_issue 36 "$(ticket_comment 3690 "$NEXT_CHAIN" none "$T_LIVE")"
+worked 36
 check "a live claim still wins over a ticket marker" "$(run status)" "$(issue 36) | .state == \"claimed\" and .holder == \"$OTHER\""
 
+# Derived labels come from comments and dependencies alone, so a ticketed
+# issue gets them by the same rules as any other: the human sees every issue
+# waiting on them, whichever chain holds it. Only a live claim is left to the
+# session that holds it. 32 has derived criteria without the human's 👍, 35
+# an unanswered question, 31 criteria in its body but a human-added
+# needs-answer, 71 an open blocker.
 use status
-on_issue 35 "$(ticket_comment 3590 "$OTHER" none "$T_LIVE")"
-jq 'map(if .number == 35 then .labels += [{name: "needs-answer"}] else . end)' \
+blockers
+question_case 71 'Fix it.\n\nBlocked by #80' '[]'
+jq --slurpfile a "$FAKE_STATE/issue-71.json" '. + $a' "$FAKE_STATE/issues.json" > "$FAKE_STATE/issues.tmp" && mv "$FAKE_STATE/issues.tmp" "$FAKE_STATE/issues.json"
+for n in 31 32 35 71; do
+  on_issue "$n" "$(ticket_comment "$((n * 100 + 90))" "$OTHER" none "$T_LIVE")"
+  worked "$n"
+done
+jq 'map(if .number == 31 then .labels += [{name: "needs-answer"}] else . end)' \
   "$FAKE_STATE/issues.json" > "$FAKE_STATE/issues.tmp" && mv "$FAKE_STATE/issues.tmp" "$FAKE_STATE/issues.json"
 out="$(run status --sync-labels)"
-check "--sync-labels leaves an issue another chain holds as its ticket alone" "$out" \
-  '(.labels_synced["needs-answer"].removed | index(35)) == null'
-check_not_called "-X DELETE repos/acme/widgets/issues/35/labels" "another chain's ticket keeps its answer label"
+check "a ticketed issue keeps the reason it waits on the human" "$out" \
+  "$(issue 32) | .state == \"ticketed\" and .holder == \"$OTHER\" and .reason == \"criteria-unconfirmed\""
+check "a ticketed issue keeps its open blockers" "$out" "$(issue 71) | .state == \"ticketed\" and .blocked_by == [80]"
+check "--sync-labels puts needs-answer on ticketed issues waiting on the human" "$out" \
+  '.labels_synced["needs-answer"].added == [32, 35]'
+check_called "-X POST repos/acme/widgets/issues/32/labels -f labels[]=needs-answer" "a ticketed issue with unconfirmed criteria gets needs-answer"
+check_called "-X POST repos/acme/widgets/issues/35/labels -f labels[]=needs-answer" "a ticketed issue with an unanswered question gets needs-answer"
+check "--sync-labels removes needs-answer from a ticketed issue that waits on nothing" "$out" \
+  '.labels_synced["needs-answer"].removed == [31]'
+check "--sync-labels puts blocked on a ticketed blocked issue" "$out" '.labels_synced.blocked.added == [71]'
+check "a ticketed issue is never picked, whatever its criteria" "$out" '.pick.number != 31 and .pick.number != 32'
 check "Pick's cache never records a ticketed issue" "$(run status --cache "$FAKE_STATE/pick-cache.json" > /dev/null; cat "$FAKE_STATE/pick-cache.json")" \
   'all(.[]; .number != 35)'
 
 use status
 on_issue 35 "$(ticket_comment 3590 "$OURS" none "$T_LIVE")"
+worked 35
 run status --cache "$FAKE_STATE/pick-cache.json" > /dev/null
 : > "$FAKE_STATE/calls.log"
 out="$(run status --cache "$FAKE_STATE/pick-cache.json")"
@@ -1359,6 +1450,7 @@ check "a chain that lost its ticket recovers it from the PR's issue and never pi
   '.action != "pick" and .ticket == {"issue": 14, "pr": 20, "id": 1490}'
 use status
 on_issue 14 "$(ticket_comment 1490 "$OURS" none "$T_LIVE")"
+worked 14
 check "this chain's PR-less marker on a delegated issue names the open PR" "$(run status)" '.ticket == {"issue": 14, "pr": 20, "id": 1490}'
 use status
 on_issue 14 "$(ticket_comment 1490 "$OTHER" 20 "$T_LIVE")"
@@ -1385,6 +1477,7 @@ check "the marker now names the PR" "$(cat "$FAKE_STATE/comments-31.json")" \
 
 use status
 on_issue 31 "$(ticket_comment 3190 "$OTHER" none "$T_LIVE")"
+worked 31
 status=0
 out="$(run ticket set 31 2> /dev/null)" || status=$?
 check "ticket set refuses an issue another chain holds as its ticket" "$out" '.result == "lost" and .holder == "'"$OTHER"'"'
@@ -1393,6 +1486,7 @@ check_not_called "-X POST" "a refused ticket set posts nothing"
 
 use status
 on_issue 31 "$(ticket_comment 3190 "$OTHER" none "$T_LAPSED")"
+worked 31 "$T_LAPSED"
 check "ticket set takes an issue whose other marker lapsed" "$(run ticket set 31)" '.result == "set" and .id == 900'
 use status
 on_issue 31 "$(ticket_comment 3190 "$OTHER" none "$T_LIVE" mallory)"
@@ -1400,7 +1494,7 @@ check "ticket set ignores a forged marker" "$(run ticket set 31)" '.result == "s
 
 # Two chains set a ticket at once: the lower id keeps it, the other withdraws.
 use status
-ticket_comment 890 "$OTHER" none "$T_LIVE" | jq -s '.' > "$FAKE_STATE/comments-31.json.next"
+{ ticket_comment 890 "$OTHER" none "$T_LIVE"; released_claim 891 "$T_LIVE"; } | jq -s '.' > "$FAKE_STATE/comments-31.json.next"
 status=0
 out="$(run ticket set 31 2> /dev/null)" || status=$?
 check "a chain that loses the race for a ticket reports lost" "$out" '.result == "lost" and .holder == "'"$OTHER"'"'
@@ -1410,6 +1504,7 @@ check_called "-X DELETE repos/acme/widgets/issues/comments/900" "the losing chai
 # ticket renew and heartbeat
 use status
 on_issue 31 "$(ticket_comment 3190 "$OURS" none "$T_LIVE")"
+worked 31
 out="$(run ticket renew 31 3190)"
 check "ticket renew renews this chain's live marker" "$out" '.item == 31 and .result == "renewed" and .id == 3190'
 check "the renewed marker carries the renewal time and keeps its marker line" "$(cat "$FAKE_STATE/comments-31.json")" \
@@ -1419,6 +1514,7 @@ check "the renewed marker carries the renewal time and keeps its marker line" "$
 # older id that outranks the chain that rightly took the issue since.
 use status
 on_issue 31 "$(ticket_comment 3190 "$OURS" none "$T_LAPSED")"
+worked 31 "$T_LAPSED"
 status=0
 out="$(run ticket renew 31 3190 2> /dev/null)" || status=$?
 check "ticket renew refuses a marker past ticket_ttl" "$out" '.result == "lost" and .id == 3190'
@@ -1427,6 +1523,7 @@ check_not_called "-X PATCH" "renewing a lapsed ticket writes nothing"
 
 use status
 on_issue 31 "$(ticket_comment 3190 "$OURS" none "$T_LIVE")" "$(ticket_comment 3191 "$OTHER" none "$T_LIVE")"
+worked 31
 status=0
 out="$(run ticket renew 31 3190 2> /dev/null)" || status=$?
 check "ticket renew refuses when another chain holds a newer ticket on the issue" "$out" '.result == "lost" and .holder == "'"$OTHER"'"'
@@ -1435,12 +1532,14 @@ check_not_called "-X PATCH" "renewing over another chain's ticket writes nothing
 
 use status
 on_issue 31 "$(ticket_comment 3190 "$OURS" none "$T_LAPSED")"
+worked 31 "$T_LAPSED"
 status=0
 DELEGATE_STATUS_BEATS=2 DELEGATE_STATUS_POLL=0 run ticket heartbeat 31 3190 > /dev/null 2>&1 || status=$?
 if [ "$status" -eq 4 ]; then pass "ticket heartbeat exits 4 on a lapsed marker"; else fail "ticket heartbeat exits 4 on a lapsed marker (got $status)"; fi
 check_not_called "-X PATCH" "a heartbeat on a lapsed ticket writes nothing"
 use status
 on_issue 31 "$(ticket_comment 3190 "$OURS" none "$T_LIVE")" "$(ticket_comment 3191 "$OTHER" none "$T_LIVE")"
+worked 31
 status=0
 DELEGATE_STATUS_BEATS=2 DELEGATE_STATUS_POLL=0 run ticket heartbeat 31 3190 > /dev/null 2>&1 || status=$?
 if [ "$status" -eq 4 ]; then pass "ticket heartbeat exits 4 when another chain holds a newer ticket"; else fail "ticket heartbeat exits 4 when another chain holds a newer ticket (got $status)"; fi
@@ -1448,6 +1547,7 @@ check_not_called "-X PATCH" "a heartbeat over another chain's ticket writes noth
 
 use status
 on_issue 31 "$(ticket_comment 3190 "$OURS" none "$T_LIVE")"
+worked 31
 out="$(DELEGATE_STATUS_BEATS=2 DELEGATE_STATUS_POLL=0 run ticket heartbeat 31 3190 --every 600 || true)"
 check "ticket heartbeat renews a live marker on each beat" "$out" '.result == "renewed"'
 if [ "$(grep -c -- "-X PATCH repos/acme/widgets/issues/comments/3190" "$FAKE_STATE/calls.log")" -eq 2 ]; then
@@ -1467,20 +1567,193 @@ check "a ticket with an open PR renews past ticket_ttl" "$(run ticket renew 31 3
 # ticket release
 use status
 on_issue 31 "$(ticket_comment 3190 "$OURS" none "$T_LIVE")"
+worked 31
 out="$(run ticket release 31 3190)"
 check "ticket release deletes this chain's marker" "$out" '.item == 31 and .result == "released" and .id == 3190'
-check "the released marker is gone" "$(cat "$FAKE_STATE/comments-31.json")" '. == []'
+check "the released marker is gone" "$(cat "$FAKE_STATE/comments-31.json")" 'all(.[]; .id != 3190)'
 use status
 on_issue 31 "$(ticket_comment 3190 "$OTHER" none "$T_LIVE")"
+worked 31
 status=0
 run ticket release 31 3190 > /dev/null 2>&1 || status=$?
 if [ "$status" -eq 3 ]; then pass "ticket release refuses another chain's marker"; else fail "ticket release refuses another chain's marker (got $status)"; fi
 check_not_called "-X DELETE" "another chain's marker is never deleted"
 use status
 on_issue 31 "$(ticket_comment 3190 "$OURS" none "$T_LIVE")"
+worked 31
 status=0
 run ticket release 32 3190 > /dev/null 2>&1 || status=$?
 if [ "$status" -eq 3 ]; then pass "ticket release refuses a marker on another issue"; else fail "ticket release refuses a marker on another issue (got $status)"; fi
+
+# An orphaned ticket: a marker its chain never worked under (delegate-fire
+# reserved it for a session that never started) lapses after claim_ttl, not
+# ticket_ttl. The 12-hour life starts only once a claim on the issue shows
+# the chain worked it.
+use status
+on_issue 31 "$(ticket_comment 3190 "$OTHER" none "$T_ORPHAN")"
+out="$(run status)"
+check "a marker with no claim after it lapses after claim_ttl" "$out" "$(issue 31) | .state == \"free\""
+check "Pick takes an issue whose orphaned ticket lapsed" "$out" '.pick.number == 31'
+check "status names the orphaned ticket that lapsed" "$out" \
+  "$(issue 31) | .lapsed_ticket == {\"chain\": \"$OTHER\", \"why\": \"unworked\"}"
+use status
+on_issue 31 "$(ticket_comment 3190 "$OTHER" none "$T_FRESH")"
+out="$(run status)"
+check "an unworked marker within claim_ttl still holds the issue" "$out" "$(issue 31) | .state == \"ticketed\" and .holder == \"$OTHER\""
+check "a live ticket names no lapsed one" "$out" "$(issue 31) | has(\"lapsed_ticket\") | not"
+# A claim released before the marker was posted is an earlier chain's work.
+use status
+on_issue 31 "$(released_claim 3150 2026-10-02T04:00:00Z)" "$(ticket_comment 3190 "$OTHER" none "$T_ORPHAN")"
+check "a claim touched only before the marker does not make it worked" "$(run status)" "$(issue 31) | .state == \"free\""
+use status
+on_issue 31 "$(ticket_comment 3190 "$OTHER" none "$T_ORPHAN")" "$(released_claim 3191 "$T_ORPHAN" | jq -c '.user.login = "mallory"')"
+check "a claim another login posted does not make a marker worked" "$(run status)" "$(issue 31) | .state == \"free\""
+# Work claims, then sets its ticket: the claim's release after the marker counts.
+use status
+on_issue 31 "$(released_claim 3150 2026-10-02T06:59:00Z 2026-10-02T07:20:00Z)" "$(ticket_comment 3190 "$OTHER" none "$T_ORPHAN")"
+check "a claim made before the marker and released after it makes it worked" "$(run status)" "$(issue 31) | .state == \"ticketed\""
+# A lapsed orphan stays lapsed when a later chain works the issue.
+use status
+on_issue 31 "$(ticket_comment 3190 "$OTHER" none "$T_ORPHAN")" "$(released_claim 3191 "$T_FRESH")"
+check "a claim made after an orphan lapsed does not revive it" "$(run status)" "$(issue 31) | .state == \"free\""
+use status
+on_issue 31 "$(ticket_comment 3190 "$OTHER" none "$T_ORPHAN")"
+check "ticket set takes an issue whose orphaned ticket lapsed" "$(run ticket set 31)" '.result == "set" and .id == 900'
+use status
+on_issue 31 "$(ticket_comment 3190 "$OURS" none "$T_ORPHAN")"
+status=0
+out="$(run ticket renew 31 3190 2> /dev/null)" || status=$?
+check "ticket renew refuses this chain's orphaned marker past claim_ttl" "$out" '.result == "lost" and .id == 3190'
+if [ "$status" -eq 4 ]; then pass "renewing an orphaned ticket exits 4"; else fail "renewing an orphaned ticket exits 4 (got $status)"; fi
+use status
+on_issue 31 "$(ticket_comment 3190 "$OURS" none "$T_ORPHAN")"
+check "ticket set takes this chain's own orphaned marker back" "$(run ticket set 31)" '.result == "set" and .id == 3190'
+check "the marker taken back is live again" "$(run status)" "$(issue 31) | .state == \"free\" and .ticket_id == 3190"
+
+# The human unblocks a ticketed issue: a 👍 on its derived criteria, or a
+# reply to its question, after the chain's last renewal of its marker. A
+# reaction moves neither updatedAt nor an issue event, and a waiting web
+# session sleeps for hours, so the marker lapses there and then, and the
+# issue reads free for any chain to pick. Here the marker was posted and
+# last renewed at 06:00, and the chain worked the issue (a released claim).
+T_VOTE=2026-10-02T09:00:00Z
+vote() { # n at -> the human's 👍 on the derived criteria (id n*100+2) at <at>
+  jq -nc --arg at "$2" '[{content: "+1", user: {login: "rich"}, created_at: $at}]' > "$FAKE_STATE/reactions-$(($1 * 100 + 2)).json"
+}
+late_reply() { # a human reply at <at>
+  reply_by rich User 'B, please.' | jq -c --arg at "$1" '.created_at = $at | .updated_at = $at'
+}
+wake_case() { # n comments [chain]
+  question_case "$1" 'Fix it.' "$2"
+  on_issue "$1" "$(ticket_comment "$(($1 * 100 + 90))" "${3:-$OTHER}" none "$T_LIVE")"
+  worked "$1"
+  jq --slurpfile a "$FAKE_STATE/issue-$1.json" '. + $a' "$FAKE_STATE/issues.json" > "$FAKE_STATE/issues.tmp" && mv "$FAKE_STATE/issues.tmp" "$FAKE_STATE/issues.json"
+}
+
+use status
+wake_case 91 "[$DERIVED]"
+vote 91 "$T_VOTE"
+out="$(run issue 91)"
+check "a 👍 on a ticketed issue's criteria after the marker's last renewal frees the issue" "$out" \
+  '.state == "free" and .criteria == "confirmed"'
+check "the issue names the ticket the human's answer released" "$out" \
+  ".lapsed_ticket == {\"chain\": \"$OTHER\", \"why\": \"answered\"}"
+out="$(run next-action --max-worktrees 5 --max-open-prs 20 --picks 10)"
+check "the gate lists an issue whose ticket the human's 👍 released" "$out" 'any(.picks[]; .number == 91)'
+
+use status
+wake_case 91 "[$DERIVED]"
+vote 91 2026-10-02T05:00:00Z
+check "a 👍 the chain already saw keeps its ticket" "$(run issue 91)" ".state == \"ticketed\" and .holder == \"$OTHER\""
+use status
+wake_case 91 "[$DERIVED]"
+check "derived criteria without a 👍 keep the ticket" "$(run issue 91)" \
+  ".state == \"ticketed\" and .reason == \"criteria-unconfirmed\" and (has(\"lapsed_ticket\") | not)"
+use status
+wake_case 91 "[$DERIVED]"
+echo '[{"content": "+1", "user": {"login": "someone-else"}, "created_at": "2026-10-02T09:00:00Z"}]' > "$FAKE_STATE/reactions-9102.json"
+check "a 👍 from another login keeps the ticket" "$(run issue 91)" ".state == \"ticketed\""
+
+use status
+wake_case 92 "[$QUESTION, $(late_reply 2026-10-02T09:00:00Z)]"
+out="$(run issue 92)"
+check "a human reply to a ticketed issue's question after the last renewal frees it" "$out" \
+  ".state == \"free\" and .criteria == \"none\" and .lapsed_ticket.why == \"answered\""
+use status
+wake_case 92 "[$QUESTION, $(reply_by rich User 'Not this.' | jq -c '.user.login = "copilot[bot]" | .user.type = "Bot" | .created_at = "2026-10-02T09:00:00Z"')]"
+check "a bot's reply keeps the ticket" "$(run issue 92)" ".state == \"ticketed\" and .reason == \"question-unanswered\""
+use status
+wake_case 92 "[$DERIVED, $QUESTION, $(late_reply 2026-10-02T09:00:00Z)]"
+check "a reply does not free an issue whose derived criteria still wait on a 👍" "$(run issue 92)" \
+  ".state == \"ticketed\" and .reason == \"criteria-unconfirmed\""
+
+# A reservation is not a wait: a fresh marker on an issue the human already
+# confirmed is the new chain's, and holds until its session claims.
+use status
+question_case 93 'Fix it.' "[$DERIVED]"
+vote 93 "$T_VOTE"
+on_issue 93 "$(ticket_comment 9390 "$OTHER" none "$T_FRESH")"
+check "a reserved, unworked marker on a confirmed issue holds it" "$(run issue 93)" ".state == \"ticketed\""
+
+# Sticky: the owner's renewal is refused, and a later chain's claim on the
+# issue never revives the old marker.
+use status
+wake_case 91 "[$DERIVED]" "$OURS"
+vote 91 "$T_VOTE"
+status=0
+out="$(run ticket renew 91 9190 2> /dev/null)" || status=$?
+check "the owner's renewal of a ticket the human answered is refused" "$out" '.result == "lost" and .id == 9190'
+if [ "$status" -eq 4 ]; then pass "renewing an answered ticket exits 4, so a waiting heartbeat wakes"; else fail "renewing an answered ticket exits 4 (got $status)"; fi
+check_not_called "-X PATCH" "an answered ticket is not renewed"
+use status
+wake_case 91 "[$DERIVED]"
+vote 91 "$T_VOTE"
+check "another chain sets a ticket over one the human answered" "$(run ticket set 91 --chain "$NEXT_CHAIN")" '.result == "set" and .id == 900'
+on_issue 91 "$(released_claim 9156 2026-10-02T11:30:00Z)"
+out="$(run issue 91 --chain "$NEXT_CHAIN")"
+check "the new chain holds the issue" "$out" '.state == "free" and .ticket_id == 900'
+check "the answered marker stays lapsed once a later chain works the issue" "$(run issue 91 --chain "$OTHER")" \
+  ".state == \"ticketed\" and .holder == \"$NEXT_CHAIN\""
+# The owner that wakes first takes its ticket back: Work claims, then sets it.
+use status
+wake_case 91 "[$DERIVED]" "$OURS"
+vote 91 "$T_VOTE"
+check "the owner takes back a ticket the human answered" "$(run ticket set 91)" '.result == "set" and .id == 9190'
+check "the ticket taken back is live" "$(run issue 91)" '.state == "free" and .ticket_id == 9190'
+
+# The Watch digest sees a 👍 without a full pass. Only issues carrying the
+# answer label are read, one comment list each: the rollup GitHub puts on
+# every listed comment holds the 👍 count, so no reactions call is made.
+use status
+jq 'map(if .number == 32 then .labels += [{name: "needs-answer"}] else . end)' \
+  "$FAKE_STATE/issues.json" > "$FAKE_STATE/issues.tmp" && mv "$FAKE_STATE/issues.tmp" "$FAKE_STATE/issues.json"
+jq 'map(.reactions = {"+1": 0})' "$FAKE_STATE/comments-32.json" > "$FAKE_STATE/c.tmp" && mv "$FAKE_STATE/c.tmp" "$FAKE_STATE/comments-32.json"
+DIGEST="$FAKE_STATE/digest.json"
+run watch-digest --state "$DIGEST" --record > /dev/null
+check "the baseline holds the 👍 count of a waiting issue's criteria" "$(cat "$DIGEST")" '.digest.issues["32"].votes == 0'
+check "the baseline reads no comments of an issue not waiting on the human" "$(cat "$DIGEST")" '.digest.issues["31"] | has("votes") | not'
+check_not_called "issues/31/comments" "the digest reads no comments of an issue without the answer label"
+check_not_called "reactions" "the digest makes no reactions call"
+check "an unchanged waiting issue is not news" "$(run watch-digest --state "$DIGEST" || true)" '.changed == false'
+jq 'map(.reactions = {"+1": 1})' "$FAKE_STATE/comments-32.json" > "$FAKE_STATE/c.tmp" && mv "$FAKE_STATE/c.tmp" "$FAKE_STATE/comments-32.json"
+out="$(run watch-digest --state "$DIGEST" || true)"
+check "a 👍 on a waiting issue's criteria is news, naming the issue" "$out" \
+  '.changed and .reasons == ["issue #32: new 👍 on its derived criteria"]'
+run watch-digest --state "$DIGEST" --record > /dev/null
+jq 'map(.reactions = {"+1": 0})' "$FAKE_STATE/comments-32.json" > "$FAKE_STATE/c.tmp" && mv "$FAKE_STATE/c.tmp" "$FAKE_STATE/comments-32.json"
+check "a 👍 taken back is not news" "$(run watch-digest --state "$DIGEST" || true)" '.changed == false'
+# A label the full pass adds after recording is not news on its own.
+use status
+DIGEST="$FAKE_STATE/digest.json"
+run watch-digest --state "$DIGEST" --record > /dev/null
+jq 'map(if .number == 32 then .labels += [{name: "needs-answer"}] else . end)' \
+  "$FAKE_STATE/issues.json" > "$FAKE_STATE/issues.tmp" && mv "$FAKE_STATE/issues.tmp" "$FAKE_STATE/issues.json"
+jq 'map(.reactions = {"+1": 0})' "$FAKE_STATE/comments-32.json" > "$FAKE_STATE/c.tmp" && mv "$FAKE_STATE/c.tmp" "$FAKE_STATE/comments-32.json"
+check "an issue newly waiting on the human is not news" "$(run watch-digest --state "$DIGEST" || true)" '.changed == false'
+# A human reply moves the comment count, which the digest already compares.
+jq 'map(if .number == 32 then .comments = 2 else . end)' "$FAKE_STATE/issues.json" > "$FAKE_STATE/issues.tmp" && mv "$FAKE_STATE/issues.tmp" "$FAKE_STATE/issues.json"
+check "a reply on a waiting issue is news, naming the issue" "$(run watch-digest --state "$DIGEST" || true)" \
+  '.changed and .reasons == ["issue #32 changed"]'
 
 # usage
 use status

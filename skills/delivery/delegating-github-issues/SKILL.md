@@ -37,8 +37,8 @@ The calling command supplies these; defaults apply when it does not, and keep th
 | `oracle` | off | When on, apply the Preview oracle rule |
 | `land` | off | When on, Work opens drafts, and **Land** may merge a PR the human marked Ready for review |
 | `claim_ttl` | 45 minutes | A claim with no heartbeat for this long lapses, and another session may take the item |
-| `progress_label` | `in-progress` | Carried by an item while a session holds a live claim on it, so a human sees an agent is on it |
-| `answer_label`, `blocked_label`, `review_label` | `needs-answer`, `blocked`, `awaiting-review` | Derived: human must answer; blocked; PR to review |
+| `progress_label` | `in-progress` | On an item only during a live claim on it, never for a ticket alone |
+| `answer_label`, `blocked_label`, `review_label` | `needs-answer`, `blocked`, `awaiting-review` | Derived, ticketed issues too: human must answer; blocked; PR to review |
 
 A project's **Verification scope** section replaces the `pre_pr_gate`'s complete-suite rule (`references/tiers.md`).
 
