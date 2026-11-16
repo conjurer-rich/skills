@@ -1346,15 +1346,34 @@ on_issue 36 "$(ticket_comment 3690 "$NEXT_CHAIN" none "$T_LIVE")"
 worked 36
 check "a live claim still wins over a ticket marker" "$(run status)" "$(issue 36) | .state == \"claimed\" and .holder == \"$OTHER\""
 
+# Derived labels come from comments and dependencies alone, so a ticketed
+# issue gets them by the same rules as any other: the human sees every issue
+# waiting on them, whichever chain holds it. Only a live claim is left to the
+# session that holds it. 32 has derived criteria without the human's 👍, 35
+# an unanswered question, 31 criteria in its body but a human-added
+# needs-answer, 71 an open blocker.
 use status
-on_issue 35 "$(ticket_comment 3590 "$OTHER" none "$T_LIVE")"
-worked 35
-jq 'map(if .number == 35 then .labels += [{name: "needs-answer"}] else . end)' \
+blockers
+question_case 71 'Fix it.\n\nBlocked by #80' '[]'
+jq --slurpfile a "$FAKE_STATE/issue-71.json" '. + $a' "$FAKE_STATE/issues.json" > "$FAKE_STATE/issues.tmp" && mv "$FAKE_STATE/issues.tmp" "$FAKE_STATE/issues.json"
+for n in 31 32 35 71; do
+  on_issue "$n" "$(ticket_comment "$((n * 100 + 90))" "$OTHER" none "$T_LIVE")"
+  worked "$n"
+done
+jq 'map(if .number == 31 then .labels += [{name: "needs-answer"}] else . end)' \
   "$FAKE_STATE/issues.json" > "$FAKE_STATE/issues.tmp" && mv "$FAKE_STATE/issues.tmp" "$FAKE_STATE/issues.json"
 out="$(run status --sync-labels)"
-check "--sync-labels leaves an issue another chain holds as its ticket alone" "$out" \
-  '(.labels_synced["needs-answer"].removed | index(35)) == null'
-check_not_called "-X DELETE repos/acme/widgets/issues/35/labels" "another chain's ticket keeps its answer label"
+check "a ticketed issue keeps the reason it waits on the human" "$out" \
+  "$(issue 32) | .state == \"ticketed\" and .holder == \"$OTHER\" and .reason == \"criteria-unconfirmed\""
+check "a ticketed issue keeps its open blockers" "$out" "$(issue 71) | .state == \"ticketed\" and .blocked_by == [80]"
+check "--sync-labels puts needs-answer on ticketed issues waiting on the human" "$out" \
+  '.labels_synced["needs-answer"].added == [32, 35]'
+check_called "-X POST repos/acme/widgets/issues/32/labels -f labels[]=needs-answer" "a ticketed issue with unconfirmed criteria gets needs-answer"
+check_called "-X POST repos/acme/widgets/issues/35/labels -f labels[]=needs-answer" "a ticketed issue with an unanswered question gets needs-answer"
+check "--sync-labels removes needs-answer from a ticketed issue that waits on nothing" "$out" \
+  '.labels_synced["needs-answer"].removed == [31]'
+check "--sync-labels puts blocked on a ticketed blocked issue" "$out" '.labels_synced.blocked.added == [71]'
+check "a ticketed issue is never picked, whatever its criteria" "$out" '.pick.number != 31 and .pick.number != 32'
 check "Pick's cache never records a ticketed issue" "$(run status --cache "$FAKE_STATE/pick-cache.json" > /dev/null; cat "$FAKE_STATE/pick-cache.json")" \
   'all(.[]; .number != 35)'
 

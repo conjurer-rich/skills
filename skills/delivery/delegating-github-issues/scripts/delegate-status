@@ -1043,8 +1043,10 @@ blockers_of() {
 }
 
 # Classify one issue from its comments and its blockers (blockers_of): held,
-# claimed, blocked, or free / waiting on the human, with how its acceptance
-# criteria stand. A live claim comes first; then an open blocker, so an issue
+# claimed, ticketed, blocked, or free / waiting on the human, with how its
+# acceptance criteria stand. A ticketed issue keeps those (a reason, criteria
+# or blockers) beside its holder, so its derived labels follow the same rules
+# as any other issue's. A live claim comes first; then an open blocker, so an issue
 # stuck on a dependency is not also asking the human for anything; then an
 # open delegator question: the delegator is waiting on its answer whatever
 # criteria the body or a derived comment holds. Only a human comment after
@@ -1081,7 +1083,7 @@ issue_from_comments() {
        elif $derived != null then {state: "waiting-on-human", reason: "criteria-unconfirmed"}
        else {state: "free", criteria: "none"} end) as $criteria
     | . + if $w != null and $w.session != $s then {state: "claimed", holder: $w.session}
-          elif $tk != null and $tk.chain != $chain then {state: "ticketed", holder: $tk.chain}
+          elif $tk != null and $tk.chain != $chain then $criteria + {state: "ticketed", holder: $tk.chain}
           elif $w != null then $criteria + {state: "held"}
           else $criteria end
     | if $tk != null and $tk.chain == $chain then .ticket_id = $tk.id else . end
@@ -1342,7 +1344,9 @@ blockers_unmoved() {
 # awaiting the human's review, and none anywhere else. All are recomputed
 # from this pass's classification and never read to decide a state, so a
 # label a human adds or removes by hand is put right here. An item another
-# session holds, or another chain holds as its ticket, is left to that one.
+# session holds a live claim on is left to that session, whose own pass reads
+# it as held and syncs it; an issue another chain holds as its ticket is not,
+# so every issue waiting on the human carries the label, whoever holds it.
 # Sets $SYNCED to
 # {<label>: {added: [n], removed: [n]}}; call it directly, not in $(...).
 SYNCED="{}"
@@ -1351,7 +1355,7 @@ sync_labels() {
   ops="$(jq -nc --argjson i "$issues" --argjson r "$results" --argjson p "$prs" --argjson pr "$pr_results" \
       --arg a "$ANSWER_LABEL" --arg bl "$BLOCKED_LABEL" --arg rl "$REVIEW_LABEL" '
     ($i + $p | map({key: (.number | tostring), value: [.labels[].name]}) | from_entries) as $has
-    | [ ( $r[] | select(.state != "claimed" and .state != "ticketed") | .number as $n | ($has[$n | tostring] // []) as $l
+    | [ ( $r[] | select(.state != "claimed") | .number as $n | ($has[$n | tostring] // []) as $l
           | ({label: $a, want: (.reason != null)}, {label: $bl, want: ((.blocked_by // []) != [])})
           | {number: $n, label, want, l: $l} ),
         ( $pr[] | select(.holder == null) | .number as $n
