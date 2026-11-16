@@ -918,6 +918,45 @@ check_called "issues/71/comments" "a blocker closing re-checks the issue though 
 check "the issue frees itself once its blocker closes" "$out" "$(issue 71) | .state == \"free\" and .criteria == \"body\""
 check "a freed blocked issue is picked in its turn" "$out" '.pick.number == 71'
 
+# Blocker cycles: issues whose blockers form a loop never free themselves.
+# Status names each cycle once; its members stay blocked.
+add_issue() { # n
+  jq --slurpfile a "$FAKE_STATE/issue-$1.json" '. + $a' "$FAKE_STATE/issues.json" > "$FAKE_STATE/issues.tmp" && mv "$FAKE_STATE/issues.tmp" "$FAKE_STATE/issues.json"
+}
+use status
+question_case 85 'Fix it.\n\nBlocked by #86' '[]'
+question_case 86 'Fix it.\n\n## Dependencies\n\n- #85\n' '[]'
+question_case 87 'Fix it.\n\nBlocked by #85 and #86' '[]'
+for n in 85 86 87; do add_issue "$n"; done
+CACHE="$FAKE_STATE/pick-cache.json"
+out="$(run status --cache "$CACHE")"
+check "two issues blocking each other are named as a cycle" "$out" \
+  "$(issue 85) | .state == \"blocked\" and .blocked_by == [86] and .cycle == [85, 86]"
+check "each member of the cycle names it" "$out" "$(issue 86) | .cycle == [85, 86]"
+check "an issue blocked by a cycle is plain blocked" "$out" "$(issue 87) | .state == \"blocked\" and (has(\"cycle\") | not)"
+check "status lists each cycle once" "$out" '.cycles == [[85, 86]]'
+out="$(run status --cache "$CACHE")"
+check "a cycle is named from cached skips too" "$out" '.cycles == [[85, 86]] and ([.issues[] | select(.number == 85) | .cached] == [true])'
+use status
+question_case 85 'Fix it.\n\nBlocked by #86' '[]'
+question_case 86 'Fix it.\n\nBlocked by #87' '[]'
+question_case 87 'Fix it.\n\nBlocked by #85' '[]'
+for n in 85 86 87; do add_issue "$n"; done
+check "a longer loop is one cycle" "$(run status)" '.cycles == [[85, 86, 87]]'
+use status
+check "no blockers, no cycles" "$(run status)" '.cycles == []'
+
+cycle_status='{"prs": [], "issues": [{"number": 85, "state": "blocked", "blocked_by": [86], "cycle": [85, 86]}, {"number": 86, "state": "blocked", "blocked_by": [85], "cycle": [85, 86]}, {"number": 1, "state": "blocked", "blocked_by": [2], "cycle": [1, 2, 3]}],
+  "cycles": [[1, 2, 3], [85, 86]], "pick": null, "counts": {"blocked": 3},
+  "budget": {"worktrees": 0, "max_worktrees": 1, "open_prs": 0, "max_open_prs": 6, "at_limit": false}}'
+printf '%s' "$cycle_status" > "$TMP/status.json"
+out="$(run next-action --from "$TMP/status.json")"
+check "next-action carries the cycles" "$out" '.cycles == [[1, 2, 3], [85, 86]]'
+check "an idle gate tells the human to break each cycle, once" "$out" \
+  '.action == "idle" and (.reasons | index("issues #85 and #86 block each other: remove one of the links")) and (.reasons | index("issues #1, #2 and #3 block each other in a loop: remove one of the links"))'
+check "next-action without cycles carries no cycles key" \
+  "$(printf '%s' "$cycle_status" | jq '.cycles = []' > "$TMP/status.json"; run next-action --from "$TMP/status.json")" 'has("cycles") | not'
+
 # ---------------------------------------------------------------- derived labels
 
 # With --sync-labels, status recomputes needs-answer (waiting on the human)

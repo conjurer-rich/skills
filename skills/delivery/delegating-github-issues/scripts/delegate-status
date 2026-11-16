@@ -315,6 +315,23 @@ def ticket_markers($login; $now; $ttl; $cttl; $open; $unblock):
 # Whether the comments hold a PR-less ticket marker the login posted.
 def prless_marker($login):
   any(.[]; (.body // "" | test("<!-- delegator ticket: [^ ]+ pr=none -->")) and ((.user.login // "") == $login));
+# The cycles among classified issues: each group of two or more issues whose
+# open blockers lead from every member to every other, as sorted numbers,
+# lowest first. Only blockers that are themselves classified issues are
+# followed: Pick never reads the blockers of an issue without the label.
+def blocker_cycles:
+  ([.[] | select((.blocked_by // []) != []) | {key: (.number | tostring), value: [.blocked_by[] | numbers]}] | from_entries) as $g
+  | def reach($n): {seen: [], todo: ($g[$n | tostring] // [])}
+      | until(.todo == []; .todo[0] as $x | .todo |= .[1:]
+          | if (.seen | index($x)) != null then . else .seen += [$x] | .todo += ($g[$x | tostring] // []) end)
+      | .seen;
+    [ $g | keys[] | tonumber as $n | reach($n) as $r | select($r | index($n))
+      | [$n] + [$r[] | select(. != $n and (reach(.) | index($n)) != null)] | unique ]
+    | unique | map(select(length > 1));
+# The one line that tells the human how to free a cycle.
+def cycle_line:
+  if length == 2 then "issues #\(.[0]) and #\(.[1]) block each other: remove one of the links"
+  else "issues \(.[:-1] | map("#\(.)") | join(", ")) and #\(.[-1]) block each other in a loop: remove one of the links" end;
 def issue_norm:
   { number, title, labels: [.labels[]? | {name}], createdAt: .created_at,
     updatedAt: .updated_at, body, state: (.state | ascii_upcase) };
@@ -1364,7 +1381,10 @@ cmd_status() {
   fi
 
   jq -nc --argjson w "$worktrees" --argjson b "$budget" --argjson i "$results" --argjson p "$pr_results" --argjson s "$synced" \
-    '{worktrees: $w, budget: $b, issues: $i, prs: $p,
+    "$JQ_DEFS"'($i | blocker_cycles) as $cycles
+    | ($i | map(.number as $n | (first($cycles[] | select(index($n) != null)) // null) as $cy
+                | if $cy == null then . else .cycle = $cy end)) as $i
+    | {worktrees: $w, budget: $b, issues: $i, prs: $p, cycles: $cycles,
       pick: ((first($i[] | select(.state == "free" or (.state == "held" and .criteria != null and .reason == null)))
               | {number, title}) // null),
       counts: ($i | group_by(.state) | map({(.[0].state): length}) | add // {}),
@@ -1456,8 +1476,9 @@ next_action_of() {
   if [ -n "$TICKET" ]; then
     ticket="$(jq -nc --argjson i "$TICKET" --arg p "$PR" '{issue: $i, pr: (if $p == "" then null else ($p | tonumber) end)}')"
   fi
-  jq -c --argjson ticket "$ticket" --argjson picks "${PICKS:-null}" '
-    def budget_reason:
+  jq -c --argjson ticket "$ticket" --argjson picks "${PICKS:-null}" "$JQ_DEFS"'
+    (.cycles // []) as $cycles
+    | def budget_reason:
       "budget at limit: \(.budget.worktrees)/\(.budget.max_worktrees) worktrees, \(.budget.open_prs)/\(.budget.max_open_prs) open PRs awaiting a first look";
     def for_ticket($t):
       (first(.issues[] | select(.number == $t.issue)) // null) as $i
@@ -1494,7 +1515,8 @@ next_action_of() {
       elif ($pick | length) > 0 then {action: "pick", reasons: $pick, issue: .pick.number}
       else {action: "idle",
             reasons: (if .pick != null and .budget.at_limit then [budget_reason] else ["no eligible issue"] end
-                      + [.prs[] | select(.class == "claimed") | "PR #\(.number) is claimed by \(.holder)"]),
+                      + [.prs[] | select(.class == "claimed") | "PR #\(.number) is claimed by \(.holder)"]
+                      + [$cycles[] | cycle_line]),
             counts: .counts}
       end
       + (if $t == null then {} else {ticket: null} end)
@@ -1504,7 +1526,8 @@ next_action_of() {
                 else [.issues[] | select(.state == "free" or (.state == "held" and .criteria != null and .reason == null))
                       | {number, title}][:([$picks, .budget.max_open_prs - .budget.open_prs] | min | [., 0] | max)] end),
         finish: [.prs[] | select(.class == "needs-review" or .class == "conflicted" or .class == "ready") | .number]}
-      end)'
+      end)
+    + (if $cycles == [] then {} else {cycles: $cycles} end)'
 }
 
 cmd_next_action() {
