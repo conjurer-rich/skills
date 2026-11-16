@@ -8,9 +8,11 @@ name: Delegate fire
 # whose prompt is /delegate loop. With the reserve-token secret it fills
 # every free slot in one run, reserving each slot and issue first.
 #
-# A caller may also run it on issue and pull request events. Events the
-# delegator's own login caused are skipped, except a closed PR, which frees
-# a slot whoever closed it.
+# A caller may also run it on issue and pull request events. With
+# skip-own-events on, events the delegator's own login caused are skipped,
+# except a closed PR, which frees a slot whoever closed it. Leave it off when
+# the delegator posts as the human, as it does through the human's gh auth:
+# the filter would then skip the human's own labels, Ready clicks and reviews.
 #
 # Setup and a caller example:
 # skills/delivery/delegating-github-issues/references/delegate-fire.md
@@ -26,6 +28,10 @@ on:
         description: The GitHub login the delegator posts as; its markers and claims are the only ones that count. Default, the repository owner
         type: string
         default: ""
+      skip-own-events:
+        description: Skip issue and PR events the delegator's login caused, except a closed PR. Only for a delegator with a login of its own, never one that posts as the human
+        type: boolean
+        default: false
       force:
         description: Fire even when the gate finds nothing to do
         type: boolean
@@ -51,10 +57,11 @@ on:
 
 jobs:
   fire:
-    # Skip an event the delegator's own login caused: it labels issues and
-    # opens and readies PRs on every pass. A closed PR still runs, since a
-    # merge frees a slot whoever merged it.
+    # With skip-own-events, skip an event the delegator's own login caused:
+    # it labels issues and opens and readies PRs on every pass. A closed PR
+    # still runs, since a merge frees a slot whoever merged it.
     if: >-
+      !inputs.skip-own-events ||
       github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' ||
       (github.event_name == 'pull_request' && github.event.action == 'closed') ||
       github.event.sender.login != (inputs.delegator-login || github.repository_owner)

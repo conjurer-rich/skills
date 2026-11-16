@@ -164,6 +164,10 @@ expect "the delegator's login reaches the lease" grep -q -- '^lease status .* lo
 WORKFLOW="$REPO_ROOT/.github/workflows/delegate-fire.yml"
 expect "the reusable workflow names the delegator's login, since its token is no user" \
   grep -q 'DELEGATE_STATUS_LOGIN: ${{ inputs.delegator-login || github.repository_owner }}' "$WORKFLOW"
+expect "the reusable workflow runs on the delegator's own events unless skip-own-events is on" \
+  grep -q '!inputs.skip-own-events ||' "$WORKFLOW"
+expect "skip-own-events is off by default, since the delegator usually posts as the human" \
+  bash -c 'grep -A3 "      skip-own-events:" "$1" | grep -q "default: false"' _ "$WORKFLOW"
 
 setup
 echo "$watch" > "$W/action"
