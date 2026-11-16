@@ -33,6 +33,14 @@
 # a PR no session holds needs finishing, it fires one more session, holding
 # nothing, for all of them.
 #
+# Before any fire that would finish PRs (the one fire for watch or land,
+# and the finishing session under --reserve), it re-reads each PR's live
+# claim with `delegate-status holder` and leaves out the claimed ones. A
+# Ready click both starts this workflow and wakes the PR's own subscribed
+# session, which claims the PR to land it, so the gate's first read can be
+# stale by the time it fires. With none left it fires nothing for them (a
+# one-fire run with a pick and a free slot fires for the pick instead).
+#
 # With weekdays_only on in the settings it fires nothing on a Saturday or
 # Sunday (UTC), unless forced.
 #
@@ -189,9 +197,8 @@ if [ "$WEEKDAYS_ONLY" -eq 1 ] && [ "$FORCE" -eq 0 ]; then
 fi
 
 cd "$CHECKOUT"
-PICK_ARGS=()
-[ "$RESERVE" -eq 0 ] || PICK_ARGS=(--picks "$MAX_CHAINS")
-gate="$("$STATUS" next-action "${GATE_ARGS[@]}" ${PICK_ARGS[@]+"${PICK_ARGS[@]}"})" || die "next-action failed; see the lines above"
+# --picks also lists, as `finish`, the PRs a finishing session would act on.
+gate="$("$STATUS" next-action "${GATE_ARGS[@]}" --picks "$MAX_CHAINS")" || die "next-action failed; see the lines above"
 lease="$("$STATUS" lease status "${GATE_ARGS[@]}" --max-chains "$MAX_CHAINS")" || die "lease status failed; see the lines above"
 
 action="$(printf '%s' "$gate" | jq -r '.action')"
@@ -211,6 +218,25 @@ if [ "$action" != pick ] && [ "$free" -eq 0 ]; then
   summary="$summary; the lease is full, so finish only"
 fi
 
+# Splits PR numbers into UNCLAIMED and CLAIMED ("PR #n by <session>"),
+# re-reading each one's live claim now, just before a fire.
+UNCLAIMED=()
+CLAIMED=()
+recheck() {
+  local n out holder
+  UNCLAIMED=()
+  CLAIMED=()
+  for n in "$@"; do
+    out="$("$STATUS" holder "$n" "${GATE_ARGS[@]}")" || die "reading the claim on PR #$n failed; see the lines above"
+    holder="$(printf '%s' "$out" | jq -r '.holder // empty')"
+    if [ -n "$holder" ]; then CLAIMED+=("PR #$n by $holder"); else UNCLAIMED+=("$n"); fi
+  done
+}
+claimed_text() {
+  local IFS=,
+  printf '%s' "${CLAIMED[*]}" | sed 's/,/, /g'
+}
+
 # ---------------------------------------------------------------- one fire
 
 if [ "$RESERVE" -eq 0 ] || [ "$FORCE" -eq 1 ]; then
@@ -220,6 +246,20 @@ if [ "$RESERVE" -eq 0 ] || [ "$FORCE" -eq 1 ]; then
       exit 0
     fi
     summary="forced; the gate said $why"
+  elif [ "$FORCE" -eq 0 ] && { [ "$action" = watch ] || [ "$action" = land ]; } \
+    && printf '%s' "$gate" | jq -e 'has("finish")' > /dev/null; then
+    # shellcheck disable=SC2046
+    recheck $(printf '%s' "$gate" | jq -r '.finish[]')
+    if [ "${#UNCLAIMED[@]}" -eq 0 ]; then
+      if [ "$free" -gt 0 ] && printf '%s' "$gate" | jq -e '(.picks // []) != []' > /dev/null; then
+        summary="pick: $(printf '%s' "$gate" | jq -r '[.reasons[] | select(startswith("issue #"))] | join("; ")')"
+      else
+        report false "claimed ($(claimed_text))"
+        exit 0
+      fi
+    elif [ "${#CLAIMED[@]}" -gt 0 ]; then
+      summary="$summary; skipped $(claimed_text | sed 's/PR #\([0-9]*\) by /PR #\1, claimed by /g')"
+    fi
   fi
   if [ "$DRY_RUN" -eq 1 ]; then
     report false "would fire ($summary)"
@@ -234,7 +274,8 @@ fi
 
 # The issues to start a chain for: the gate's picks, up to the free slots.
 picks="$(printf '%s' "$gate" | jq -r --argjson k "$free" '[.picks // [] | .[].number][:$k] | .[]')"
-finish="$(printf '%s' "$gate" | jq -r '.finish // [] | map("#\(.)") | join(", ")')"
+finish_prs="$(printf '%s' "$gate" | jq -r '.finish // [] | .[]')"
+finish="$(printf '%s' "$finish_prs" | sed 's/^/#/' | paste -sd, - | sed 's/,/, /g')"
 if [ -z "$picks" ] && [ -z "$finish" ]; then
   report false "${why:-idle ($reasons)}"
   exit 0
@@ -294,6 +335,13 @@ for n in $picks; do
 done
 
 if [ -n "$finish" ]; then
+  # shellcheck disable=SC2086
+  recheck $finish_prs
+  finish=""
+  [ "${#UNCLAIMED[@]}" -eq 0 ] || finish="$(printf '#%s, ' "${UNCLAIMED[@]}")"
+  finish="${finish%, }"
+fi
+if [ -n "$finish" ]; then
   text="Started by delegate-fire to finish PRs $finish. $action: $reasons"
   if answer="$(fire_one "$text")"; then
     fired+=("finish $finish ($(session_of "$answer"))")
@@ -307,7 +355,14 @@ if [ "${#fired[@]}" -gt 0 ]; then
   line="fired ${#fired[@]}: $(printf '%s; ' "${fired[@]}")"
   line="${line%; }"
 else
-  line="fired none (${why:-every pick was taken first})"
+  if [ -z "$picks" ]; then
+    line="fired none"
+  else
+    line="fired none (${why:-every pick was taken first})"
+  fi
+fi
+if [ "${#CLAIMED[@]}" -gt 0 ]; then
+  line="$line; claimed ($(claimed_text))"
 fi
 if [ "${#failed[@]}" -gt 0 ]; then
   line="$line; failed ${#failed[@]}: $(printf '%s; ' "${failed[@]}")"

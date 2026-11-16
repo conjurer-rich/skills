@@ -22,6 +22,7 @@
 #   delegate-status issue       <n>            [options]
 #   delegate-status pr          <n>            [options]
 #   delegate-status claim       <n>            [options]
+#   delegate-status holder      <n>            [options]
 #   delegate-status confirm     <n> <id>       [options]
 #   delegate-status renew       <n> <id>       [options]
 #   delegate-status heartbeat   <n> <id> [--every 900]                 [options]
@@ -71,7 +72,7 @@
 #                            session would finish, as `finish`
 #
 # Run it from the main checkout. status (without --sync-labels), next-action,
-# budget, issue, pr, checks, watch-digest, cost, merged-sizes and lease status
+# budget, issue, pr, holder, checks, watch-digest, cost, merged-sizes and lease status
 # write nothing to GitHub. Exit status:
 # 0 done, 1 a gh or git call failed, 2 usage, 3 refused (the comment is
 # another session's, or a live claim backs the label), 4 another session
@@ -511,6 +512,17 @@ cmd_claim() {
   gh_json api -X POST "repos/$REPO/issues/$n/labels" -f "labels[]=$PROGRESS_LABEL" > /dev/null
   jq -nc --argjson n "$n" --argjson id "$mine" --argjson pr "$(open_pr_for "$n")" \
     '{item: $n, result: "won", id: $id, open_pr: $pr}'
+}
+
+# The live claim on item <n>, by the rule claim decides with, as {item,
+# holder, id}; holder and id are null when no claim is live. Read-only and
+# needs no session: a spawner re-reads it just before it starts a session
+# for the item, so it never starts one another session has since claimed.
+cmd_holder() {
+  need_args 2
+  local n="${POSITIONAL[1]}"
+  jq -nc --argjson n "$n" --argjson w "$(winner_of "$(comments_of "$n")")" \
+    '{item: $n, holder: ($w.session // null), id: ($w.id // null)}'
 }
 
 # Prints live or lost for claim <id> on item <n>. An item has one holder; the
@@ -1964,6 +1976,7 @@ case "$COMMAND" in
   issue) cmd_issue ;;
   pr) cmd_pr ;;
   claim) cmd_claim ;;
+  holder) cmd_holder ;;
   confirm) cmd_confirm ;;
   renew) cmd_renew ;;
   heartbeat) cmd_heartbeat ;;

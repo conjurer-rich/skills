@@ -162,6 +162,17 @@ use claims
 out="$(run claim 12)"
 check "a won claim names an open delegated PR for the issue" "$out" '.result == "won" and .open_pr == 40'
 
+# holder: the live claim on an item, read-only, by the rule claim uses. The
+# gate re-reads it just before it fires, so it never starts a session for a
+# PR another session has claimed since its first read.
+use claims
+check "holder names the session with the live claim" \
+  "$(PATH="$FIXTURES/bin:$PATH" DELEGATE_STATUS_NOW="$NOW" "$STATUS" holder 7 --repo acme/widgets --claim-ttl 14400)" \
+  ".item == 7 and .holder == \"$OTHER\" and .id == 100"
+check "a lapsed claim is no holder" "$(run holder 8)" '.item == 8 and .holder == null and .id == null'
+check "holder reads the claim our session holds too" "$(run holder 9)" ".holder == \"$OURS\""
+if grep -E -- '-X (POST|PATCH|DELETE)' "$FAKE_STATE/calls.log" > /dev/null; then fail "holder writes nothing"; else pass "holder writes nothing"; fi
+
 # ---------------------------------------------------------------- confirm and renew
 
 use claims
