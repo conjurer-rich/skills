@@ -5,7 +5,12 @@ name: Delegate fire
 # delegating-github-issues skill's scripts/delegate-fire, which reads the
 # delegation state with the caller's GITHUB_TOKEN (no model, no cost) and,
 # only when there is work and a free lease slot, fires the scheduled task
-# whose prompt is /loop /delegate.
+# whose prompt is /delegate loop. With the reserve-token secret it fills
+# every free slot in one run, reserving each slot and issue first.
+#
+# A caller may also run it on issue and pull request events. Events the
+# delegator's own login caused are skipped, except a closed PR, which frees
+# a slot whoever closed it.
 #
 # Setup and a caller example:
 # skills/delivery/delegating-github-issues/references/delegate-fire.md
@@ -36,6 +41,9 @@ on:
       fire-token:
         description: The trigger's token
         required: false
+      reserve-token:
+        description: A token that writes issues as the delegator's login. When set, one run fills every free lease slot, reserving each one first; without it a run fires at most once
+        required: false
     outputs:
       fired:
         description: true when a chain was started
@@ -43,6 +51,13 @@ on:
 
 jobs:
   fire:
+    # Skip an event the delegator's own login caused: it labels issues and
+    # opens and readies PRs on every pass. A closed PR still runs, since a
+    # merge frees a slot whoever merged it.
+    if: >-
+      github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'pull_request' && github.event.action == 'closed') ||
+      github.event.sender.login != (inputs.delegator-login || github.repository_owner)
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -69,7 +84,8 @@ jobs:
       - name: Fire the delegator when it has work
         id: fire
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.reserve-token || github.token }}
+          RESERVE: ${{ secrets.reserve-token != '' }}
           # The Actions token is no user, so the gate cannot ask GitHub whose
           # markers are the delegator's own.
           DELEGATE_STATUS_LOGIN: ${{ inputs.delegator-login || github.repository_owner }}
@@ -79,6 +95,7 @@ jobs:
           DRY_RUN: ${{ inputs.dry-run }}
         run: |
           args=()
+          [ "$RESERVE" = true ] && args+=(--reserve)
           [ "$FORCE" = true ] && args+=(--force)
           [ "$DRY_RUN" = true ] && args+=(--dry-run)
           .delegate-fire-craft/skills/delivery/delegating-github-issues/scripts/delegate-fire ${args[@]+"${args[@]}"}

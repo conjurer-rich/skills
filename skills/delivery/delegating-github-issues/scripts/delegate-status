@@ -40,7 +40,7 @@
 #   delegate-status merge       <pr> --sha <verified head>             [options]
 #   delegate-status checks      <pr> [--head <sha>] [--wait <s>] [--fail-fast] [--table]
 #   delegate-status checks      --ref <branch or sha> [--table]        [options]
-#   delegate-status next-action                [--from <status file>] [--ticket <n> [--pr <p>]] [options]
+#   delegate-status next-action                [--from <status file>] [--ticket <n> [--pr <p>]] [--picks <n>] [options]
 #   delegate-status watch-digest --state <file> [--record] [--prs-only] [--interval 10] [--max-interval 60]
 #   delegate-status cost-note   <pr> --tool-calls <n> [--handoff]      [options]
 #   delegate-status cost        [--limit 10]                           [options]
@@ -66,6 +66,9 @@
 #                            review labels to match each issue's and PR's classification
 #   --from <file>            next-action only: classify this status output instead of reading GitHub
 #   --ticket <n> --pr <p>    next-action only: the chain's open ticket, issue and PR
+#   --picks <n>              next-action only: also list up to n issues a new chain
+#                            could pick, as `picks`, and the PRs a chain-less
+#                            session would finish, as `finish`
 #
 # Run it from the main checkout. status (without --sync-labels), next-action,
 # budget, issue, pr, checks, watch-digest, cost, merged-sizes and lease status
@@ -143,6 +146,7 @@ CHAIN=""
 TICKET=""
 PR=""
 TICKET_TTL=43200
+PICKS=""
 POSITIONAL=()
 
 while [ $# -gt 0 ]; do
@@ -194,6 +198,7 @@ while [ $# -gt 0 ]; do
     --ticket) TICKET="${2:-}"; shift 2 ;;
     --pr) PR="${2:-}"; shift 2 ;;
     --ticket-ttl) TICKET_TTL="${2:-}"; shift 2 ;;
+    --picks) PICKS="${2:-}"; shift 2 ;;
     -h|--help) usage ;;
     --*) die "unknown option $1" 2 ;;
     *) POSITIONAL+=("$1"); shift ;;
@@ -203,8 +208,8 @@ done
 [ "${#POSITIONAL[@]}" -gt 0 ] || usage
 COMMAND="${POSITIONAL[0]}"
 [ -n "$REPO" ] || die "--repo <owner/repo> is required" 2
-case "$CLAIM_TTL$MAX_WORKTREES$MAX_OPEN_PRS$MAX_CHAINS$LEASE_ISSUE$WAIT$LIMIT$EVERY$INTERVAL$MAX_INTERVAL$TOOL_CALLS$ADDRESSED$TICKET$PR$TICKET_TTL" in
-  *[!0-9]*) die "--claim-ttl, --max-worktrees, --max-open-prs, --max-chains, --lease-issue, --wait, --limit, --every, --interval, --max-interval, --tool-calls, --addressed, --ticket, --pr and --ticket-ttl take whole numbers" 2 ;;
+case "$CLAIM_TTL$MAX_WORKTREES$MAX_OPEN_PRS$MAX_CHAINS$LEASE_ISSUE$WAIT$LIMIT$EVERY$INTERVAL$MAX_INTERVAL$TOOL_CALLS$ADDRESSED$TICKET$PR$TICKET_TTL$PICKS" in
+  *[!0-9]*) die "--claim-ttl, --max-worktrees, --max-open-prs, --max-chains, --lease-issue, --wait, --limit, --every, --interval, --max-interval, --tool-calls, --addressed, --ticket, --pr, --ticket-ttl and --picks take whole numbers" 2 ;;
 esac
 [ -n "$TICKET_TTL" ] || die "--ticket-ttl takes a whole number" 2
 CHAIN="${CHAIN:-$SESSION}"
@@ -1366,12 +1371,17 @@ sync_labels() {
 # and no other issue or PR counts. A ticket whose PR merged or closed, whose
 # issue left the label or closed, or whose PR-less issue is blocked or another
 # chain's, is complete: `ticket` is null and the answer is as without one.
+#
+# With --picks <n> the answer also carries `picks`, the first n issues Pick
+# could take, in rank order, cut to the room left under max_open_prs, and
+# `finish`, the PRs a Watch or Land pass would act on. A spawner
+# (scripts/delegate-fire) starts one chain for each pick.
 next_action_of() {
   local ticket=null
   if [ -n "$TICKET" ]; then
     ticket="$(jq -nc --argjson i "$TICKET" --arg p "$PR" '{issue: $i, pr: (if $p == "" then null else ($p | tonumber) end)}')"
   fi
-  jq -c --argjson ticket "$ticket" '
+  jq -c --argjson ticket "$ticket" --argjson picks "${PICKS:-null}" '
     def budget_reason:
       "budget at limit: \(.budget.worktrees)/\(.budget.max_worktrees) worktrees, \(.budget.open_prs)/\(.budget.max_open_prs) open PRs awaiting a first look";
     def for_ticket($t):
@@ -1413,7 +1423,13 @@ next_action_of() {
             counts: .counts}
       end
       + (if $t == null then {} else {ticket: null} end)
-    end'
+    end
+    + (if $picks == null then {} else {
+        picks: (if .budget.at_limit then []
+                else [.issues[] | select(.state == "free" or (.state == "held" and .criteria != null and .reason == null))
+                      | {number, title}][:([$picks, .budget.max_open_prs - .budget.open_prs] | min | [., 0] | max)] end),
+        finish: [.prs[] | select(.class == "needs-review" or .class == "conflicted" or .class == "ready") | .number]}
+      end)'
 }
 
 cmd_next_action() {

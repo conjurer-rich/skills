@@ -1152,6 +1152,22 @@ check "an eligible issue over budget is idle, and says why" \
 check "claimed and idle PRs with no issue to pick are idle" \
   "$(from_status "{\"prs\": [{\"number\": 7, \"class\": \"claimed\", \"holder\": \"$OTHER\"}, {\"number\": 8, \"class\": \"idle\"}], \"pick\": null, \"budget\": $budget_ok, \"counts\": {\"waiting-on-human\": 2}}")" \
   ".action == \"idle\" and .reasons == [\"no eligible issue\", \"PR #7 is claimed by $OTHER\"] and .counts == {\"waiting-on-human\": 2}"
+# --picks lists the issues a spawner may start chains for (delegate-fire).
+picks_status='{"prs": [{"number": 4, "class": "ready"}, {"number": 5, "class": "claimed", "holder": "x"}, {"number": 6, "class": "needs-review"}],
+  "issues": [{"number": 9, "state": "free"}, {"number": 10, "state": "ticketed"}, {"number": 11, "state": "held", "criteria": "c"},
+             {"number": 12, "state": "waiting-on-human"}, {"number": 13, "state": "free"}, {"number": 14, "state": "free"}],
+  "pick": {"number": 9}, "budget": {"worktrees": 0, "max_worktrees": 1, "open_prs": 3, "max_open_prs": 6, "at_limit": false}, "counts": {}}'
+printf '%s' "$picks_status" > "$TMP/status.json"
+check "--picks lists eligible issues in rank order, cut to the room under max_open_prs" \
+  "$(run next-action --from "$TMP/status.json" --picks 10)" '[.picks[].number] == [9, 11, 13]'
+check "--picks lists no more than asked" "$(run next-action --from "$TMP/status.json" --picks 2)" '[.picks[].number] == [9, 11]'
+check "--picks lists the PRs a chain-less session would finish" \
+  "$(run next-action --from "$TMP/status.json" --picks 2)" '.finish == [4, 6]'
+check "--picks leaves the action as it was" "$(run next-action --from "$TMP/status.json" --picks 2)" '.action == "watch"'
+check "without --picks there are no picks" "$(run next-action --from "$TMP/status.json")" 'has("picks") | not'
+printf '%s' "$picks_status" | jq '.budget.at_limit = true' > "$TMP/status.json"
+check "--picks lists none at the budget limit" "$(run next-action --from "$TMP/status.json" --picks 5)" '.picks == []'
+
 if run next-action --from "$TMP/missing.json" > /dev/null 2>&1; then
   fail "next-action --from a missing file is a usage error"
 else
