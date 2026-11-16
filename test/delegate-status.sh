@@ -1271,11 +1271,28 @@ on_issue() { # n, comment json objects -> appended to comments-n.json
 }
 T_LIVE=2026-10-02T06:00:00Z     # 6 hours old
 T_LAPSED=2026-10-01T23:00:00Z   # 13 hours old
+T_ORPHAN=2026-10-02T07:00:00Z   # 5 hours old: past the 4-hour claim_ttl of these tests
+T_FRESH=2026-10-02T11:00:00Z    # 1 hour old
 TICKET_TTL=43200
 NEXT_CHAIN=f0e1d2c3
+WORKER=0a0b0c0d
+
+# A released claim of a delegator session, made at <at> and rewritten a
+# minute later. Posted beside a marker made at <at>, it shows the chain
+# worked the issue after setting its ticket, so the marker keeps ticket_ttl.
+# released_claim <id> <made> [rewritten] [session]
+released_claim() {
+  jq -nc --argjson id "$1" --arg at "$2" --arg up "${3:-}" --arg s "${4:-$WORKER}" \
+    '{id: $id, body: "Released by delegator session `\($s)`: waiting on the human.\n<!-- delegator claim-released: \($s) -->",
+      created_at: $at, updated_at: (if $up == "" then ($at | fromdateiso8601 + 60 | todate) else $up end), user: {login: "rich"}}'
+}
+worked() { # n [at]
+  on_issue "$1" "$(released_claim "$(( $1 * 100 + 55 ))" "${2:-$T_LIVE}")"
+}
 
 use status
 on_issue 31 "$(ticket_comment 3190 "$OTHER" none "$T_LIVE")"
+worked 31
 out="$(run status)"
 check "another chain's PR-less ticket marker makes the issue ticketed, with the chain" "$out" \
   "$(issue 31) | .state == \"ticketed\" and .holder == \"$OTHER\""
@@ -1299,16 +1316,18 @@ check "a ticket marker posted by another login is ignored" "$(run status)" "$(is
 # A host with no user token (a GitHub Actions gate) names the delegator's
 # login instead of asking GitHub whose token it holds.
 use status
-on_issue 31 "$(ticket_comment 3190 "$OTHER" none "$T_LIVE" mallory)"
+on_issue 31 "$(ticket_comment 3190 "$OTHER" none "$T_LIVE" mallory)" "$(released_claim 3155 "$T_LIVE" | jq -c '.user.login = "mallory"')"
 check "DELEGATE_STATUS_LOGIN names the login whose markers count" \
   "$(DELEGATE_STATUS_LOGIN=mallory run status)" "$(issue 31) | .state == \"ticketed\" and .holder == \"$OTHER\""
 check_not_called "api user" "DELEGATE_STATUS_LOGIN never asks GitHub for the token's user"
 
 use status
 on_issue 31 "$(ticket_comment 3190 "$OTHER" none "$T_LAPSED")"
+worked 31 "$T_LAPSED"
 check "a PR-less ticket marker lapses ticket_ttl after its last renewal" "$(run status)" "$(issue 31) | .state == \"free\""
 use status
 on_issue 31 "$(ticket_comment 3190 "$OTHER" none "$T_LIVE")"
+worked 31
 check "a PR-less ticket marker exactly ticket_ttl old has lapsed" \
   "$(RUN_NOW=$(($(jq -n --arg t "$T_LIVE" '$t | fromdateiso8601') + TICKET_TTL)) run status)" "$(issue 31) | .state == \"free\""
 check "a PR-less ticket marker one second short of ticket_ttl is live" \
@@ -1324,10 +1343,12 @@ check "a ticket marker whose PR merged or closed is not honoured" "$(run status)
 
 use status
 on_issue 36 "$(ticket_comment 3690 "$NEXT_CHAIN" none "$T_LIVE")"
+worked 36
 check "a live claim still wins over a ticket marker" "$(run status)" "$(issue 36) | .state == \"claimed\" and .holder == \"$OTHER\""
 
 use status
 on_issue 35 "$(ticket_comment 3590 "$OTHER" none "$T_LIVE")"
+worked 35
 jq 'map(if .number == 35 then .labels += [{name: "needs-answer"}] else . end)' \
   "$FAKE_STATE/issues.json" > "$FAKE_STATE/issues.tmp" && mv "$FAKE_STATE/issues.tmp" "$FAKE_STATE/issues.json"
 out="$(run status --sync-labels)"
@@ -1339,6 +1360,7 @@ check "Pick's cache never records a ticketed issue" "$(run status --cache "$FAKE
 
 use status
 on_issue 35 "$(ticket_comment 3590 "$OURS" none "$T_LIVE")"
+worked 35
 run status --cache "$FAKE_STATE/pick-cache.json" > /dev/null
 : > "$FAKE_STATE/calls.log"
 out="$(run status --cache "$FAKE_STATE/pick-cache.json")"
@@ -1359,6 +1381,7 @@ check "a chain that lost its ticket recovers it from the PR's issue and never pi
   '.action != "pick" and .ticket == {"issue": 14, "pr": 20, "id": 1490}'
 use status
 on_issue 14 "$(ticket_comment 1490 "$OURS" none "$T_LIVE")"
+worked 14
 check "this chain's PR-less marker on a delegated issue names the open PR" "$(run status)" '.ticket == {"issue": 14, "pr": 20, "id": 1490}'
 use status
 on_issue 14 "$(ticket_comment 1490 "$OTHER" 20 "$T_LIVE")"
@@ -1385,6 +1408,7 @@ check "the marker now names the PR" "$(cat "$FAKE_STATE/comments-31.json")" \
 
 use status
 on_issue 31 "$(ticket_comment 3190 "$OTHER" none "$T_LIVE")"
+worked 31
 status=0
 out="$(run ticket set 31 2> /dev/null)" || status=$?
 check "ticket set refuses an issue another chain holds as its ticket" "$out" '.result == "lost" and .holder == "'"$OTHER"'"'
@@ -1393,6 +1417,7 @@ check_not_called "-X POST" "a refused ticket set posts nothing"
 
 use status
 on_issue 31 "$(ticket_comment 3190 "$OTHER" none "$T_LAPSED")"
+worked 31 "$T_LAPSED"
 check "ticket set takes an issue whose other marker lapsed" "$(run ticket set 31)" '.result == "set" and .id == 900'
 use status
 on_issue 31 "$(ticket_comment 3190 "$OTHER" none "$T_LIVE" mallory)"
@@ -1400,7 +1425,7 @@ check "ticket set ignores a forged marker" "$(run ticket set 31)" '.result == "s
 
 # Two chains set a ticket at once: the lower id keeps it, the other withdraws.
 use status
-ticket_comment 890 "$OTHER" none "$T_LIVE" | jq -s '.' > "$FAKE_STATE/comments-31.json.next"
+{ ticket_comment 890 "$OTHER" none "$T_LIVE"; released_claim 891 "$T_LIVE"; } | jq -s '.' > "$FAKE_STATE/comments-31.json.next"
 status=0
 out="$(run ticket set 31 2> /dev/null)" || status=$?
 check "a chain that loses the race for a ticket reports lost" "$out" '.result == "lost" and .holder == "'"$OTHER"'"'
@@ -1410,6 +1435,7 @@ check_called "-X DELETE repos/acme/widgets/issues/comments/900" "the losing chai
 # ticket renew and heartbeat
 use status
 on_issue 31 "$(ticket_comment 3190 "$OURS" none "$T_LIVE")"
+worked 31
 out="$(run ticket renew 31 3190)"
 check "ticket renew renews this chain's live marker" "$out" '.item == 31 and .result == "renewed" and .id == 3190'
 check "the renewed marker carries the renewal time and keeps its marker line" "$(cat "$FAKE_STATE/comments-31.json")" \
@@ -1419,6 +1445,7 @@ check "the renewed marker carries the renewal time and keeps its marker line" "$
 # older id that outranks the chain that rightly took the issue since.
 use status
 on_issue 31 "$(ticket_comment 3190 "$OURS" none "$T_LAPSED")"
+worked 31 "$T_LAPSED"
 status=0
 out="$(run ticket renew 31 3190 2> /dev/null)" || status=$?
 check "ticket renew refuses a marker past ticket_ttl" "$out" '.result == "lost" and .id == 3190'
@@ -1427,6 +1454,7 @@ check_not_called "-X PATCH" "renewing a lapsed ticket writes nothing"
 
 use status
 on_issue 31 "$(ticket_comment 3190 "$OURS" none "$T_LIVE")" "$(ticket_comment 3191 "$OTHER" none "$T_LIVE")"
+worked 31
 status=0
 out="$(run ticket renew 31 3190 2> /dev/null)" || status=$?
 check "ticket renew refuses when another chain holds a newer ticket on the issue" "$out" '.result == "lost" and .holder == "'"$OTHER"'"'
@@ -1435,12 +1463,14 @@ check_not_called "-X PATCH" "renewing over another chain's ticket writes nothing
 
 use status
 on_issue 31 "$(ticket_comment 3190 "$OURS" none "$T_LAPSED")"
+worked 31 "$T_LAPSED"
 status=0
 DELEGATE_STATUS_BEATS=2 DELEGATE_STATUS_POLL=0 run ticket heartbeat 31 3190 > /dev/null 2>&1 || status=$?
 if [ "$status" -eq 4 ]; then pass "ticket heartbeat exits 4 on a lapsed marker"; else fail "ticket heartbeat exits 4 on a lapsed marker (got $status)"; fi
 check_not_called "-X PATCH" "a heartbeat on a lapsed ticket writes nothing"
 use status
 on_issue 31 "$(ticket_comment 3190 "$OURS" none "$T_LIVE")" "$(ticket_comment 3191 "$OTHER" none "$T_LIVE")"
+worked 31
 status=0
 DELEGATE_STATUS_BEATS=2 DELEGATE_STATUS_POLL=0 run ticket heartbeat 31 3190 > /dev/null 2>&1 || status=$?
 if [ "$status" -eq 4 ]; then pass "ticket heartbeat exits 4 when another chain holds a newer ticket"; else fail "ticket heartbeat exits 4 when another chain holds a newer ticket (got $status)"; fi
@@ -1448,6 +1478,7 @@ check_not_called "-X PATCH" "a heartbeat over another chain's ticket writes noth
 
 use status
 on_issue 31 "$(ticket_comment 3190 "$OURS" none "$T_LIVE")"
+worked 31
 out="$(DELEGATE_STATUS_BEATS=2 DELEGATE_STATUS_POLL=0 run ticket heartbeat 31 3190 --every 600 || true)"
 check "ticket heartbeat renews a live marker on each beat" "$out" '.result == "renewed"'
 if [ "$(grep -c -- "-X PATCH repos/acme/widgets/issues/comments/3190" "$FAKE_STATE/calls.log")" -eq 2 ]; then
@@ -1467,20 +1498,68 @@ check "a ticket with an open PR renews past ticket_ttl" "$(run ticket renew 31 3
 # ticket release
 use status
 on_issue 31 "$(ticket_comment 3190 "$OURS" none "$T_LIVE")"
+worked 31
 out="$(run ticket release 31 3190)"
 check "ticket release deletes this chain's marker" "$out" '.item == 31 and .result == "released" and .id == 3190'
-check "the released marker is gone" "$(cat "$FAKE_STATE/comments-31.json")" '. == []'
+check "the released marker is gone" "$(cat "$FAKE_STATE/comments-31.json")" 'all(.[]; .id != 3190)'
 use status
 on_issue 31 "$(ticket_comment 3190 "$OTHER" none "$T_LIVE")"
+worked 31
 status=0
 run ticket release 31 3190 > /dev/null 2>&1 || status=$?
 if [ "$status" -eq 3 ]; then pass "ticket release refuses another chain's marker"; else fail "ticket release refuses another chain's marker (got $status)"; fi
 check_not_called "-X DELETE" "another chain's marker is never deleted"
 use status
 on_issue 31 "$(ticket_comment 3190 "$OURS" none "$T_LIVE")"
+worked 31
 status=0
 run ticket release 32 3190 > /dev/null 2>&1 || status=$?
 if [ "$status" -eq 3 ]; then pass "ticket release refuses a marker on another issue"; else fail "ticket release refuses a marker on another issue (got $status)"; fi
+
+# An orphaned ticket: a marker its chain never worked under (delegate-fire
+# reserved it for a session that never started) lapses after claim_ttl, not
+# ticket_ttl. The 12-hour life starts only once a claim on the issue shows
+# the chain worked it.
+use status
+on_issue 31 "$(ticket_comment 3190 "$OTHER" none "$T_ORPHAN")"
+out="$(run status)"
+check "a marker with no claim after it lapses after claim_ttl" "$out" "$(issue 31) | .state == \"free\""
+check "Pick takes an issue whose orphaned ticket lapsed" "$out" '.pick.number == 31'
+check "status names the orphaned ticket that lapsed" "$out" \
+  "$(issue 31) | .lapsed_ticket == {\"chain\": \"$OTHER\", \"why\": \"unworked\"}"
+use status
+on_issue 31 "$(ticket_comment 3190 "$OTHER" none "$T_FRESH")"
+out="$(run status)"
+check "an unworked marker within claim_ttl still holds the issue" "$out" "$(issue 31) | .state == \"ticketed\" and .holder == \"$OTHER\""
+check "a live ticket names no lapsed one" "$out" "$(issue 31) | has(\"lapsed_ticket\") | not"
+# A claim released before the marker was posted is an earlier chain's work.
+use status
+on_issue 31 "$(released_claim 3150 2026-10-02T04:00:00Z)" "$(ticket_comment 3190 "$OTHER" none "$T_ORPHAN")"
+check "a claim touched only before the marker does not make it worked" "$(run status)" "$(issue 31) | .state == \"free\""
+use status
+on_issue 31 "$(ticket_comment 3190 "$OTHER" none "$T_ORPHAN")" "$(released_claim 3191 "$T_ORPHAN" | jq -c '.user.login = "mallory"')"
+check "a claim another login posted does not make a marker worked" "$(run status)" "$(issue 31) | .state == \"free\""
+# Work claims, then sets its ticket: the claim's release after the marker counts.
+use status
+on_issue 31 "$(released_claim 3150 2026-10-02T06:59:00Z 2026-10-02T07:20:00Z)" "$(ticket_comment 3190 "$OTHER" none "$T_ORPHAN")"
+check "a claim made before the marker and released after it makes it worked" "$(run status)" "$(issue 31) | .state == \"ticketed\""
+# A lapsed orphan stays lapsed when a later chain works the issue.
+use status
+on_issue 31 "$(ticket_comment 3190 "$OTHER" none "$T_ORPHAN")" "$(released_claim 3191 "$T_FRESH")"
+check "a claim made after an orphan lapsed does not revive it" "$(run status)" "$(issue 31) | .state == \"free\""
+use status
+on_issue 31 "$(ticket_comment 3190 "$OTHER" none "$T_ORPHAN")"
+check "ticket set takes an issue whose orphaned ticket lapsed" "$(run ticket set 31)" '.result == "set" and .id == 900'
+use status
+on_issue 31 "$(ticket_comment 3190 "$OURS" none "$T_ORPHAN")"
+status=0
+out="$(run ticket renew 31 3190 2> /dev/null)" || status=$?
+check "ticket renew refuses this chain's orphaned marker past claim_ttl" "$out" '.result == "lost" and .id == 3190'
+if [ "$status" -eq 4 ]; then pass "renewing an orphaned ticket exits 4"; else fail "renewing an orphaned ticket exits 4 (got $status)"; fi
+use status
+on_issue 31 "$(ticket_comment 3190 "$OURS" none "$T_ORPHAN")"
+check "ticket set takes this chain's own orphaned marker back" "$(run ticket set 31)" '.result == "set" and .id == 3190'
+check "the marker taken back is live again" "$(run status)" "$(issue 31) | .state == \"free\" and .ticket_id == 3190"
 
 # usage
 use status
