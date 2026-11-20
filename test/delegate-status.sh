@@ -2053,6 +2053,209 @@ for args in "lease" "lease bogus" "lease renew" "lease hand 300" "lease take --m
   if [ "$status" -eq 2 ]; then pass "'$args' is a usage error"; else fail "'$args' is a usage error (got $status)"; fi
 done
 
+# ---------------------------------------------------------------- assignee routing
+#
+# A team runs one delegator per GitHub login. With --assignee-routing on, an
+# issue is eligible for login L only while its human assignees are empty or
+# exactly [L]; a claim assigns L, and a --delete release unassigns L only
+# when that claim made the assignment. strict also skips unassigned issues
+# (delegate-fire routes those to their labeller first). Off, assignees are
+# never read. The token's user in these fixtures is "rich".
+
+assignees_fixture() { # issue logins... (a login ending [bot] is a Bot)
+  local n="$1"
+  shift
+  jq --argjson n "$n" --args '(.[] | select(.number == $n) | .assignees) =
+      [$ARGS.positional[] | {login: ., type: (if endswith("[bot]") then "Bot" else "User" end)}]' "$@" \
+    < "$FAKE_STATE/issues.json" > "$FAKE_STATE/issues.tmp"
+  mv "$FAKE_STATE/issues.tmp" "$FAKE_STATE/issues.json"
+}
+pr_author() { # pr login
+  jq --argjson n "$1" --arg l "$2" '(.[] | select(.number == $n) | .user) = {login: $l, type: "User"}' \
+    "$FAKE_STATE/prs.json" > "$FAKE_STATE/prs.tmp"
+  mv "$FAKE_STATE/prs.tmp" "$FAKE_STATE/prs.json"
+  if [ -f "$FAKE_STATE/pull-$1.json" ]; then
+    jq --arg l "$2" '.user = {login: $l, type: "User"}' "$FAKE_STATE/pull-$1.json" > "$FAKE_STATE/pull.tmp"
+    mv "$FAKE_STATE/pull.tmp" "$FAKE_STATE/pull-$1.json"
+  fi
+}
+routed_fixture() {
+  use status
+  assignees_fixture 31 bob
+  assignees_fixture 33 rich
+  assignees_fixture 34 rich bob
+  assignees_fixture 35 'renovate[bot]'
+  pr_author 20 rich
+  pr_author 21 bob
+  pr_author 22 rich
+  pr_author 23 rich
+  pr_author 24 rich
+}
+
+routed_fixture
+off="$(run status --max-worktrees 5 --land on)"
+check "routing off: an issue assigned to another login is still eligible" "$off" \
+  "$(issue 31) | .state == \"free\""
+check "routing off: the pick is unchanged" "$off" '.pick.number == 31'
+check "routing off: every delegated PR is classified" "$off" '[.prs[].number] == [20, 21, 22, 23, 24]'
+check_not_called "assignees" "routing off writes no assignee"
+
+routed_fixture
+out="$(run status --max-worktrees 5 --land on --assignee-routing on)"
+check "routing on: an issue assigned to another human is assigned, with its logins" "$out" \
+  "$(issue 31) | .state == \"assigned\" and .assignees == [\"bob\"]"
+check "routing on: an issue assigned to this login alone stays eligible" "$out" "$(issue 33) | .state == \"free\""
+check "routing on: an issue assigned to this login and another is assigned" "$out" \
+  "$(issue 34) | .state == \"assigned\" and .assignees == [\"rich\", \"bob\"]"
+check "routing on: a bot assignee does not count" "$out" "$(issue 35) | .state != \"assigned\""
+check "routing on: an unassigned issue stays eligible" "$out" "$(issue 36) | .state != \"assigned\""
+check "routing on: an assigned issue is never picked" "$out" '.pick.number == 38'
+check "routing on: only this login's delegated PRs are classified" "$out" '[.prs[].number] == [20, 22, 23, 24]'
+check "routing on: the budget still counts every open PR" "$out" '.budget.open_prs == 4'
+check "routing on: assigned issues are counted" "$out" '.counts.assigned == 2'
+
+routed_fixture
+out="$(run next-action --max-worktrees 5 --land on --assignee-routing on --picks 10)"
+check "next-action names each skipped issue with the reason assigned and the logins" "$out" \
+  '.skipped == [{"number": 31, "reason": "assigned", "assignees": ["bob"]}, {"number": 34, "reason": "assigned", "assignees": ["rich", "bob"]}]'
+check "next-action --picks never lists an assigned issue" "$out" '[.picks[].number] | (index(31) == null and index(34) == null)'
+check "next-action finishes only this login's PRs" "$out" '.finish == [20]'
+check "next-action routing on writes nothing" "$(grep -c -- ' -X ' "$FAKE_STATE/calls.log" || true)" '. == 0'
+
+routed_fixture
+out="$(run next-action --max-worktrees 5 --land on --picks 10)"
+check "next-action routing off carries no skipped key" "$out" 'has("skipped") | not'
+
+routed_fixture
+out="$(run status --max-worktrees 5 --land on --assignee-routing strict)"
+check "strict: an unassigned issue is skipped as unassigned" "$out" "$(issue 36) | .state == \"unassigned\""
+check "strict: an issue assigned to this login alone is eligible" "$out" "$(issue 33) | .state == \"free\""
+check "strict: the pick is the first issue assigned to this login" "$out" '.pick.number == 33'
+out="$(run status --max-worktrees 5 --land on --assignee-routing strict --as-assigned 36,38)"
+check "strict --as-assigned: an unassigned issue named there counts as this login's" "$out" \
+  "$(issue 36) | .state != \"unassigned\""
+check "strict --as-assigned: it can be picked" "$out" '.pick.number == 38'
+out="$(run next-action --max-worktrees 5 --land on --assignee-routing strict --picks 10)"
+check "strict: next-action names an unassigned skip" "$out" \
+  'any(.skipped[]; .number == 36 and .reason == "unassigned" and .assignees == [])'
+
+# Derived labels on another login's issues belong to that login's delegator.
+routed_fixture
+assignees_fixture 32 bob
+run status --max-worktrees 5 --land on --assignee-routing on --sync-labels > /dev/null
+check_not_called "issues/32/labels" "routing on: --sync-labels leaves another login's issue alone"
+
+if run status --assignee-routing maybe > /dev/null 2>&1; then
+  fail "--assignee-routing takes off, on or strict"
+else
+  pass "--assignee-routing takes off, on or strict"
+fi
+
+# issue: Work's eligibility check
+routed_fixture
+cp "$FAKE_STATE/issue-31.json" "$FAKE_STATE/issue-31.orig"
+jq '.assignees = [{login: "bob", type: "User"}]' "$FAKE_STATE/issue-31.orig" > "$FAKE_STATE/issue-31.json"
+check "issue: routing on reads another login's issue as assigned" \
+  "$(run issue 31 --assignee-routing on)" '.state == "assigned" and .assignees == ["bob"] and .eligible == false'
+check "issue: routing off ignores the assignees" "$(run issue 31)" '.state != "assigned"'
+
+# claim: assign this login once the claim wins
+claim_issue() { # n logins...
+  local n="$1"
+  shift
+  jq -n --argjson n "$n" --args '{number: $n, state: "open", assignees: [$ARGS.positional[] | {login: ., type: "User"}]}' "$@" \
+    > "$FAKE_STATE/issue-$n.json"
+}
+
+use claims
+claim_issue 8
+out="$(run claim 8 --assignee-routing on)"
+check "a won claim on an unassigned issue assigns this login" "$out" '.result == "won" and .assigned == true'
+check_called "-X POST repos/acme/widgets/issues/8/assignees -f assignees[]=rich" "the claim adds this login as assignee"
+check "the claim records that it made the assignment" \
+  "$(jq -c '[.[] | select(.id == 900) | .body]' "$FAKE_STATE/comments-8.json")" '.[0] | contains("<!-- delegator assigned: rich -->")'
+out="$(run release 8 900 --delete --assignee-routing on)"
+check "a --delete release reports the unassignment" "$out" '.result == "released" and .unassigned == true'
+check_called "-X DELETE repos/acme/widgets/issues/8/assignees -f assignees[]=rich" "a --delete release unassigns an assignment its claim made"
+
+use claims
+claim_issue 8 rich
+out="$(run claim 8 --assignee-routing on)"
+check "a won claim on an issue already assigned to this login assigns nothing" "$out" '.result == "won" and .assigned == false'
+check_not_called "-X POST repos/acme/widgets/issues/8/assignees" "no assignee is added twice"
+run release 8 900 --delete --assignee-routing on > /dev/null
+check_not_called "-X DELETE repos/acme/widgets/issues/8/assignees" "a --delete release keeps an assignment the claim did not make"
+
+use claims
+claim_issue 8
+run claim 8 --assignee-routing on > /dev/null
+run release 8 900 --reason "waiting on an answer" --assignee-routing on > /dev/null
+check_not_called "-X DELETE repos/acme/widgets/issues/8/assignees" "a release with a reason keeps this login assigned"
+
+use claims
+claim_issue 8 bob
+status=0
+out="$(run claim 8 --assignee-routing on 2> "$FAKE_STATE/stderr")" || status=$?
+check "a claim that finds another human assigned reports assigned" "$out" '.result == "assigned" and .assignees == ["bob"]'
+if [ "$status" -eq 4 ]; then pass "a claim that finds another human assigned exits 4"; else fail "a claim that finds another human assigned exits 4 (got $status)"; fi
+check_called "-X DELETE repos/acme/widgets/issues/comments/900" "it deletes its own claim"
+check_not_called "issues/8/labels" "it adds no progress label"
+check_not_called "-X POST repos/acme/widgets/issues/8/assignees" "it assigns nobody"
+
+use claims
+claim_issue 12
+jq '.pull_request = {url: "x"}' "$FAKE_STATE/issue-12.json" > "$FAKE_STATE/issue-12.tmp"
+mv "$FAKE_STATE/issue-12.tmp" "$FAKE_STATE/issue-12.json"
+out="$(run claim 12 --assignee-routing on)"
+check "a claim on a PR assigns nobody" "$out" '.result == "won" and (has("assigned") | not)'
+check_not_called "assignees" "a PR claim writes no assignee"
+
+use claims
+out="$(run claim 8)"
+check "routing off: a won claim carries no assigned key" "$out" 'has("assigned") | not'
+check_not_called "assignees" "routing off: a claim writes no assignee"
+if grep -qx 'api repos/acme/widgets/issues/8' "$FAKE_STATE/calls.log"; then
+  fail "routing off: a claim does not read the issue"
+else
+  pass "routing off: a claim does not read the issue"
+fi
+
+# assignees, assign and unassigned: the reads and the lock delegate-fire uses
+use claims
+claim_issue 8 'bob' 'dependabot[bot]'
+check "assignees names an issue's human assignees" "$(run_bare assignees 8)" \
+  '.item == 8 and .assignees == ["bob"] and .pr == false'
+out="$(run_bare assign 8 --to alice)"
+check "assign adds the login and prints the human assignees after it" "$out" \
+  '.item == 8 and .result == "assigned" and .assignees == ["alice", "bob"]'
+check_called "-X POST repos/acme/widgets/issues/8/assignees -f assignees[]=alice" "assign posts the assignee"
+if run_bare assign 8 > /dev/null 2>&1; then fail "assign without --to is a usage error"; else pass "assign without --to is a usage error"; fi
+
+use status
+assignees_fixture 31 bob
+printf '%s' '[{"event": "labeled", "label": {"name": "agent-ready"}, "actor": {"login": "carol"}},
+  {"event": "unlabeled", "label": {"name": "agent-ready"}, "actor": {"login": "carol"}},
+  {"event": "labeled", "label": {"name": "agent-ready"}, "actor": {"login": "bob"}},
+  {"event": "labeled", "label": {"name": "p2"}, "actor": {"login": "dave"}}]' > "$FAKE_STATE/timeline-36.json"
+out="$(run_bare unassigned)"
+check "unassigned lists labelled issues with no human assignee and no delegated PR" "$out" \
+  '[.issues[].number] == [32, 38, 33, 36, 37, 34, 35]'
+check "unassigned names the actor of the latest labeled event for the label" "$out" \
+  '.issues[] | select(.number == 36) | .labeller == "bob"'
+check "unassigned names no labeller without a labeled event" "$out" \
+  '.issues[] | select(.number == 32) | .labeller == null'
+check_called "repos/acme/widgets/issues/36/timeline" "unassigned reads the issue timeline"
+check_not_called "-X " "unassigned writes nothing"
+
+# lease status counts slots by the claim author's login
+use lease
+slots "$(slot_comment 100 "$OTHER" "$LIVE_AT")" "$(slot_comment 101 "$NEXT" "$LIVE_AT" | jq -c '.user.login = "bob"')" \
+  "$(slot_comment 102 x1 "$LAPSED_AT" | jq -c '.user.login = "bob"')"
+check "lease status with routing counts live slots by login" \
+  "$(run_bare lease status --max-chains 3 --assignee-routing on)" '.by_login == {"rich": 1, "bob": 1}'
+check "lease status without routing carries no by_login" \
+  "$(run_bare lease status --max-chains 3)" 'has("by_login") | not'
+
 echo ""
 
 if [ "$FAILURES" -gt 0 ]; then

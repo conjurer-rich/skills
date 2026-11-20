@@ -248,6 +248,17 @@ if [ "${args[0]:-}" = api ]; then
       jq --argjson id "$id" 'map(select(.id != $id))' "$f" > "$f.tmp"
       mv "$f.tmp" "$f"
       exit 0 ;;
+    POST\ repos/*/issues/*/assignees|DELETE\ repos/*/issues/*/assignees)
+      n="${path%/assignees}"; n="${n##*/}"
+      f="$state/issue-$n.json"
+      [ -f "$f" ] || jq -n --argjson n "$n" '{number: $n, state: "open", assignees: []}' > "$f"
+      if [ "$method" = POST ]; then
+        jq --arg l "$(field 'assignees[]')" '.assignees = ((.assignees // []) + [{login: $l, type: "User"}] | unique_by(.login))' "$f" > "$f.tmp"
+      else
+        jq --arg l "$(field 'assignees[]')" '.assignees = [(.assignees // [])[] | select(.login != $l)]' "$f" > "$f.tmp"
+      fi
+      mv "$f.tmp" "$f"
+      cat "$f"; exit 0 ;;
     POST\ repos/*/issues/*/labels) echo '[]'; exit 0 ;;
     DELETE\ repos/*/issues/*/labels/*)
       if [ -f "$state/labels-404" ]; then echo "gh: Label does not exist (HTTP 404)" >&2; exit 1; fi

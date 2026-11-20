@@ -23,7 +23,7 @@ Without a reserve token the script fires at most once per run:
 
 Before a `watch` or `land` fire, the gate re-reads the live claim on each PR it would finish with `delegate-status holder <n>`, the rule `claim` decides by, and leaves out the claimed ones. A Ready click both starts the workflow and wakes the PR's own subscribed session, which claims the PR to land it, so the first read can be stale by the time the gate fires. With every such PR claimed it fires nothing and reports `claimed (PR #N by <session>)`, unless a pick has a free slot, when it fires for the pick instead. A session started for a PR another session holds could only see the claim and stop.
 
-It reads the same parameters `/delegate` does from the project's `.claude/delegation.md` (`label`, `rank_labels`, `branch_prefix`, `progress_label`, `max_worktrees`, `max_open_prs`, `land`, `claim_ttl` and `max_chains`), plus `weekdays_only`, and refuses to run without that file.
+It reads the same parameters `/delegate` does from the project's `.claude/delegation.md` (`label`, `rank_labels`, `branch_prefix`, `progress_label`, `max_worktrees`, `max_open_prs`, `land`, `claim_ttl`, `max_chains` and `assignee_routing`), plus `weekdays_only` and, for a team, `roster` and `max_chains_per_login` (**Team setup** below), and refuses to run without that file.
 
 ### Filling every free slot
 
@@ -100,11 +100,99 @@ jobs:
       reserve-token: ${{ secrets.DELEGATOR_RESERVE_TOKEN }}
 ```
 
-The called workflow's job asks for the same read-only permissions, and a called workflow can never have more than its caller grants; the reserve token carries its own write access. A cron or event run has no inputs, so both flags read false.
+The called workflow's job declares no permissions of its own, so it runs with exactly what the caller grants, and a called workflow can never have more; the reserve token carries its own write access. A team caller grants `issues: write` too (**Team setup**). A cron or event run has no inputs, so both flags read false.
 
 The events wake the gate when something it waits on changes: an issue gains the label, a PR is marked Ready, is reviewed, or closes and frees a slot. The cron catches what no event announces, chiefly a slot that lapsed with a dead chain. A run that fires nothing costs a few seconds of Actions minutes, and the `concurrency` group queues runs, never overlaps them. Every run is cheap, and with a reserve token a run cannot double-fire for a slot or issue another run reserved, so the reusable workflow runs on every event by default. When the delegator has a login of its own, `skip-own-events: true` skips the events that login caused (every pass labels issues and opens or readies PRs), except a closed PR. Leave it off when the delegator posts as you, through your `gh` auth: the filter cannot tell its events from yours, and would skip your own labels, Ready clicks and reviews. A pull request from a fork gets no secrets, so the gate cannot fire on it; the next cron run catches up.
 
 Each run writes one line to its job summary: why it did not fire (`idle`, `weekend`, or `full` when the only work is a new issue and every slot is held), or `fired` with each new session's issue and id, and any failures. Read those lines, and `delegate-status cost`, after the first day, then tune `max_chains` or the cron.
+
+## Team setup
+
+Without a `roster` the gate assumes one delegator login and one trigger. A team in which each teammate runs the delegator as themselves, through their own `gh` login and their own scheduled task, needs one more rule: **one GitHub event wakes exactly one teammate's trigger, never two.** Claims and lease slots already exclude sessions across logins, so a second session would do no harm, but it would spend tokens only to find the first one's claim and stop. Ticket markers and the criteria 👍 count only for the login that posted them, so a reservation made for one teammate does not stop another teammate's session either. The roster routes each event to its owner instead, and the issue's assignee records who that is.
+
+### How events are routed
+
+Every rule fires at most one teammate's trigger. Each teammate's gate runs as that login (`DELEGATE_STATUS_LOGIN`) with `--assignee-routing strict`: it sees only issues assigned to that login alone, and only delegated PRs that login opened.
+
+| Event | Routes to |
+|---|---|
+| `issues` `labeled`, with the `label` parameter (any other label, the delegator's own `progress_label` included, is ignored) | The issue's one human assignee. With none, the event's sender: the gate assigns them, then fires. Several assignees, or an owner not on the roster, fire nothing, and the summary says why. |
+| `pull_request` `ready_for_review` or `closed`, and `pull_request_review` `submitted` | The PR's author, when its branch starts with `branch_prefix`. The `delegate-status holder` re-check still runs before a watch or land fire. |
+| `schedule` and `workflow_dispatch` | Each roster login in turn. First, each labelled issue with no human assignee and no delegated PR goes to the actor of its latest `labeled` event in the issue timeline, when that actor is on the roster, and is assigned to them before any gate runs. Any other is skipped and reported. |
+
+**Assigning is the lock between logins.** The assignment is made with the workflow token, and the workflow's `concurrency` group runs one gate at a time, so two runs can never assign one issue to two people. That is why a team's caller grants `issues: write`. A teammate's own session keeps the lock too: with `assignee_routing` on, its `claim` assigns its login, re-reads the assignees first and backs off when someone else was assigned, and only a `--delete` release undoes an assignment its claim made (**Claims** in `SKILL.md`). Set `assignee_routing` to `on` (or `strict`) in the Parameters table so the sessions follow the same rule as the gate.
+
+An assignment made with the workflow's `GITHUB_TOKEN` starts no new workflow run: GitHub does not start workflows for events that token causes, other than `workflow_dispatch` and `repository_dispatch`. The caller below does not listen for `assigned` events either, so the gate's own assignments never wake it again.
+
+The timeline read that finds an issue's labeller (`GET /repos/{owner}/{repo}/issues/{n}/timeline`, whose `labeled` events carry `actor` and `label`) needs only `issues: read`, which the caller grants already. `delegate-status` already reads PR timelines with the same token.
+
+**Slots.** `max_chains` stays one pool for the whole team: claims and slots work across logins. Each login's gate sees the free slots left after the logins gated before it in the same run, counting a fire this run made without reserving as a slot taken. With `max_chains_per_login` set, the gate counts live lease slots by their comment's author and fires no pick for a login already at that many (`cap`); a login at its cap still gets a watch or land fire, since the lease caps new work, never finishing.
+
+**Reserving.** A login reserves its slots and issues, as `--reserve` does, only when its entry in the triggers secret has a `reserve_token`, a token of that login (scoped as in step 4 of **Setup**). Without one, that login gets at most one fire per run. The workflow's `reserve-token` secret is not used with a roster.
+
+### Setting it up
+
+1. **One scheduled task and API trigger per teammate**, each created by that teammate on their own claude.ai account, as steps 1 and 2 of **Setup** describe. Each fired session runs `/delegate loop` as its owner, through that owner's GitHub connector.
+2. **One repository secret**, for example `DELEGATOR_TRIGGERS`, holding one JSON object that maps each login to its trigger, and optionally its reserve token:
+
+   ```json
+   {
+     "alice": {"url": "https://api.anthropic.com/v1/…/fire", "token": "…", "reserve_token": "github_pat_…"},
+     "bob": {"url": "https://api.anthropic.com/v1/…/fire", "token": "…"}
+   }
+   ```
+
+   One secret means the reusable workflow takes one secret input and never builds secret names at run time. A roster login with no entry is reported as `no trigger` and never fired, nor assigned an issue.
+3. **The roster and routing** in `.claude/delegation.md`:
+
+   ```markdown
+   | `roster` | `alice`, `bob` |
+   | `assignee_routing` | on |
+   | `max_chains` | 4 |
+   | `max_chains_per_login` | 2 |
+   ```
+
+4. **The caller workflow**, as below. It differs from the single-login one in its `issues: write` permission and the `triggers` secret.
+
+```yaml
+name: Delegator fire
+
+on:
+  schedule:
+    - cron: "*/15 * * * 1-5"
+  issues:
+    types: [labeled]
+  pull_request:
+    types: [ready_for_review, closed]
+  pull_request_review:
+    types: [submitted]
+  workflow_dispatch:
+    inputs:
+      dry-run:
+        description: Decide and report, but never assign or fire
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+  issues: write # the gate assigns each issue to its owner: the lock between logins
+  pull-requests: read
+  checks: read
+  statuses: read
+
+jobs:
+  fire:
+    uses: conjurer-rich/skills/.github/workflows/delegate-fire.yml@v6.4.0
+    with:
+      craft-ref: v6.4.0
+      dry-run: ${{ inputs.dry-run == true }}
+    secrets:
+      triggers: ${{ secrets.DELEGATOR_TRIGGERS }}
+```
+
+The routing inputs (the event's name and action, the issue or PR number, the label, the sender, the PR's author and branch) come from the event context inside the reusable workflow, never from the caller. Leave `skip-own-events` off: every teammate's label and Ready click is an event of a login on the roster. Run it by hand with `dry-run` on first: the summary shows whom each issue would be assigned to and what each login's gate would do, and nothing is assigned or fired.
+
+Each run writes one line per routing decision (`#12: assigned to bob (labelled by bob)`, `#13: skipped (labelled by carol, who is not on the roster)`, `#9: ambiguous assignees (alice, bob)`) and one per login whose gate ran: `fired` with its issue or PR and session, or why not (`idle`, `full`, `cap`, `claimed`, `no trigger`).
 
 ## Without the reusable workflow
 
@@ -114,7 +202,7 @@ The script runs anywhere with `bash`, `git`, `gh`, `jq` and `curl`, from the pro
 DELEGATE_FIRE_URL=… DELEGATE_FIRE_TOKEN=… GH_TOKEN=… DELEGATE_STATUS_LOGIN=… scripts/delegate-fire --dry-run
 ```
 
-Add `--reserve`, with `DELEGATE_FIRE_RESERVE_TOKEN` set to a token that writes issues as the delegator's login; unset, `GH_TOKEN` must do both.
+Add `--reserve`, with `DELEGATE_FIRE_RESERVE_TOKEN` set to a token that writes issues as the delegator's login; unset, `GH_TOKEN` must do both. With a roster, set `DELEGATE_FIRE_TRIGGERS` instead of the URL and token, give `GH_TOKEN` issues write access, and pass the event with `--event <name> --action <a> --number <n>` plus `--label` and `--sender` (an issue event) or `--author` and `--head` (a PR event); with no `--event` it gates every login, as a cron run does.
 
 `DELEGATE_STATUS_LOGIN` is the login the delegator posts as. Only markers and claims that login posted count, so the gate must know it. With a personal token it can be left unset: the token's user is the login.
 

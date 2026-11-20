@@ -157,6 +157,7 @@ v="$(param max_worktrees)" && [ -n "$v" ] && STATUS_ARGS+=(--max-worktrees "$v")
 v="$(param max_open_prs)" && [ -n "$v" ] && STATUS_ARGS+=(--max-open-prs "$v")
 v="$(param land)" && [ -n "$v" ] && STATUS_ARGS+=(--land "$v")
 v="$(param claim_ttl)" && [ -n "$v" ] && STATUS_ARGS+=(--claim-ttl "$(ttl_seconds "$v")")
+v="$(param assignee_routing)" && [ -n "$v" ] && [ "$v" != off ] && STATUS_ARGS+=(--assignee-routing "$v")
 
 log() {
   printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$1" | tee -a "$LOG" >&2

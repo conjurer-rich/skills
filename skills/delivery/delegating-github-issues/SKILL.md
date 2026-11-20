@@ -39,6 +39,7 @@ The calling command supplies these; defaults apply when it does not, and keep th
 | `claim_ttl` | 45 minutes | A claim with no heartbeat for this long lapses, and another session may take the item |
 | `progress_label` | `in-progress` | On an item only during a live claim on it, never for a ticket alone |
 | `answer_label`, `blocked_label`, `review_label` | `needs-answer`, `blocked`, `awaiting-review` | Derived, ticketed issues too: human must answer; blocked; PR to review |
+| `assignee_routing`, `roster`, `max_chains_per_login` | off, none, none | Teams: `references/delegate-fire.md` |
 
 A project's **Verification scope** section replaces the `pre_pr_gate`'s complete-suite rule (`references/tiers.md`).
 
@@ -50,7 +51,7 @@ A comment **needs an answer** when it does not contain `<!-- delegator`, it does
 
 ## Claims
 
-Several delegator sessions can run at once through one `gh` login, so a session claims an issue (Work) or PR (Review, Land, Sync) with a comment before it changes anything. The claim comment is the lock: it ends `<!-- delegator claim: <session> -->`, it is live while its heartbeat is within `claim_ttl`, and the live claim with the lowest comment id wins, so two sessions that claim at once agree on one winner. `<progress_label>` only tells humans: the winner adds it and every release removes it, and it never decides who holds an item.
+Several delegator sessions can run at once, so a session claims an issue (Work) or PR (Review, Land, Sync) with a comment before it changes anything. The claim comment is the lock: it ends `<!-- delegator claim: <session> -->`, it is live while its heartbeat is within `claim_ttl`, and the live claim with the lowest comment id wins. `<progress_label>` only tells humans; it never decides who holds an item.
 
 **Session name.** Before its first claim, a session takes its hand-off line's `session name`, else 8 random hex characters. Not the **Session title**; the two never mix.
 
