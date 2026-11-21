@@ -1,0 +1,4 @@
+interface:
+  display_name: "Delete Comment"
+  short_description: "Classify and clear comments; keep decisions in ADRs"
+  default_prompt: "Use $delete-comment to clear the comments under this path: classify each, file Excuses as issues, move Decision Records to ADRs and tighten the ratchet."

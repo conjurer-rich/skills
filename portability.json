@@ -8,7 +8,8 @@
     "codebase-design",
     "grilling",
     "tdd-guardian",
-    "refactor-scan"
+    "refactor-scan",
+    "delete-comment"
   ],
   "claude-only": [
     "delegating-github-issues",

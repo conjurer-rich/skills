@@ -53,6 +53,7 @@
     "./skills/engineering/characterisation-tests",
     "./skills/engineering/ci-debugging",
     "./skills/engineering/debugging",
+    "./skills/engineering/delete-comment",
     "./skills/engineering/engineering-practice",
     "./skills/engineering/finding-seams",
     "./skills/engineering/front-end-testing",
