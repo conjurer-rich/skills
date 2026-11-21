@@ -83,7 +83,9 @@ underneath.
 - **A spare afternoon for upkeep.** `improve-codebase-architecture` surveys the
   codebase and ranks improvement candidates *(subagents)*; pick one and design
   it with `codebase-design` *(subagents)*. `reduce-system-complexity` removes mechanism from
-  a chosen path without changing behaviour.
+  a chosen path without changing behaviour. `delete-comment` clears a
+  folder's comments, keeping decisions in ADRs and filing hacks as issues
+  *(subagents)*.
 - **About to deploy a service.** `twelve-factor` for the design; run the
   `twelve-factor-audit` agent *(Claude Code)* before the first production deploy or when it
   works in one environment but not another. `observability` when you cannot

@@ -37,7 +37,7 @@ run in Codex:
 | Tier | In Codex | Items |
 | --- | --- | --- |
 | **portable** | works as in Claude Code | every skill not listed below |
-| **degrades** | runs its subagent parts one after another | `review`, `double-check`, `retro`, `grilling`, `codebase-design`, `improve-codebase-architecture`, `tdd-guardian`, `refactor-scan` |
+| **degrades** | runs its subagent parts one after another | `review`, `double-check`, `retro`, `grilling`, `codebase-design`, `improve-codebase-architecture`, `tdd-guardian`, `refactor-scan`, `delete-comment` |
 | **claude-only** | not available | `delegating-github-issues`, `/delegate`, `/review-requests`, `browser-ux-walkthrough`, the `adr`, `learn`, `twelve-factor-audit` and `delegate-*` agents, the Stop hook |
 
 `scripts/check-portability.py` keeps portable and degrades skills free of
