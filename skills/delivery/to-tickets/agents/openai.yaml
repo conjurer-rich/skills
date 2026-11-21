@@ -1,0 +1,4 @@
+interface:
+  display_name: "To Tickets"
+  short_description: "Turn sliced work into tracker tickets with blocking edges"
+  default_prompt: "Use $to-tickets to file this plan's slices as tickets."

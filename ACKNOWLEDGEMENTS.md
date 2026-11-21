@@ -12,7 +12,7 @@ here, or a row points at a notice that no longer exists.
   skills, agents and commands. MIT, root [`LICENSE`](LICENSE).
 - **Matt Pocock** ([`mattpocock/skills`](https://github.com/mattpocock/skills)):
   deep-module design and architecture-improvement skills, the `ask` router,
-  `retro`, `review`, the grilling skills, `writing-for-agents` and `teach`, and the repository shape this one borrows (buckets, explicit
+  `retro`, `review`, `to-tickets`, the grilling skills, `writing-for-agents` and `teach`, and the repository shape this one borrows (buckets, explicit
   `plugin.json` skill list).
 - **Adam Bulmer** ([`mintuz/skills`](https://github.com/mintuz/skills)):
   acceptance review, system-complexity reduction, code-shape rendering,
@@ -37,6 +37,7 @@ here, or a row points at a notice that no longer exists.
 | `grilling` | `mattpocock/skills` | MIT | Matt Pocock (2026) | `7739eaed` | [`skills/delivery/grilling/LICENSE`](skills/delivery/grilling/LICENSE) |
 | `grill-me` | `mattpocock/skills` | MIT | Matt Pocock (2026) | `b0618bc4` | [`skills/delivery/grill-me/LICENSE`](skills/delivery/grill-me/LICENSE) |
 | `grill-with-docs` | `mattpocock/skills` | MIT | Matt Pocock (2026) | `b0618bc4` | [`skills/delivery/grill-with-docs/LICENSE`](skills/delivery/grill-with-docs/LICENSE) |
+| `to-tickets` | `mattpocock/skills` | MIT | Matt Pocock (2026) | `abeeaf95` | [`skills/delivery/to-tickets/LICENSE`](skills/delivery/to-tickets/LICENSE) |
 | `writing-for-agents` | `mattpocock/skills` | MIT | Matt Pocock (2026) | `b0618bc4` | [`skills/writing/writing-for-agents/LICENSE`](skills/writing/writing-for-agents/LICENSE) |
 | `teach` | `mattpocock/skills` | MIT | Matt Pocock (2026) | `b0618bc4` | [`skills/writing/teach/LICENSE`](skills/writing/teach/LICENSE) |
 | `acceptance-review` | `mintuz/skills` | MIT | Adam Bulmer (2025) | `976d4a0c` | [`skills/delivery/acceptance-review/LICENSE`](skills/delivery/acceptance-review/LICENSE) |

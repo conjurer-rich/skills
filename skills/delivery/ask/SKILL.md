@@ -37,6 +37,8 @@ underneath.
 4. **Plan.** `planning` turns one child story into small, known-good
    increments (`/plan` starts it). When one slice is too big to review, add
    `stack-pull-requests`; `/continue` advances the stack after a merge.
+   `to-tickets` files the slices on the tracker, one ticket each, with
+   acceptance criteria and blocking edges, once you approve the list.
 5. **Build.** `tdd` drives every behaviour change, with `testing` for the
    test design and `refactoring` after each green. `typescript-strict` (or
    `python`) and `functional` apply to every line. `tdd-guardian` checks the
