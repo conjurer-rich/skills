@@ -50,6 +50,7 @@
     "./skills/delivery/stack-pull-requests",
     "./skills/delivery/story-splitting",
     "./skills/delivery/storyboard",
+    "./skills/delivery/to-tickets",
     "./skills/engineering/characterisation-tests",
     "./skills/engineering/ci-debugging",
     "./skills/engineering/debugging",

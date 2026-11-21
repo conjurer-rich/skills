@@ -32,6 +32,7 @@ For naming domain concepts, glossary work, or any new/changed domain term — th
 For broad stories, epics, features, or backlog items, load `story-splitting` to create child stories before planning.
 For tightening an existing story, plan, acceptance criteria set, or mock spec, load `find-gaps` to write confirmed answers back into the artifact.
 For significant implementation work, load `planning` to turn one selected child story or narrow capability into the repository's declared planning workflow and location; use `plans/` only as the documented fallback.
+For creating tracker issues or tickets from a sliced plan, child stories or a spec — one per vertical slice, with acceptance criteria and blocking edges, published only after the user approves the list — load `to-tickets`. It never applies the delegation label.
 When one planned vertical slice may be too large for review, or later slices should start on the same evolving baseline before lower PRs merge, load `stack-pull-requests` with `planning` to choose independent PRs or an explicit hard-/flow-lineage stack without turning technical layers into stories or slices.
 For multi-surface design audits before code (embed every mock in a scope on one reviewable page with flow diagram + gap cards + per-mock audit checklists), load the `storyboard` skill.
 
