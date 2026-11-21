@@ -153,6 +153,13 @@ expect "the eligibility label comes from the settings" grep -q -- '--label ready
 expect "max_worktrees comes from the settings" grep -q -- '--max-worktrees 2' <<< "$calls"
 expect "land comes from the settings" grep -q -- '--land on' <<< "$calls"
 expect "claim_ttl in hours becomes seconds" grep -q -- '--claim-ttl 14400' <<< "$calls"
+expect "without assignee_routing the gate reads no assignees" bash -c '! grep -q -- "--assignee-routing" <<< "$1"' _ "$calls"
+
+setup
+printf '| `assignee_routing` | on |\n' >> "$W/project/.claude/delegation.md"
+echo "$pick" > "$W/actions"
+loop --once > /dev/null || true
+expect "assignee_routing comes from the settings" grep -q -- '--assignee-routing on' "$W/status.calls"
 
 # ---------------------------------------------------------------- other CLIs
 

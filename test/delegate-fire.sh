@@ -91,7 +91,15 @@ case "$1 $2" in
     else
       echo "{\"item\":$2,\"holder\":null,\"id\":null}"
     fi ;;
-  next-action*) cat "$W/action" ;;
+  next-action*)
+    if [ -f "$W/action-${DELEGATE_STATUS_LOGIN:-}" ]; then cat "$W/action-$DELEGATE_STATUS_LOGIN"; else cat "$W/action"; fi ;;
+  assignees*)
+    if [ -f "$W/assignees-$2" ]; then cat "$W/assignees-$2"; else echo "{\"item\":$2,\"assignees\":[],\"pr\":false}"; fi ;;
+  assign*)
+    to="$(printf '%s\n' "$@" | sed -n '/^--to$/{n;p;}')"
+    if [ -f "$W/assign-$2" ]; then cat "$W/assign-$2"; else echo "{\"item\":$2,\"result\":\"assigned\",\"assignees\":[\"$to\"]}"; fi ;;
+  unassigned*)
+    if [ -f "$W/unassigned" ]; then cat "$W/unassigned"; else echo '{"issues":[]}'; fi ;;
   *) echo "unexpected call: $*" >&2; exit 2 ;;
 esac
 EOF
@@ -467,6 +475,250 @@ expect "the refusal says delegation is not set up" grep -q "no .claude/delegatio
 
 setup
 refuse "an unknown argument is refused" fire --bogus
+
+# ---------------------------------------------------------------- team routing
+#
+# Each teammate runs the delegator under their own login with their own
+# scheduled task and trigger. With a roster, one event wakes exactly one
+# teammate's trigger: an issue goes to its one human assignee, or to the
+# sender of the label event, who is assigned first (the assignment is the
+# lock between logins); a delegated PR goes to its author; a cron run gates
+# each login in turn, under strict assignee routing, after assigning each
+# unassigned labelled issue to whoever labelled it.
+
+team() { # roster line appended to the settings; triggers for alice and bob
+  setup
+  printf '| `roster` | `alice`, `bob` |\n' >> "$W/project/.claude/delegation.md"
+  echo "$idle" > "$W/action"
+  echo "$free" > "$W/lease"
+}
+TEAM_TRIGGERS='{"alice":{"url":"https://api.example.test/fire/alice","token":"sk-alice"},"bob":{"url":"https://api.example.test/fire/bob","token":"sk-bob"}}'
+tfire() {
+  (cd "$W/project" && PATH="$W/bin:$PATH" DELEGATE_STATUS="$W/bin/delegate-status" \
+    DELEGATE_FIRE_TRIGGERS="${TRIGGERS-$TEAM_TRIGGERS}" GH_TOKEN=workflow \
+    "$FIRE" "$@") > "$W/out" 2>&1
+}
+fired_for() { # login: the number of fires POSTed to that login's trigger
+  grep -c "fire/$1\]" "$W/curl.calls" 2> /dev/null || true
+}
+labeled() { # number sender [label]
+  tfire --event issues --action labeled --label "${3:-ready-for-agent}" --number "$1" --sender "$2"
+}
+
+team
+echo "$pick" > "$W/action-alice"
+expect "a label event on an unassigned issue exits 0" labeled 9 alice
+expect "the sender is assigned first" grep -q '^assign 9 .*--to alice' "$W/status.calls"
+expect "only the sender's trigger fires" test "$(fired_for alice)" -eq 1 -a "$(fired_for bob)" -eq 0
+expect "the fire carries the sender's token" grep -q '\[Authorization: Bearer sk-alice\]' "$W/curl.calls"
+expect "the gate runs as the sender" grep -q '^next-action .* login=alice$' "$W/status.calls"
+refuse "the gate never runs as anyone else" grep -q '^next-action .* login=bob$' "$W/status.calls"
+expect "a roster gate uses strict assignee routing" grep -q '^next-action .*--assignee-routing strict' "$W/status.calls"
+expect "the assignment is reported" grep -q 'delegate-fire: #9: assigned to alice (labelled by alice)' "$W/out"
+expect "the sender's line says it fired" grep -q 'delegate-fire: alice: fired (pick: issue #9 is eligible)' "$W/out"
+
+team
+echo "$pick" > "$W/action-bob"
+echo '{"item":9,"assignees":["bob"],"pr":false}' > "$W/assignees-9"
+expect "a label event on an issue assigned to bob exits 0" labeled 9 alice
+expect "only bob's trigger fires" test "$(fired_for bob)" -eq 1 -a "$(fired_for alice)" -eq 0
+refuse "an assigned issue is not assigned again" grep -q '^assign ' "$W/status.calls"
+
+team
+echo "$pick" > "$W/action"
+echo '{"item":9,"assignees":["alice","bob"],"pr":false}' > "$W/assignees-9"
+expect "several assignees exit 0" labeled 9 alice
+expect "several assignees fire nothing" test ! -e "$W/curl.calls"
+expect "several assignees say why" grep -q 'delegate-fire: #9: ambiguous assignees (alice, bob)' "$W/out"
+refuse "several assignees run no gate" grep -q '^next-action' "$W/status.calls"
+
+team
+echo "$pick" > "$W/action"
+echo '{"item":9,"assignees":["carol"],"pr":false}' > "$W/assignees-9"
+expect "an owner not on the roster exits 0" labeled 9 alice
+expect "an owner not on the roster fires nothing" test ! -e "$W/curl.calls"
+expect "an owner not on the roster is named" grep -q 'delegate-fire: #9: assigned to carol, who is not on the roster' "$W/out"
+
+team
+echo "$pick" > "$W/action"
+expect "a sender not on the roster exits 0" labeled 9 carol
+expect "a sender not on the roster fires nothing" test ! -e "$W/curl.calls"
+refuse "a sender not on the roster is not assigned" grep -q '^assign ' "$W/status.calls"
+expect "a sender not on the roster is named" grep -q 'delegate-fire: #9: labelled by carol, who is not on the roster' "$W/out"
+
+team
+echo "$pick" > "$W/action"
+expect "another label exits 0" labeled 9 alice in-progress
+expect "another label fires nothing" test ! -e "$W/curl.calls"
+refuse "another label reads nothing" grep -q '^assignees' "$W/status.calls"
+expect "another label is reported" grep -q 'delegate-fire: ignored (label in-progress is not ready-for-agent)' "$W/out"
+
+team
+echo "$pick" > "$W/action"
+echo '{"item":9,"result":"assigned","assignees":["alice","bob"]}' > "$W/assign-9"
+expect "an assignment that finds another human exits 0" labeled 9 alice
+expect "an assignment that finds another human fires nothing" test ! -e "$W/curl.calls"
+expect "it says why" grep -q 'delegate-fire: #9: ambiguous assignees (alice, bob)' "$W/out"
+
+team
+echo "$pick" > "$W/action-alice"
+expect "--dry-run on a label event exits 0" tfire --dry-run --event issues --action labeled --label ready-for-agent --number 9 --sender alice
+expect "--dry-run assigns nobody" bash -c '! grep -q "^assign " "$1"' _ "$W/status.calls"
+expect "--dry-run fires nothing" test ! -e "$W/curl.calls"
+expect "--dry-run says whom it would assign" grep -q 'delegate-fire: #9: would assign to alice (labelled by alice)' "$W/out"
+expect "--dry-run previews the gate with the issue as the sender's" grep -q '^next-action .*--as-assigned 9 .*login=alice$' "$W/status.calls"
+expect "--dry-run reports the sender's decision" grep -q 'delegate-fire: alice: would fire (pick: issue #9 is eligible)' "$W/out"
+
+# Pull request events go to the PR's author.
+pr_event() { # event action number author head
+  tfire --event "$1" --action "$2" --number "$3" --author "$4" --head "$5"
+}
+team
+echo "$land" > "$W/action-alice"
+expect "a Ready event on alice's delegated PR exits 0" pr_event pull_request ready_for_review 21 alice delegated/9-thing
+expect "only alice's trigger fires" test "$(fired_for alice)" -eq 1 -a "$(fired_for bob)" -eq 0
+
+team
+echo "$land_claimed" > "$W/action-alice"
+echo e5f6a7b8 > "$W/holder-21"
+expect "a Ready event on a PR another session holds exits 0" pr_event pull_request ready_for_review 21 alice delegated/9-thing
+expect "a Ready event on a held PR fires nothing" test ! -e "$W/curl.calls"
+expect "the holder is re-read" grep -q '^holder 21 ' "$W/status.calls"
+expect "alice's line names the claim" grep -q 'delegate-fire: alice: claimed (PR #21 by e5f6a7b8)' "$W/out"
+
+team
+echo "$watch" > "$W/action-bob"
+expect "a review on bob's delegated PR exits 0" pr_event pull_request_review submitted 20 bob delegated/7-x
+expect "only bob's trigger fires for his review" test "$(fired_for bob)" -eq 1 -a "$(fired_for alice)" -eq 0
+
+team
+echo "$land" > "$W/action"
+expect "a PR that is not delegated exits 0" pr_event pull_request ready_for_review 30 alice feature/x
+expect "a PR that is not delegated fires nothing" test ! -e "$W/curl.calls"
+expect "a PR that is not delegated is reported" grep -q 'delegate-fire: ignored (PR #30 is not a delegated PR)' "$W/out"
+
+team
+echo "$land" > "$W/action"
+expect "a PR by someone off the roster exits 0" pr_event pull_request closed 21 carol delegated/9-thing
+expect "a PR by someone off the roster fires nothing" test ! -e "$W/curl.calls"
+expect "its author is named" grep -q 'delegate-fire: PR #21: opened by carol, who is not on the roster' "$W/out"
+
+# A cron run gates each login, after routing unassigned issues.
+team
+echo "$pick" > "$W/action-alice"
+echo '{"action":"pick","reasons":["issue #12 is eligible"],"issue":12}' > "$W/action-bob"
+echo '{"issues":[{"number":12,"title":"a","labeller":"bob"},{"number":13,"title":"b","labeller":"carol"},{"number":14,"title":"c","labeller":null}]}' > "$W/unassigned"
+expect "a cron run exits 0" tfire --event schedule
+expect "an unassigned issue goes to its labeller" grep -q '^assign 12 .*--to bob' "$W/status.calls"
+refuse "an issue labelled off the roster is not assigned" grep -q '^assign 13 ' "$W/status.calls"
+refuse "an issue with no labeled event is not assigned" grep -q '^assign 14 ' "$W/status.calls"
+expect "the labeller's assignment is reported" grep -q 'delegate-fire: #12: assigned to bob (labelled by bob)' "$W/out"
+expect "an issue labelled off the roster is reported" grep -q 'delegate-fire: #13: skipped (labelled by carol, who is not on the roster)' "$W/out"
+expect "an issue with no labeled event is reported" grep -q 'delegate-fire: #14: skipped (no labeled event)' "$W/out"
+expect "each login is gated as itself" bash -c 'grep -q "^next-action .* login=alice$" "$1" && grep -q "^next-action .* login=bob$" "$1"' _ "$W/status.calls"
+expect "each login's lease is read as itself" grep -q '^lease status .*--assignee-routing strict.* login=bob$' "$W/status.calls"
+expect "each login fires its own trigger once" test "$(fired_for alice)" -eq 1 -a "$(fired_for bob)" -eq 1
+expect "bob's fire is for his issue" grep -q 'fire/bob\].*issue #12' "$W/curl.calls"
+expect "one line per login" bash -c 'grep -q "delegate-fire: alice: fired" "$1" && grep -q "delegate-fire: bob: fired" "$1"' _ "$W/out"
+
+team
+echo "$pick" > "$W/action-alice"
+echo "$pick" > "$W/action-bob"
+echo '{"lease":5,"result":"status","live":2,"slots":3,"free":1,"holders":["a","b"]}' > "$W/lease"
+expect "a cron run with one free slot exits 0" tfire --event schedule
+expect "one free slot fires one pick" test "$(wc -l < "$W/curl.calls")" -eq 1
+expect "the second login is full" grep -q 'delegate-fire: bob: full' "$W/out"
+
+team
+printf '| `max_chains_per_login` | 1 |\n' >> "$W/project/.claude/delegation.md"
+echo "$pick" > "$W/action-alice"
+echo "$pick" > "$W/action-bob"
+echo '{"lease":5,"result":"status","live":1,"slots":3,"free":2,"holders":["a1"],"by_login":{"alice":1}}' > "$W/lease"
+expect "a cron run with max_chains_per_login exits 0" tfire --event schedule
+expect "a login at its cap is not fired a pick" test "$(fired_for alice)" -eq 0
+expect "a login under its cap fires" test "$(fired_for bob)" -eq 1
+expect "the cap is reported" grep -q 'delegate-fire: alice: cap (1/1)' "$W/out"
+
+team
+printf '| `max_chains_per_login` | 1 |\n' >> "$W/project/.claude/delegation.md"
+echo "$land" > "$W/action-alice"
+echo '{"lease":5,"result":"status","live":1,"slots":3,"free":2,"holders":["a1"],"by_login":{"alice":1}}' > "$W/lease"
+expect "a login at its cap still finishes" tfire --event schedule
+expect "its land fires" test "$(fired_for alice)" -eq 1
+
+team
+echo "$pick" > "$W/action-alice"
+echo '{"issues":[{"number":12,"title":"a","labeller":"bob"}]}' > "$W/unassigned"
+expect "a cron --dry-run exits 0" tfire --event schedule --dry-run
+refuse "a cron --dry-run assigns nobody" grep -q '^assign ' "$W/status.calls"
+expect "a cron --dry-run fires nothing" test ! -e "$W/curl.calls"
+expect "a cron --dry-run says whom it would assign" grep -q 'delegate-fire: #12: would assign to bob (labelled by bob)' "$W/out"
+expect "a cron --dry-run previews bob's gate with the issue as his" grep -q '^next-action .*--as-assigned 12 .*login=bob$' "$W/status.calls"
+expect "a cron --dry-run reports each login" bash -c 'grep -q "delegate-fire: alice: would fire" "$1" && grep -q "delegate-fire: bob: idle" "$1"' _ "$W/out"
+TRIGGERS="" expect "a cron --dry-run needs no triggers" tfire --event schedule --dry-run
+
+team
+echo "$pick" > "$W/action-alice"
+echo "$pick" > "$W/action-bob"
+TRIGGERS='{"alice":{"url":"https://api.example.test/fire/alice","token":"sk-alice"}}' \
+  expect "a login with no trigger exits 0" tfire --event schedule
+expect "a login with no trigger is never fired" test "$(fired_for bob)" -eq 0
+expect "a login with no trigger is reported" grep -q 'delegate-fire: bob: no trigger' "$W/out"
+expect "the other login still fires" test "$(fired_for alice)" -eq 1
+
+team
+echo "$picks" > "$W/action-alice"
+echo "$pick" > "$W/action-bob"
+echo "$empty" > "$W/lease"
+TRIGGERS='{"alice":{"url":"https://api.example.test/fire/alice","token":"sk-alice","reserve_token":"rt-alice"},"bob":{"url":"https://api.example.test/fire/bob","token":"sk-bob"}}' \
+  expect "a cron run with one reserve token exits 0" tfire --event schedule
+expect "alice reserves with her own token" grep -q '^lease take token=rt-alice$' "$W/tokens"
+expect "alice's reservations are hers" grep -q '^lease take .* login=alice$' "$W/status.calls"
+expect "alice fills a slot per pick" test "$(fired_for alice)" -eq 3
+expect "bob, without a reserve token, fires once" test "$(fired_for bob)" -eq 1
+refuse "bob never reserves" grep -q '^lease take .* login=bob$' "$W/status.calls"
+
+team
+echo "$pick" > "$W/action"
+TRIGGERS="" refuse "a roster without triggers is refused" tfire --event schedule
+expect "the refusal names the variable" grep -q 'DELEGATE_FIRE_TRIGGERS' "$W/out"
+TRIGGERS="not json" refuse "triggers that are not JSON are refused" tfire --event schedule
+
+team
+touch "$W/summary" "$W/output"
+echo "$pick" > "$W/action-alice"
+(export GITHUB_STEP_SUMMARY="$W/summary" GITHUB_OUTPUT="$W/output"; tfire --event schedule)
+expect "each login's line goes to the step summary" bash -c 'grep -q "delegate-fire: alice: fired" "$1" && grep -q "delegate-fire: bob: idle" "$1"' _ "$W/summary"
+expect "fired=true when any login fired" grep -qx "fired=true" "$W/output"
+
+setup
+printf '| `assignee_routing` | on |\n' >> "$W/project/.claude/delegation.md"
+echo "$pick" > "$W/action"
+echo "$free" > "$W/lease"
+fire
+expect "assignee_routing reaches a single-login gate" grep -q -- '^next-action .*--assignee-routing on' "$W/status.calls"
+
+setup
+echo "$pick" > "$W/action"
+echo "$free" > "$W/lease"
+fire --event issues --action labeled --label ready-for-agent --number 9 --sender alice
+expect "without a roster, events change nothing" grep -q "delegate-fire: fired (pick: issue #9 is eligible)" "$W/out"
+refuse "without a roster, nobody is assigned" grep -q '^assign' "$W/status.calls"
+refuse "without a roster, the gate uses no routing" grep -q -- '--assignee-routing' "$W/status.calls"
+
+setup
+printf '| `assignee_routing` | sometimes |\n' >> "$W/project/.claude/delegation.md"
+refuse "an assignee_routing that is not off, on or strict is refused" fire
+
+expect "the reusable workflow takes the triggers secret" grep -q '      triggers:' "$WORKFLOW"
+expect "the reusable workflow passes the triggers to the script" grep -q 'DELEGATE_FIRE_TRIGGERS: ${{ secrets.triggers }}' "$WORKFLOW"
+expect "the routing inputs come from the event context" grep -q 'EVENT: ${{ github.event_name }}' "$WORKFLOW"
+expect "the label event's label reaches the script" grep -q 'LABEL: ${{ github.event.label.name }}' "$WORKFLOW"
+expect "the PR's author reaches the script" grep -q 'AUTHOR: ${{ github.event.pull_request.user.login }}' "$WORKFLOW"
+expect "the PR's branch reaches the script" grep -q 'HEAD_REF: ${{ github.event.pull_request.head.ref }}' "$WORKFLOW"
+expect "the called job takes the caller's permissions, so a read-only single-login caller still works" \
+  bash -c '! grep -q "^    permissions:" "$1"' _ "$WORKFLOW"
+expect "fire-url and fire-token are still taken" bash -c 'grep -q "      fire-url:" "$1" && grep -q "      fire-token:" "$1"' _ "$WORKFLOW"
 
 echo ""
 if [ "$FAILURES" -gt 0 ]; then

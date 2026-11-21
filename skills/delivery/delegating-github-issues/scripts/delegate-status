@@ -46,6 +46,9 @@
 #   delegate-status cost-note   <pr> --tool-calls <n> [--handoff]      [options]
 #   delegate-status cost        [--limit 10]                           [options]
 #   delegate-status merged-sizes [--limit 2]                           [options]
+#   delegate-status assignees   <n>                                    [options]
+#   delegate-status assign      <n> --to <login>                       [options]
+#   delegate-status unassigned                                         [options]
 #
 # Options (defaults are the skill's):
 #   --repo <owner/repo>      required
@@ -70,14 +73,31 @@
 #   --picks <n>              next-action only: also list up to n issues a new chain
 #                            could pick, as `picks`, and the PRs a chain-less
 #                            session would finish, as `finish`
+#   --assignee-routing off   off|on|strict. on: an issue is eligible only while its
+#                            human assignees are empty or exactly the delegator's
+#                            login (others read `assigned`, never picked, and listed
+#                            in next-action's `skipped`); status classifies only the
+#                            delegated PRs that login opened; a won claim on an issue
+#                            assigns the login, and a --delete release unassigns it
+#                            only when that claim made the assignment; lease status
+#                            adds `by_login`. strict: as on, and an unassigned issue
+#                            reads `unassigned` (delegate-fire routes those itself)
+#   --as-assigned <n,...>    status and next-action under strict: count these
+#                            unassigned issues as the login's (a dry run's preview of
+#                            an assignment it would make)
 #
 # Run it from the main checkout. status (without --sync-labels), next-action,
-# budget, issue, pr, holder, checks, watch-digest, cost, merged-sizes and lease status
-# write nothing to GitHub. Exit status:
+# budget, issue, pr, holder, checks, watch-digest, cost, merged-sizes, assignees,
+# unassigned and lease status write nothing to GitHub. assignees prints an
+# issue's human assignees; assign adds --to as an assignee and prints them
+# after; unassigned lists the --label issues with no human assignee and no
+# delegated PR, each with the actor of its latest `labeled` event for the
+# label (`labeller`, from the issue timeline). Exit status:
 # 0 done, 1 a gh or git call failed, 2 usage, 3 refused (the comment is
 # another session's, or a live claim backs the label), 4 another session
 # holds a live claim on the item (claim, heartbeat, lease heartbeat and hand),
 # or the ticket is another chain's or has lapsed (ticket set, renew, heartbeat),
+# or, under --assignee-routing, another human is assigned to the issue (claim),
 # 5 every lease slot is held by a live chain (lease take): exit, never retry.
 #
 # DELEGATE_STATUS_LOGIN names the delegator's GitHub login, for a token that
@@ -148,6 +168,8 @@ TICKET=""
 PR=""
 TICKET_TTL=43200
 PICKS=""
+ROUTING="off"
+AS_ASSIGNED=""
 POSITIONAL=()
 
 while [ $# -gt 0 ]; do
@@ -200,6 +222,8 @@ while [ $# -gt 0 ]; do
     --pr) PR="${2:-}"; shift 2 ;;
     --ticket-ttl) TICKET_TTL="${2:-}"; shift 2 ;;
     --picks) PICKS="${2:-}"; shift 2 ;;
+    --assignee-routing) ROUTING="${2:-}"; shift 2 ;;
+    --as-assigned) AS_ASSIGNED="${2:-}"; shift 2 ;;
     -h|--help) usage ;;
     --*) die "unknown option $1" 2 ;;
     *) POSITIONAL+=("$1"); shift ;;
@@ -216,6 +240,8 @@ esac
 CHAIN="${CHAIN:-$SESSION}"
 case "$CHAIN" in *[!0-9A-Za-z._-]*) die "--chain takes letters, digits, ., _ and -" 2 ;; esac
 case "$LAND" in on|off) ;; *) die "--land takes on or off" 2 ;; esac
+case "$ROUTING" in off|on|strict) ;; *) die "--assignee-routing takes off, on or strict" 2 ;; esac
+case "$AS_ASSIGNED" in *[!0-9,]*) die "--as-assigned takes issue numbers, comma-separated" 2 ;; esac
 
 NOW="${DELEGATE_STATUS_NOW:-$(date +%s)}"
 NOW_ISO="$(jq -nr --argjson n "$NOW" '$n | todate')"
@@ -245,7 +271,10 @@ def human_reply:
   {body, login: (.user.login // ""), type: (.user.type // "")} | needs_answer;
 def pr_norm:
   { number, title, isDraft: (.draft // false), headRefName: .head.ref, headRefOid: .head.sha,
-    createdAt: .created_at, labels: [.labels[]? | {name}], mergeable: .mergeable };
+    createdAt: .created_at, labels: [.labels[]? | {name}], mergeable: .mergeable, author: (.user.login // null) };
+# The logins of the human assignees of an issue: bots and GitHub Apps do not count.
+def human_assignees:
+  [.assignees // [] | .[] | select((.login // "" | endswith("[bot]") | not) and ((.type // "") != "Bot")) | .login];
 def human_review:
   (.user.login // "" | endswith("[bot]") | not) and ((.user.type // "") != "Bot")
   and (.body // "" | contains("<!-- delegator") | not) and .commit_id != null;
@@ -335,7 +364,17 @@ def cycle_line:
   else "issues \(.[:-1] | map("#\(.)") | join(", ")) and #\(.[-1]) block each other in a loop: remove one of the links" end;
 def issue_norm:
   { number, title, labels: [.labels[]? | {name}], createdAt: .created_at,
-    updatedAt: .updated_at, body, state: (.state | ascii_upcase) };
+    updatedAt: .updated_at, body, state: (.state | ascii_upcase), assignees: human_assignees };
+# Under assignee routing, why issue $i is not for $login to take, or null: a
+# human other than $login is assigned ("assigned"), or, strict, nobody is
+# ("unassigned"). $as lists issues to count as assigned to $login.
+def routing_skip($routing; $login; $as):
+  if $routing == "off" then null
+  else .number as $n
+    | (if .assignees == [] and ($as | index($n)) != null then [$login] else .assignees end) as $a
+    | if $a != [] and $a != [$login] then "assigned"
+      elif $routing == "strict" and $a == [] then "unassigned"
+      else null end end;
 '
 
 
@@ -464,6 +503,14 @@ ensure_label() {
     -f description="$description" > /dev/null || die "creating label $name failed"
 }
 
+# Why issue <json> is not <login>'s to take under assignee routing
+# (`assigned` or `unassigned`), or nothing.
+routing_skip_of() {
+  [ "$ROUTING" != off ] || return 0
+  printf '%s' "$1" | jq -r --arg r "$ROUTING" --arg l "$2" --argjson as "[$AS_ASSIGNED]" \
+    "$JQ_DEFS"'routing_skip($r; $l; $as) // empty'
+}
+
 # Every open PR in the repository, all authors, in the shape the classifiers read.
 open_prs() {
   list_of "repos/$REPO/pulls?state=open&per_page=100" | jq -c "$JQ_DEFS"'map(pr_norm)'
@@ -489,7 +536,7 @@ lost_claim() {
 cmd_claim() {
   need_session
   need_args 2
-  local n="${POSITIONAL[1]}" comments mine winner body
+  local n="${POSITIONAL[1]}" comments mine winner body reused=1 assigned=""
   comments="$(comments_of "$n")"
   mine="$(printf '%s' "$comments" | jq --argjson now "$NOW" --argjson ttl "$CLAIM_TTL" --arg s "$SESSION" \
     "$JQ_DEFS"'[live_claims($now; $ttl)[] | select(.session == $s) | .id] | first // empty')"
@@ -499,6 +546,7 @@ cmd_claim() {
   fi
   ensure_label
   if [ -z "$mine" ]; then
+    reused=0
     body="Claimed by delegator session \`$SESSION\` until released, or $(ttl_text) without a heartbeat.
 <!-- delegator claim: $SESSION -->"
     mine="$(gh_json api -X POST "repos/$REPO/issues/$n/comments" -f body="$body" | jq '.id')"
@@ -509,9 +557,53 @@ cmd_claim() {
     gh_json api -X DELETE "repos/$REPO/issues/comments/$mine" > /dev/null
     lost_claim "$n" "$winner"
   fi
+  if [ "$ROUTING" != off ]; then
+    claim_assign "$n" "$mine" "$reused"
+    assigned="$CLAIM_ASSIGNED"
+  fi
   gh_json api -X POST "repos/$REPO/issues/$n/labels" -f "labels[]=$PROGRESS_LABEL" > /dev/null
-  jq -nc --argjson n "$n" --argjson id "$mine" --argjson pr "$(open_pr_for "$n")" \
-    '{item: $n, result: "won", id: $id, open_pr: $pr}'
+  jq -nc --argjson n "$n" --argjson id "$mine" --argjson pr "$(open_pr_for "$n")" --arg a "$assigned" \
+    '{item: $n, result: "won", id: $id, open_pr: $pr} + if $a == "" then {} else {assigned: ($a == "true")} end'
+}
+
+# Assignee routing, once claim <id> on item <n> has won: re-read the issue's
+# assignees. Another human assigned since Pick read them makes the issue
+# theirs: release the claim as `release --delete` would and exit 4.
+# Otherwise assign the delegator's login, and record on the claim comment
+# that this claim made the assignment, so only a --delete release of it
+# undoes it. A PR is never assigned. Sets $CLAIM_ASSIGNED to true when the
+# claim made the assignment, false when it did not, or empty for a PR; call
+# it directly, not in $(...).
+CLAIM_ASSIGNED=""
+claim_assign() {
+  local n="$1" id="$2" reused="$3" issue login others marker body
+  issue="$(gh_json api "repos/$REPO/issues/$n")"
+  CLAIM_ASSIGNED=""
+  if printf '%s' "$issue" | jq -e 'has("pull_request")' > /dev/null; then
+    return
+  fi
+  login="$(delegator_login)"
+  body="$(gh_json api "repos/$REPO/issues/comments/$id" | jq -r '.body // ""')"
+  marker="<!-- delegator assigned: $login -->"
+  others="$(printf '%s' "$issue" | jq -c --arg l "$login" "$JQ_DEFS"'human_assignees | map(select(. != $l))')"
+  if [ "$others" != "[]" ]; then
+    case "$body" in
+      *"$marker"*) gh_json api -X DELETE "repos/$REPO/issues/$n/assignees" -f "assignees[]=$login" > /dev/null ;;
+    esac
+    [ "$reused" -eq 0 ] || remove_label "$n"
+    gh_json api -X DELETE "repos/$REPO/issues/comments/$id" > /dev/null
+    jq -nc --argjson n "$n" --argjson a "$others" '{item: $n, result: "assigned", assignees: $a}'
+    printf 'delegate-status: #%s is assigned to %s; stop, do not retry\n' "$n" "$(printf '%s' "$others" | jq -r 'join(", ")')" >&2
+    exit 4
+  fi
+  if printf '%s' "$issue" | jq -e --arg l "$login" "$JQ_DEFS"'human_assignees | index($l) != null' > /dev/null; then
+    case "$body" in *"$marker"*) CLAIM_ASSIGNED=true ;; *) CLAIM_ASSIGNED=false ;; esac
+    return
+  fi
+  gh_json api -X POST "repos/$REPO/issues/$n/assignees" -f "assignees[]=$login" > /dev/null
+  gh_json api -X PATCH "repos/$REPO/issues/comments/$id" -f body="$body
+$marker" > /dev/null
+  CLAIM_ASSIGNED=true
 }
 
 # The live claim on item <n>, by the rule claim decides with, as {item,
@@ -608,7 +700,7 @@ cmd_heartbeat() {
 cmd_release() {
   need_session
   need_args 3
-  local n="${POSITIONAL[1]}" id="${POSITIONAL[2]}" body comment winner
+  local n="${POSITIONAL[1]}" id="${POSITIONAL[2]}" body comment winner unassigned assignee
   if [ "$DELETE" -eq 0 ] && [ -z "$REASON" ]; then
     die "release takes --reason <text> or --delete" 2
   fi
@@ -628,6 +720,14 @@ cmd_release() {
   if [ "$winner" = null ] || [ "$(printf '%s' "$winner" | jq '.id')" = "$id" ]; then
     remove_label "$n"
   fi
+  # Only a --delete release undoes an assignment its own claim made: every
+  # other stop keeps the issue with this login.
+  unassigned=""
+  assignee="$(printf '%s' "$body" | sed -n 's/.*<!-- delegator assigned: \([^ ]*\) -->.*/\1/p' | head -n 1)"
+  if [ "$DELETE" -eq 1 ] && [ -n "$assignee" ]; then
+    gh_json api -X DELETE "repos/$REPO/issues/$n/assignees" -f "assignees[]=$assignee" > /dev/null
+    unassigned=true
+  fi
   if [ "$DELETE" -eq 1 ]; then
     gh_json api -X DELETE "repos/$REPO/issues/comments/$id" > /dev/null
   else
@@ -635,8 +735,8 @@ cmd_release() {
 <!-- delegator claim-released: $SESSION -->"
     gh_json api -X PATCH "repos/$REPO/issues/comments/$id" -f body="$body" > /dev/null
   fi
-  jq -nc --argjson n "$n" --argjson id "$id" --argjson deleted "$DELETE" \
-    '{item: $n, result: "released", id: $id, deleted: ($deleted == 1)}'
+  jq -nc --argjson n "$n" --argjson id "$id" --argjson deleted "$DELETE" --arg u "$unassigned" \
+    '{item: $n, result: "released", id: $id, deleted: ($deleted == 1)} + if $u == "" then {} else {unassigned: true} end'
 }
 
 # ---------------------------------------------------------------- lease
@@ -756,10 +856,13 @@ lease_status() {
   n="$(lease_issue peek)"
   [ -z "$n" ] || comments="$(comments_of "$n")"
   printf '%s' "$comments" | jq -c --argjson now "$NOW" --argjson ttl "$CLAIM_TTL" --argjson k "$SLOTS" \
-    --argjson n "${n:-null}" "$JQ_DEFS"'
-    live_claims($now; $ttl) as $live
+    --argjson n "${n:-null}" --arg r "$ROUTING" "$JQ_DEFS"'
+    (map({key: (.id | tostring), value: (.user.login // "")}) | from_entries) as $by
+    | live_claims($now; $ttl) as $live
     | {lease: $n, result: "status", live: ($live | length), slots: $k,
-       free: ([$k - ($live | length), 0] | max), holders: [$live[:$k][].session]}'
+       free: ([$k - ($live | length), 0] | max), holders: [$live[:$k][].session]}
+    + if $r == "off" then {}
+      else {by_login: ([$live[:$k][] | $by[.id | tostring]] | group_by(.) | map({(.[0]): length}) | add // {})} end'
 }
 
 lease_release() {
@@ -1284,7 +1387,7 @@ cmd_budget() {
 
 cmd_issue() {
   need_args 2
-  local issue pr
+  local issue pr skip
   issue="$(gh_json api "repos/$REPO/issues/${POSITIONAL[1]}" | jq -c "$JQ_DEFS"'issue_norm + {is_pr: has("pull_request")}')"
   if ! printf '%s' "$issue" | jq -e --arg l "$LABEL" '.state == "OPEN" and (.is_pr | not) and any(.labels[]; .name == $l)' > /dev/null; then
     printf '%s' "$issue" | jq -c '{number, title, eligible: false, state: "not-eligible"}'
@@ -1294,6 +1397,13 @@ cmd_issue() {
   if [ "$pr" != null ]; then
     printf '%s' "$issue" | jq -c --argjson pr "$pr" '{number, title, eligible: true, state: "delegated", pr: $pr, stale_label: false}'
     return
+  fi
+  if [ "$ROUTING" != off ]; then
+    skip="$(routing_skip_of "$issue" "$(delegator_login)")"
+    if [ -n "$skip" ]; then
+      printf '%s' "$issue" | jq -c --arg s "$skip" '{number, title, eligible: false, state: $s, assignees}'
+      return
+    fi
   fi
   blockers_of "$issue"
   issue_from_comments "$issue" "$(comments_of "${POSITIONAL[1]}")" "$(delegator_login)" "$BLOCKERS" \
@@ -1336,6 +1446,10 @@ cmd_status() {
         (ticket_markers($l; $now; $ttl; $cttl; $open; null) | map(select(.chain == $chain)) | first // null) as $tk
         | {number: $i.number, title: $i.title, state: "delegated", pr: $pr, stale_label: false}
         + if $tk == null then {} else {ticket_id: $tk.id} end')"
+    elif [ -n "$(routing_skip_of "$issue" "$login")" ]; then
+      # Another login's issue: its comments are never read, and it is never cached.
+      result="$(printf '%s' "$issue" | jq -c --arg s "$(routing_skip_of "$issue" "$login")" \
+        '{number, title, state: $s, assignees, stale_label: false}')"
     else
       cached="$(jq -nc --argjson c "$cache" --argjson i "$issue" --argjson now "$NOW" --argjson ttl "$CLAIM_TTL" '
         first($c[] | select(.number == $i.number)) // null
@@ -1382,7 +1496,8 @@ cmd_status() {
     pr="$(gh_json api "repos/$REPO/pulls/$(printf '%s' "$pr" | jq '.number')" | jq -c "$JQ_DEFS"'pr_norm')"
     result="$(pr_json "$pr" | jq -c 'del(.items, .handoff)')"
     pr_results="$(jq -c --argjson r "$result" '. + [$r]' <<< "$pr_results")"
-  done < <(printf '%s' "$prs" | jq -c --arg p "$PREFIX" '[.[] | select(.headRefName | startswith($p))] | sort_by(.createdAt) | .[]')
+  done < <(printf '%s' "$prs" | jq -c --arg p "$PREFIX" --arg r "$ROUTING" --arg l "$login" '
+    [.[] | select((.headRefName | startswith($p)) and ($r == "off" or .author == $l))] | sort_by(.createdAt) | .[]')
 
   budget="$(budget_json "$worktrees" "$prs")"
 
@@ -1434,7 +1549,7 @@ sync_labels() {
   ops="$(jq -nc --argjson i "$issues" --argjson r "$results" --argjson p "$prs" --argjson pr "$pr_results" \
       --arg a "$ANSWER_LABEL" --arg bl "$BLOCKED_LABEL" --arg rl "$REVIEW_LABEL" '
     ($i + $p | map({key: (.number | tostring), value: [.labels[].name]}) | from_entries) as $has
-    | [ ( $r[] | select(.state != "claimed") | .number as $n | ($has[$n | tostring] // []) as $l
+    | [ ( $r[] | select(.state != "claimed" and .state != "assigned" and .state != "unassigned") | .number as $n | ($has[$n | tostring] // []) as $l
           | ({label: $a, want: (.reason != null)}, {label: $bl, want: ((.blocked_by // []) != [])})
           | {number: $n, label, want, l: $l} ),
         ( $pr[] | select(.holder == null) | .number as $n
@@ -1483,6 +1598,10 @@ sync_labels() {
 # could take, in rank order, cut to the room left under max_open_prs, and
 # `finish`, the PRs a Watch or Land pass would act on. A spawner
 # (scripts/delegate-fire) starts one chain for each pick.
+#
+# Under --assignee-routing it also carries `skipped`, each issue that is not
+# this login's to take, with its reason (`assigned` or `unassigned`) and its
+# human assignees; an idle answer names the assigned ones in its reasons.
 next_action_of() {
   local ticket=null
   if [ -n "$TICKET" ]; then
@@ -1528,6 +1647,7 @@ next_action_of() {
       else {action: "idle",
             reasons: (if .pick != null and .budget.at_limit then [budget_reason] else ["no eligible issue"] end
                       + [.prs[] | select(.class == "claimed") | "PR #\(.number) is claimed by \(.holder)"]
+                      + [(.issues // [])[] | select(.state == "assigned") | "issue #\(.number) is assigned to \(.assignees | join(", "))"]
                       + [$cycles[] | cycle_line]),
             counts: .counts}
       end
@@ -1539,7 +1659,9 @@ next_action_of() {
                       | {number, title}][:([$picks, .budget.max_open_prs - .budget.open_prs] | min | [., 0] | max)] end),
         finish: [.prs[] | select(.class == "needs-review" or .class == "conflicted" or .class == "ready") | .number]}
       end)
-    + (if $cycles == [] then {} else {cycles: $cycles} end)'
+    + (if $cycles == [] then {} else {cycles: $cycles} end)
+    + ([(.issues // [])[] | select(.state == "assigned" or .state == "unassigned") | {number, reason: .state, assignees}] as $skipped
+       | if $skipped == [] then {} else {skipped: $skipped} end)'
 }
 
 cmd_next_action() {
@@ -1969,7 +2091,54 @@ cmd_merged_sizes() {
   jq -nc --argjson s "$sizes" '{prs: $s}'
 }
 
+# ---------------------------------------------------------------- assignees
+#
+# The reads and the write delegate-fire routes a team's events with. Assignees
+# are read and written through REST, like everything else here.
+
+# Issue <n>'s human assignees, and whether it is a pull request.
+cmd_assignees() {
+  need_args 2
+  gh_json api "repos/$REPO/issues/${POSITIONAL[1]}" \
+    | jq -c --argjson n "${POSITIONAL[1]}" "$JQ_DEFS"'{item: $n, assignees: human_assignees, pr: has("pull_request")}'
+}
+
+# Adds --to as an assignee of issue <n> and prints the human assignees after,
+# so a caller sees whether anyone else was assigned meanwhile.
+cmd_assign() {
+  need_args 2
+  case "$TO" in ''|*[!0-9A-Za-z-]*) die "assign takes --to <login>" 2 ;; esac
+  gh_json api -X POST "repos/$REPO/issues/${POSITIONAL[1]}/assignees" -f "assignees[]=$TO" \
+    | jq -c --argjson n "${POSITIONAL[1]}" "$JQ_DEFS"'{item: $n, result: "assigned", assignees: human_assignees}'
+}
+
+# The open --label issues with no human assignee and no open delegated PR, in
+# rank order, each with `labeller`: the actor of the latest `labeled` event
+# for --label in its timeline, or null.
+cmd_unassigned() {
+  local issues prs out="[]" issue n labeller
+  prs="$(open_prs)"
+  issues="$(list_of "repos/$REPO/issues?state=open&per_page=100&labels=$(uri "$LABEL")" \
+    | jq -c --arg r "$RANK_LABELS" --arg p "$PREFIX" --argjson prs "$prs" "$JQ_DEFS"'
+      map(select(has("pull_request") | not) | issue_norm | select(.assignees == [])
+          | .number as $n | select(any($prs[]; .headRefName | startswith("\($p)\($n)-")) | not))
+      | ($r | split(",") | map(select(length > 0))) as $ranks
+      | sort_by(([.labels[].name] as $names | ($ranks | index(first($ranks[] | select(. as $x | $names | index($x)))) // ($ranks | length))), .createdAt)
+      | map({number, title})')"
+  while IFS= read -r issue; do
+    [ -n "$issue" ] || continue
+    n="$(printf '%s' "$issue" | jq '.number')"
+    labeller="$(list_of "repos/$REPO/issues/$n/timeline?per_page=100" \
+      | jq -c --arg l "$LABEL" '[.[] | select(.event == "labeled" and .label.name == $l) | .actor.login] | last // null')"
+    out="$(jq -c --argjson i "$issue" --argjson w "$labeller" '. + [$i + {labeller: $w}]' <<< "$out")"
+  done < <(printf '%s' "$issues" | jq -c '.[]')
+  jq -nc --argjson i "$out" '{issues: $i}'
+}
+
 case "$COMMAND" in
+  assignees) cmd_assignees ;;
+  assign) cmd_assign ;;
+  unassigned) cmd_unassigned ;;
   status) cmd_status ;;
   next-action) cmd_next_action ;;
   budget) cmd_budget ;;

@@ -44,12 +44,44 @@
 # With weekdays_only on in the settings it fires nothing on a Saturday or
 # Sunday (UTC), unless forced.
 #
+# Team routing. With a `roster` in the settings (the logins taking part,
+# each running the delegator as themselves with their own scheduled task and
+# trigger), every run fires at most one teammate's trigger per event, so no
+# second session wakes only to find a claim and stop. Credentials come from
+# DELEGATE_FIRE_TRIGGERS, one JSON object mapping each login to {url, token,
+# reserve_token?}; a roster login with no entry is reported, never fired.
+# Each login's gate runs as that login (DELEGATE_STATUS_LOGIN) under strict
+# assignee routing: only issues assigned to that login alone, and PRs it
+# opened. The event decides whose gate runs:
+#   --event issues --action labeled, with --label the `label` parameter:
+#                  the issue's one human assignee; with none, the --sender,
+#                  who is assigned first. Several assignees, or an owner not
+#                  on the roster, fire nothing and say why. Any other label
+#                  is ignored;
+#   --event pull_request (ready_for_review, closed) or pull_request_review
+#                  (submitted): the PR's --author, when its --head starts
+#                  with `branch_prefix`; the holder re-check still applies;
+#   --event schedule, workflow_dispatch or none: every roster login in
+#                  turn, after assigning each unassigned labelled issue to
+#                  the actor of its latest `labeled` event, when that actor
+#                  is on the roster. Any other is skipped and reported.
+# Assigning is the lock between logins: it uses GH_TOKEN (the workflow
+# token, which needs issues: write), and the workflow's concurrency group
+# runs one gate at a time. A login reserves (as --reserve) only when its
+# entry has a reserve_token, else it gets at most one fire per run; --reserve
+# itself is ignored. With `max_chains_per_login` set, a login whose lease
+# slots (counted by claim author) are at that cap is fired no pick;
+# `max_chains` stays the overall cap, and a run's unreserved fires count
+# against it. Each login gets one report line.
+#
 # Run it from the project's checkout. The project's .claude/delegation.md
 # supplies the same parameters `/delegate` reads; without one it refuses to
 # start. Setup: references/delegate-fire.md.
 #
 # Usage:
 #   delegate-fire [--repo <owner/repo>] [--reserve] [--force] [--dry-run]
+#                 [--event <name> [--action <a>] [--number <n>] [--label <l>]
+#                  [--sender <login>] [--author <login>] [--head <branch>]]
 #
 # Options:
 #   --repo <owner/repo>   default: the origin remote
@@ -57,23 +89,44 @@
 #                         DELEGATE_FIRE_RESERVE_TOKEN (else GH_TOKEN) must
 #                         write issues as the delegator's login
 #   --force               fire whatever the gate says (to test the trigger)
-#   --dry-run             decide and report, but never fire; needs no secrets
+#   --dry-run             decide and report, but never assign or fire; needs
+#                         no secrets
+#   --event <name>        with a roster: the GitHub event that started the
+#                         run (github.event_name); --action its action, and
+#                         --number, --label, --sender, --author and --head
+#                         the issue or PR number, the label added, the event's
+#                         sender, and the PR's author and branch. Ignored
+#                         without a roster
+#
+# Settings (.claude/delegation.md Parameters table), beyond /delegate's own:
+#   weekdays_only         on: fire nothing on Saturday or Sunday (UTC)
+#   assignee_routing      off|on|strict, passed to the gate (a roster gate
+#                         always runs strict)
+#   roster                the logins taking part, comma-separated
+#   max_chains_per_login  the most lease slots one login may hold before it
+#                         is fired no pick
 #
 # Environment:
-#   DELEGATE_FIRE_URL     the scheduled task's API trigger URL
-#   DELEGATE_FIRE_TOKEN   the trigger's bearer token
-#   GH_TOKEN              read access to the repository's issues and PRs
+#   DELEGATE_FIRE_URL     the scheduled task's API trigger URL (no roster)
+#   DELEGATE_FIRE_TOKEN   the trigger's bearer token (no roster)
+#   DELEGATE_FIRE_TRIGGERS
+#                         with a roster: {"<login>": {"url": …, "token": …,
+#                         "reserve_token": …}, …}; reserve_token is optional
+#   GH_TOKEN              read access to the repository's issues and PRs;
+#                         with a roster, issues write too, to assign
 #   DELEGATE_FIRE_RESERVE_TOKEN
 #                         with --reserve, the token the reservations use:
 #                         issues read and write, pull requests read, as the
 #                         delegator's login. Unset, GH_TOKEN does both jobs
 #   DELEGATE_STATUS_LOGIN the login the delegator posts as; required when
-#                         GH_TOKEN is no user (a GitHub Actions token)
+#                         GH_TOKEN is no user (a GitHub Actions token). A
+#                         roster gate sets it to each login itself
 #
-# It prints one report line, which also goes to $GITHUB_STEP_SUMMARY, and
-# writes fired=true|false to $GITHUB_OUTPUT when they are set. Exit status:
+# It prints one report line (with a roster, one per routing decision and one
+# per login), which also goes to $GITHUB_STEP_SUMMARY, and writes
+# fired=true|false to $GITHUB_OUTPUT when they are set. Exit status:
 # 0 fired or nothing to do, 1 a gate, reservation or trigger failure (with
-# --reserve, after firing every other session), 2 usage.
+# --reserve or a roster, after firing every other session), 2 usage.
 # DELEGATE_STATUS overrides the bookkeeping script, DELEGATE_STATUS_NOW
 # (epoch seconds) the clock, for tests.
 #
@@ -97,6 +150,13 @@ REPO=""
 RESERVE=0
 FORCE=0
 DRY_RUN=0
+EVENT=""
+ACTION=""
+NUMBER=""
+EVENT_LABEL=""
+SENDER=""
+AUTHOR=""
+HEAD_REF=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -104,21 +164,49 @@ while [ $# -gt 0 ]; do
     --reserve) RESERVE=1; shift ;;
     --force) FORCE=1; shift ;;
     --dry-run) DRY_RUN=1; shift ;;
+    --event) EVENT="${2:-}"; shift 2 ;;
+    --action) ACTION="${2:-}"; shift 2 ;;
+    --number) NUMBER="${2:-}"; shift 2 ;;
+    --label) EVENT_LABEL="${2:-}"; shift 2 ;;
+    --sender) SENDER="${2:-}"; shift 2 ;;
+    --author) AUTHOR="${2:-}"; shift 2 ;;
+    --head) HEAD_REF="${2:-}"; shift 2 ;;
     -h|--help) usage ;;
     *) die "unknown argument $1" 2 ;;
   esac
 done
-
-# Checked before the gate, so a workflow missing its secrets fails on every
-# run, not only on the first one with work.
-if [ "$DRY_RUN" -eq 0 ]; then
-  [ -n "${DELEGATE_FIRE_URL:-}" ] || die "set DELEGATE_FIRE_URL to the scheduled task's API trigger URL" 2
-  [ -n "${DELEGATE_FIRE_TOKEN:-}" ] || die "set DELEGATE_FIRE_TOKEN to the trigger's token" 2
-fi
+case "$NUMBER" in *[!0-9]*) die "--number takes a number" 2 ;; esac
 
 CHECKOUT="$(git rev-parse --show-toplevel 2> /dev/null)" || die "run it from the project's checkout" 2
 SETTINGS="$CHECKOUT/.claude/delegation.md"
 [ -r "$SETTINGS" ] || die "this project has no .claude/delegation.md, so delegation is not set up here" 2
+
+# A parameter from the settings file's Parameters table: | `name` | value |.
+param() {
+  sed -n "s/^|[[:space:]]*\`$1\`[[:space:]]*|[[:space:]]*\([^|]*[^|[:space:]]\)[[:space:]]*|.*/\1/p" "$SETTINGS" \
+    | head -n 1 | tr -d '`'
+}
+
+ROSTER=()
+read -r -a ROSTER <<< "$(param roster | tr ',' ' ')" || true
+TEAM=0
+[ "${#ROSTER[@]}" -eq 0 ] || TEAM=1
+
+# Checked before the gate, so a workflow missing its secrets fails on every
+# run, not only on the first one with work.
+if [ "$DRY_RUN" -eq 0 ] && [ "$TEAM" -eq 0 ]; then
+  [ -n "${DELEGATE_FIRE_URL:-}" ] || die "set DELEGATE_FIRE_URL to the scheduled task's API trigger URL" 2
+  [ -n "${DELEGATE_FIRE_TOKEN:-}" ] || die "set DELEGATE_FIRE_TOKEN to the trigger's token" 2
+fi
+TRIGGERS="${DELEGATE_FIRE_TRIGGERS:-}"
+if [ "$TEAM" -eq 1 ]; then
+  if [ -z "$TRIGGERS" ] && [ "$DRY_RUN" -eq 0 ]; then
+    die "set DELEGATE_FIRE_TRIGGERS to a JSON object mapping each roster login to {url, token, reserve_token?}" 2
+  fi
+  if [ -n "$TRIGGERS" ] && ! printf '%s' "$TRIGGERS" | jq -e 'type == "object"' > /dev/null 2>&1; then
+    die "DELEGATE_FIRE_TRIGGERS is not a JSON object of logins" 2
+  fi
+fi
 
 if [ -z "$REPO" ]; then
   REPO="$(git -C "$CHECKOUT" remote get-url origin 2> /dev/null || true)"
@@ -127,12 +215,6 @@ if [ -z "$REPO" ]; then
   REPO="${REPO%.git}"
 fi
 [ -n "$REPO" ] || die "no origin remote; pass --repo <owner/repo>" 2
-
-# A parameter from the settings file's Parameters table: | `name` | value |.
-param() {
-  sed -n "s/^|[[:space:]]*\`$1\`[[:space:]]*|[[:space:]]*\([^|]*[^|[:space:]]\)[[:space:]]*|.*/\1/p" "$SETTINGS" \
-    | head -n 1 | tr -d '`'
-}
 
 # claim_ttl reads "45 minutes", "4 hours" or plain seconds.
 ttl_seconds() {
@@ -147,10 +229,12 @@ ttl_seconds() {
   esac
 }
 
+LABEL="$(param label)"
+PREFIX="$(param branch_prefix)"
 GATE_ARGS=(--repo "$REPO")
-v="$(param label)" && [ -n "$v" ] && GATE_ARGS+=(--label "$v")
+[ -z "$LABEL" ] || GATE_ARGS+=(--label "$LABEL")
 v="$(param rank_labels)" && [ -n "$v" ] && GATE_ARGS+=(--rank-labels "$(printf '%s' "$v" | tr -d ' ')")
-v="$(param branch_prefix)" && [ -n "$v" ] && GATE_ARGS+=(--prefix "$v")
+[ -z "$PREFIX" ] || GATE_ARGS+=(--prefix "$PREFIX")
 v="$(param progress_label)" && [ -n "$v" ] && GATE_ARGS+=(--progress-label "$v")
 v="$(param max_worktrees)" && [ -n "$v" ] && GATE_ARGS+=(--max-worktrees "$v")
 v="$(param max_open_prs)" && [ -n "$v" ] && GATE_ARGS+=(--max-open-prs "$v")
@@ -158,6 +242,21 @@ v="$(param land)" && [ -n "$v" ] && GATE_ARGS+=(--land "$v")
 v="$(param claim_ttl)" && [ -n "$v" ] && GATE_ARGS+=(--claim-ttl "$(ttl_seconds "$v")")
 MAX_CHAINS="$(param max_chains)"
 MAX_CHAINS="${MAX_CHAINS:-1}"
+LABEL="${LABEL:-agent-ready}"
+PREFIX="${PREFIX:-delegated/}"
+
+ROUTING="$(param assignee_routing)"
+case "${ROUTING:-off}" in
+  off|on|strict) ;;
+  *) die "assignee_routing in $SETTINGS takes off, on or strict: $ROUTING" 2 ;;
+esac
+if [ "$TEAM" -eq 1 ]; then
+  GATE_ARGS+=(--assignee-routing strict)
+elif [ "${ROUTING:-off}" != off ]; then
+  GATE_ARGS+=(--assignee-routing "$ROUTING")
+fi
+PER_LOGIN="$(param max_chains_per_login)"
+case "$PER_LOGIN" in *[!0-9]*) die "max_chains_per_login in $SETTINGS takes a whole number: $PER_LOGIN" 2 ;; esac
 
 WEEKDAYS_ONLY="$(param weekdays_only)"
 case "${WEEKDAYS_ONLY:-off}" in
@@ -166,18 +265,43 @@ case "${WEEKDAYS_ONLY:-off}" in
   *) die "weekdays_only in $SETTINGS takes on or off: $WEEKDAYS_ONLY" 2 ;;
 esac
 
-report() { # fired line
-  printf 'delegate-fire: %s\n' "$2"
-  [ -z "${GITHUB_STEP_SUMMARY:-}" ] || printf 'delegate-fire: %s\n' "$2" >> "$GITHUB_STEP_SUMMARY"
+# Report lines: printed, copied to the step summary, and, once the run is
+# decided, fired=true|false to the step outputs.
+say() {
+  printf 'delegate-fire: %s\n' "$1"
+  [ -z "${GITHUB_STEP_SUMMARY:-}" ] || printf 'delegate-fire: %s\n' "$1" >> "$GITHUB_STEP_SUMMARY"
+}
+output() {
   [ -z "${GITHUB_OUTPUT:-}" ] || printf 'fired=%s\n' "$1" >> "$GITHUB_OUTPUT"
 }
+report() { # fired line
+  say "$2"
+  output "$1"
+}
+
+# The trigger, the reserve token and the login one gate run uses. Without a
+# roster they are the single-login environment; a roster run sets them for
+# each login in turn.
+G_URL="${DELEGATE_FIRE_URL:-}"
+G_TOKEN="${DELEGATE_FIRE_TOKEN:-}"
+G_RESERVE_TOKEN="${DELEGATE_FIRE_RESERVE_TOKEN:-}"
+G_RESERVE="$RESERVE"
+G_LOGIN=""
+G_AS_ASSIGNED=""
+# Set by each gate run: its report line, whether it fired, and whether
+# anything failed. A run fires a pick without reserving it at most once per
+# login, so RUN_UNRESERVED counts those against the shared free slots.
+G_LINE=""
+G_FIRED=false
+G_FAILED=0
+RUN_UNRESERVED=0
 
 # POSTs one fire with the given text; prints the trigger's answer.
 fire_one() {
   local body
   body="$(jq -nc --arg t "$1" '{text: $t}')"
-  curl --fail-with-body --silent --show-error -X POST "$DELEGATE_FIRE_URL" \
-    -H "Authorization: Bearer $DELEGATE_FIRE_TOKEN" \
+  curl --fail-with-body --silent --show-error -X POST "$G_URL" \
+    -H "Authorization: Bearer $G_TOKEN" \
     -H "anthropic-beta: experimental-cc-routine-2026-04-01" \
     -H "anthropic-version: 2023-06-01" \
     -H "Content-Type: application/json" \
@@ -197,26 +321,6 @@ if [ "$WEEKDAYS_ONLY" -eq 1 ] && [ "$FORCE" -eq 0 ]; then
 fi
 
 cd "$CHECKOUT"
-# --picks also lists, as `finish`, the PRs a finishing session would act on.
-gate="$("$STATUS" next-action "${GATE_ARGS[@]}" --picks "$MAX_CHAINS")" || die "next-action failed; see the lines above"
-lease="$("$STATUS" lease status "${GATE_ARGS[@]}" --max-chains "$MAX_CHAINS")" || die "lease status failed; see the lines above"
-
-action="$(printf '%s' "$gate" | jq -r '.action')"
-reasons="$(printf '%s' "$gate" | jq -r '.reasons | join("; ")')"
-free="$(printf '%s' "$lease" | jq -r '.free')"
-holders="$(printf '%s' "$lease" | jq -r '.holders | join(", ")')"
-
-why=""
-if [ "$action" = idle ]; then
-  why="idle ($reasons)"
-elif [ "$action" = pick ] && [ "$free" -eq 0 ]; then
-  why="full ($holders)"
-fi
-
-summary="$action: $reasons"
-if [ "$action" != pick ] && [ "$free" -eq 0 ]; then
-  summary="$summary; the lease is full, so finish only"
-fi
 
 # Splits PR numbers into UNCLAIMED and CLAIMED ("PR #n by <session>"),
 # re-reading each one's live claim now, just before a fire.
@@ -237,13 +341,71 @@ claimed_text() {
   printf '%s' "${CLAIMED[*]}" | sed 's/,/, /g'
 }
 
-# ---------------------------------------------------------------- one fire
+# The reservations write as the delegator's login. Every other call keeps
+# GH_TOKEN, which in GitHub Actions is the workflow token: it reads PRs,
+# reviews and timelines that a narrowly scoped reserve token cannot.
+reserve() {
+  if [ -n "$G_RESERVE_TOKEN" ]; then
+    GH_TOKEN="$G_RESERVE_TOKEN" "$STATUS" "$@"
+  else
+    "$STATUS" "$@"
+  fi
+}
 
-if [ "$RESERVE" -eq 0 ] || [ "$FORCE" -eq 1 ]; then
+# One gate run: decide for one login and fire its trigger as needed. Sets
+# G_LINE, G_FIRED and G_FAILED; a gate read that fails exits.
+gate() {
+  local args=("${GATE_ARGS[@]}") gate lease action reasons free holders why summary cap held room answer
+  G_LINE=""
+  G_FIRED=false
+  [ -z "$G_AS_ASSIGNED" ] || args+=(--as-assigned "$G_AS_ASSIGNED")
+  # --picks also lists, as `finish`, the PRs a finishing session would act on.
+  gate="$("$STATUS" next-action "${args[@]}" --picks "$MAX_CHAINS")" || die "next-action failed; see the lines above"
+  lease="$("$STATUS" lease status "${GATE_ARGS[@]}" --max-chains "$MAX_CHAINS")" || die "lease status failed; see the lines above"
+
+  action="$(printf '%s' "$gate" | jq -r '.action')"
+  reasons="$(printf '%s' "$gate" | jq -r '.reasons | join("; ")')"
+  free="$(printf '%s' "$lease" | jq -r '.free')"
+  holders="$(printf '%s' "$lease" | jq -r '.holders | join(", ")')"
+  cap=""
+  if [ "$TEAM" -eq 1 ]; then
+    # A slot this run fired for without reserving is not on the lease yet.
+    free=$((free > RUN_UNRESERVED ? free - RUN_UNRESERVED : 0))
+    if [ -n "$PER_LOGIN" ]; then
+      held="$(printf '%s' "$lease" | jq -r --arg l "$G_LOGIN" '.by_login[$l] // 0')"
+      room=$((PER_LOGIN > held ? PER_LOGIN - held : 0))
+      if [ "$room" -lt "$free" ]; then
+        free="$room"
+        [ "$room" -gt 0 ] || cap="cap ($held/$PER_LOGIN)"
+      fi
+    fi
+  fi
+
+  why=""
+  if [ "$action" = idle ]; then
+    why="idle ($reasons)"
+  elif [ "$action" = pick ] && [ "$free" -eq 0 ]; then
+    why="${cap:-full ($holders)}"
+  fi
+
+  summary="$action: $reasons"
+  if [ "$action" != pick ] && [ "$free" -eq 0 ]; then
+    summary="$summary; the lease is full, so finish only"
+  fi
+
+  if [ "$G_RESERVE" -eq 0 ] || [ "$FORCE" -eq 1 ]; then
+    gate_one
+  else
+    gate_reserve
+  fi
+}
+
+# Without reservations: at most one fire.
+gate_one() {
   if [ -n "$why" ]; then
     if [ "$FORCE" -eq 0 ]; then
-      report false "$why"
-      exit 0
+      G_LINE="$why"
+      return
     fi
     summary="forced; the gate said $why"
   elif [ "$FORCE" -eq 0 ] && { [ "$action" = watch ] || [ "$action" = land ]; } \
@@ -254,119 +416,269 @@ if [ "$RESERVE" -eq 0 ] || [ "$FORCE" -eq 1 ]; then
       if [ "$free" -gt 0 ] && printf '%s' "$gate" | jq -e '(.picks // []) != []' > /dev/null; then
         summary="pick: $(printf '%s' "$gate" | jq -r '[.reasons[] | select(startswith("issue #"))] | join("; ")')"
       else
-        report false "claimed ($(claimed_text))"
-        exit 0
+        G_LINE="claimed ($(claimed_text))"
+        return
       fi
     elif [ "${#CLAIMED[@]}" -gt 0 ]; then
       summary="$summary; skipped $(claimed_text | sed 's/PR #\([0-9]*\) by /PR #\1, claimed by /g')"
     fi
   fi
   if [ "$DRY_RUN" -eq 1 ]; then
-    report false "would fire ($summary)"
-    exit 0
+    G_LINE="would fire ($summary)"
+    return
   fi
-  answer="$(fire_one "Started by delegate-fire. $summary")" || die "the trigger refused the fire: $answer"
-  report true "fired ($summary); trigger answered $answer"
-  exit 0
-fi
-
-# ---------------------------------------------------------------- reserve
-
-# The issues to start a chain for: the gate's picks, up to the free slots.
-picks="$(printf '%s' "$gate" | jq -r --argjson k "$free" '[.picks // [] | .[].number][:$k] | .[]')"
-finish_prs="$(printf '%s' "$gate" | jq -r '.finish // [] | .[]')"
-finish="$(printf '%s' "$finish_prs" | sed 's/^/#/' | paste -sd, - | sed 's/,/, /g')"
-if [ -z "$picks" ] && [ -z "$finish" ]; then
-  report false "${why:-idle ($reasons)}"
-  exit 0
-fi
-
-if [ "$DRY_RUN" -eq 1 ]; then
-  line="would fire"
-  [ -z "$picks" ] || line="$line a chain for each of $(printf '%s' "$picks" | sed 's/^/#/' | paste -sd, - | sed 's/,/, /g')"
-  [ -z "$finish" ] || line="$line; one session to finish PRs $finish"
-  report false "$line ($reasons)"
-  exit 0
-fi
-
-# The reservations write as the delegator's login. Every other call keeps
-# GH_TOKEN, which in GitHub Actions is the workflow token: it reads PRs,
-# reviews and timelines that a narrowly scoped reserve token cannot.
-reserve() {
-  if [ -n "${DELEGATE_FIRE_RESERVE_TOKEN:-}" ]; then
-    GH_TOKEN="$DELEGATE_FIRE_RESERVE_TOKEN" "$STATUS" "$@"
-  else
-    "$STATUS" "$@"
+  if ! answer="$(fire_one "Started by delegate-fire. $summary")"; then
+    [ "$TEAM" -eq 1 ] || die "the trigger refused the fire: $answer"
+    G_LINE="failed: the trigger refused the fire: $answer"
+    G_FAILED=1
+    return
   fi
+  [ "$free" -eq 0 ] || RUN_UNRESERVED=$((RUN_UNRESERVED + 1))
+  G_FIRED=true
+  G_LINE="fired ($summary); trigger answered $answer"
 }
 
-fired=()
-failed=()
-ERR="$(mktemp)"
-trap 'rm -f "$ERR"' EXIT
+# With reservations: a reserved chain for each pick up to the free slots,
+# and one session to finish the PRs no session holds.
+gate_reserve() {
+  local picks finish_prs finish fired=() failed=() n name taken slot ticket marker text line
+  picks="$(printf '%s' "$gate" | jq -r --argjson k "$free" '[.picks // [] | .[].number][:$k] | .[]')"
+  finish_prs="$(printf '%s' "$gate" | jq -r '.finish // [] | .[]')"
+  finish="$(printf '%s' "$finish_prs" | sed 's/^/#/' | paste -sd, - | sed 's/,/, /g')"
+  if [ -z "$picks" ] && [ -z "$finish" ]; then
+    G_LINE="${why:-idle ($reasons)}"
+    return
+  fi
 
-for n in $picks; do
-  name="$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n')"
-  if ! taken="$(reserve lease take "${GATE_ARGS[@]}" --max-chains "$MAX_CHAINS" --session "$name" 2> "$ERR")"; then
-    case "$taken" in
-      *'"result":"full"'*) break ;; # Another chain took the last slot.
-    esac
-    failed+=("#$n: lease take failed: $(tail -n 1 "$ERR")")
-    continue
+  if [ "$DRY_RUN" -eq 1 ]; then
+    line="would fire"
+    [ -z "$picks" ] || line="$line a chain for each of $(printf '%s' "$picks" | sed 's/^/#/' | paste -sd, - | sed 's/,/, /g')"
+    [ -z "$finish" ] || line="$line; one session to finish PRs $finish"
+    G_LINE="$line ($reasons)"
+    return
   fi
-  slot="$(printf '%s' "$taken" | jq -r '.id')"
-  if ! ticket="$(reserve ticket set "$n" "${GATE_ARGS[@]}" --session "$name" --chain "$name" 2> "$ERR")"; then
-    reserve lease release "$slot" "${GATE_ARGS[@]}" --max-chains "$MAX_CHAINS" --session "$name" > /dev/null 2>&1 || true
-    case "$ticket" in
-      *'"result":"lost"'*) continue ;; # Another chain took the issue first.
-    esac
-    failed+=("#$n: ticket set failed: $(tail -n 1 "$ERR")")
-    continue
-  fi
-  marker="$(printf '%s' "$ticket" | jq -r '.id')"
-  text="Started by delegate-fire for issue #$n. Delegator hand-off from delegate-fire; session name $name; ticket #$n chain $name."
-  if ! answer="$(fire_one "$text")"; then
-    reserve ticket release "$n" "$marker" "${GATE_ARGS[@]}" --session "$name" --chain "$name" > /dev/null 2>&1 || true
-    reserve lease release "$slot" "${GATE_ARGS[@]}" --max-chains "$MAX_CHAINS" --session "$name" > /dev/null 2>&1 || true
-    failed+=("#$n: the trigger refused the fire: $answer")
-    continue
-  fi
-  fired+=("#$n as $name ($(session_of "$answer"))")
-done
 
-if [ -n "$finish" ]; then
-  # shellcheck disable=SC2086
-  recheck $finish_prs
-  finish=""
-  [ "${#UNCLAIMED[@]}" -eq 0 ] || finish="$(printf '#%s, ' "${UNCLAIMED[@]}")"
-  finish="${finish%, }"
-fi
-if [ -n "$finish" ]; then
-  text="Started by delegate-fire to finish PRs $finish. $action: $reasons"
-  if answer="$(fire_one "$text")"; then
-    fired+=("finish $finish ($(session_of "$answer"))")
-  else
-    failed+=("finish $finish: the trigger refused the fire: $answer")
-  fi
-fi
+  CLAIMED=()
+  for n in $picks; do
+    name="$(od -An -N4 -tx1 /dev/urandom | tr -d ' \n')"
+    if ! taken="$(reserve lease take "${GATE_ARGS[@]}" --max-chains "$MAX_CHAINS" --session "$name" 2> "$ERR")"; then
+      case "$taken" in
+        *'"result":"full"'*) break ;; # Another chain took the last slot.
+      esac
+      failed+=("#$n: lease take failed: $(tail -n 1 "$ERR")")
+      continue
+    fi
+    slot="$(printf '%s' "$taken" | jq -r '.id')"
+    if ! ticket="$(reserve ticket set "$n" "${GATE_ARGS[@]}" --session "$name" --chain "$name" 2> "$ERR")"; then
+      reserve lease release "$slot" "${GATE_ARGS[@]}" --max-chains "$MAX_CHAINS" --session "$name" > /dev/null 2>&1 || true
+      case "$ticket" in
+        *'"result":"lost"'*) continue ;; # Another chain took the issue first.
+      esac
+      failed+=("#$n: ticket set failed: $(tail -n 1 "$ERR")")
+      continue
+    fi
+    marker="$(printf '%s' "$ticket" | jq -r '.id')"
+    text="Started by delegate-fire for issue #$n. Delegator hand-off from delegate-fire; session name $name; ticket #$n chain $name."
+    if ! answer="$(fire_one "$text")"; then
+      reserve ticket release "$n" "$marker" "${GATE_ARGS[@]}" --session "$name" --chain "$name" > /dev/null 2>&1 || true
+      reserve lease release "$slot" "${GATE_ARGS[@]}" --max-chains "$MAX_CHAINS" --session "$name" > /dev/null 2>&1 || true
+      failed+=("#$n: the trigger refused the fire: $answer")
+      continue
+    fi
+    fired+=("#$n as $name ($(session_of "$answer"))")
+  done
 
-line=""
-if [ "${#fired[@]}" -gt 0 ]; then
-  line="fired ${#fired[@]}: $(printf '%s; ' "${fired[@]}")"
-  line="${line%; }"
-else
-  if [ -z "$picks" ]; then
+  if [ -n "$finish" ]; then
+    # shellcheck disable=SC2086
+    recheck $finish_prs
+    finish=""
+    [ "${#UNCLAIMED[@]}" -eq 0 ] || finish="$(printf '#%s, ' "${UNCLAIMED[@]}")"
+    finish="${finish%, }"
+  fi
+  if [ -n "$finish" ]; then
+    text="Started by delegate-fire to finish PRs $finish. $action: $reasons"
+    if answer="$(fire_one "$text")"; then
+      fired+=("finish $finish ($(session_of "$answer"))")
+    else
+      failed+=("finish $finish: the trigger refused the fire: $answer")
+    fi
+  fi
+
+  if [ "${#fired[@]}" -gt 0 ]; then
+    line="fired ${#fired[@]}: $(printf '%s; ' "${fired[@]}")"
+    line="${line%; }"
+    G_FIRED=true
+  elif [ -z "$picks" ]; then
     line="fired none"
   else
     line="fired none (${why:-every pick was taken first})"
   fi
+  if [ "${#CLAIMED[@]}" -gt 0 ]; then
+    line="$line; claimed ($(claimed_text))"
+  fi
+  if [ "${#failed[@]}" -gt 0 ]; then
+    line="$line; failed ${#failed[@]}: $(printf '%s; ' "${failed[@]}")"
+    line="${line%; }"
+    G_FAILED=1
+  fi
+  G_LINE="$line"
+}
+
+ERR="$(mktemp)"
+trap 'rm -f "$ERR"' EXIT
+
+# ---------------------------------------------------------------- one login
+
+if [ "$TEAM" -eq 0 ]; then
+  gate
+  report "$G_FIRED" "$G_LINE"
+  [ "$G_FAILED" -eq 0 ] || exit 1
+  exit 0
 fi
-if [ "${#CLAIMED[@]}" -gt 0 ]; then
-  line="$line; claimed ($(claimed_text))"
-fi
-if [ "${#failed[@]}" -gt 0 ]; then
-  line="$line; failed ${#failed[@]}: $(printf '%s; ' "${failed[@]}")"
-  line="${line%; }"
-fi
-report "$([ "${#fired[@]}" -gt 0 ] && echo true || echo false)" "$line"
-[ "${#failed[@]}" -eq 0 ] || exit 1
+
+# ---------------------------------------------------------------- roster
+
+ANY_FIRED=false
+ANY_FAILED=0
+
+on_roster() {
+  local l
+  for l in "${ROSTER[@]}"; do [ "$l" = "$1" ] && return 0; done
+  return 1
+}
+
+# True when the login has a trigger, or when a dry run has no triggers to
+# check against.
+has_trigger() {
+  [ -z "$TRIGGERS" ] && [ "$DRY_RUN" -eq 1 ] && return 0
+  printf '%s' "$TRIGGERS" | jq -e --arg l "$1" '.[$l].url // empty | length > 0' > /dev/null
+}
+
+# Runs the gate as one login, with the issues to count as its own (a dry
+# run's preview of the assignments it would have made), and reports it.
+run_login() {
+  local login="$1"
+  if ! has_trigger "$login"; then
+    say "$login: no trigger"
+    return
+  fi
+  G_LOGIN="$login"
+  G_AS_ASSIGNED="${2:-}"
+  local entry
+  entry="$(printf '%s' "${TRIGGERS:-null}" | jq -c --arg l "$login" '.[$l] // {}')"
+  G_URL="$(printf '%s' "$entry" | jq -r '.url // ""')"
+  G_TOKEN="$(printf '%s' "$entry" | jq -r '.token // ""')"
+  G_RESERVE_TOKEN="$(printf '%s' "$entry" | jq -r '.reserve_token // ""')"
+  G_RESERVE=0
+  [ -z "$G_RESERVE_TOKEN" ] || G_RESERVE=1
+  export DELEGATE_STATUS_LOGIN="$login"
+  gate
+  say "$login: $G_LINE"
+  [ "$G_FIRED" = false ] || ANY_FIRED=true
+  [ "$G_FAILED" -eq 0 ] || ANY_FAILED=1
+}
+
+# Assigns issue <n> to <login> as the lock between logins, unless this is a
+# dry run. Prints nothing; returns 1, having reported why, when another
+# human turned out to be assigned too.
+assign_to() {
+  local n="$1" login="$2" why="$3" out others
+  if [ "$DRY_RUN" -eq 1 ]; then
+    say "#$n: would assign to $login ($why)"
+    return 0
+  fi
+  out="$("$STATUS" assign "$n" --to "$login" --repo "$REPO")" || die "assigning #$n to $login failed; see the lines above"
+  others="$(printf '%s' "$out" | jq -r --arg l "$login" '[.assignees[] | select(. != $l)] | length')"
+  if [ "$others" -gt 0 ]; then
+    say "#$n: ambiguous assignees ($(printf '%s' "$out" | jq -r '.assignees | join(", ")'))"
+    return 1
+  fi
+  say "#$n: assigned to $login ($why)"
+}
+
+route_label() {
+  local out count owner as=""
+  [ -n "$NUMBER" ] || die "--event issues takes --number" 2
+  if [ "$EVENT_LABEL" != "$LABEL" ]; then
+    say "ignored (label $EVENT_LABEL is not $LABEL)"
+    return
+  fi
+  out="$("$STATUS" assignees "$NUMBER" --repo "$REPO")" || die "reading the assignees of #$NUMBER failed; see the lines above"
+  count="$(printf '%s' "$out" | jq '.assignees | length')"
+  if [ "$count" -gt 1 ]; then
+    say "#$NUMBER: ambiguous assignees ($(printf '%s' "$out" | jq -r '.assignees | join(", ")'))"
+    return
+  fi
+  if [ "$count" -eq 1 ]; then
+    owner="$(printf '%s' "$out" | jq -r '.assignees[0]')"
+    if ! on_roster "$owner"; then
+      say "#$NUMBER: assigned to $owner, who is not on the roster"
+      return
+    fi
+  else
+    owner="$SENDER"
+    if [ -z "$owner" ] || ! on_roster "$owner"; then
+      say "#$NUMBER: labelled by ${owner:-nobody known}, who is not on the roster"
+      return
+    fi
+    if ! has_trigger "$owner"; then
+      say "$owner: no trigger"
+      return
+    fi
+    assign_to "$NUMBER" "$owner" "labelled by $owner" || return 0
+    [ "$DRY_RUN" -eq 0 ] || as="$NUMBER"
+  fi
+  run_login "$owner" "$as"
+}
+
+route_pr() {
+  [ -n "$NUMBER" ] || die "--event $EVENT takes --number" 2
+  case "$HEAD_REF" in
+    "$PREFIX"*) ;;
+    *) say "ignored (PR #$NUMBER is not a delegated PR)"; return ;;
+  esac
+  if [ -z "$AUTHOR" ] || ! on_roster "$AUTHOR"; then
+    say "PR #$NUMBER: opened by ${AUTHOR:-nobody known}, who is not on the roster"
+    return
+  fi
+  run_login "$AUTHOR"
+}
+
+route_all() {
+  local out issue n labeller login as=""
+  out="$("$STATUS" unassigned "${GATE_ARGS[@]}")" || die "listing the unassigned issues failed; see the lines above"
+  while IFS= read -r issue; do
+    [ -n "$issue" ] || continue
+    n="$(printf '%s' "$issue" | jq -r '.number')"
+    labeller="$(printf '%s' "$issue" | jq -r '.labeller // empty')"
+    if [ -z "$labeller" ]; then
+      say "#$n: skipped (no labeled event)"
+    elif ! on_roster "$labeller"; then
+      say "#$n: skipped (labelled by $labeller, who is not on the roster)"
+    elif ! has_trigger "$labeller"; then
+      say "#$n: skipped (labelled by $labeller, who has no trigger)"
+    elif assign_to "$n" "$labeller" "labelled by $labeller" && [ "$DRY_RUN" -eq 1 ]; then
+      as="$as$labeller $n
+"
+    fi
+  done < <(printf '%s' "$out" | jq -c '.issues[]')
+  for login in "${ROSTER[@]}"; do
+    run_login "$login" "$(printf '%s' "$as" | awk -v l="$login" '$1 == l { print $2 }' | paste -sd, -)"
+  done
+}
+
+case "$EVENT" in
+  issues)
+    if [ "$ACTION" = labeled ]; then route_label; else say "ignored (issues.$ACTION)"; fi ;;
+  pull_request)
+    case "$ACTION" in
+      ready_for_review|closed) route_pr ;;
+      *) say "ignored (pull_request.$ACTION)" ;;
+    esac ;;
+  pull_request_review)
+    if [ "$ACTION" = submitted ]; then route_pr; else say "ignored (pull_request_review.$ACTION)"; fi ;;
+  schedule|workflow_dispatch|'') route_all ;;
+  *) say "ignored (event $EVENT)" ;;
+esac
+output "$ANY_FIRED"
+[ "$ANY_FAILED" -eq 0 ] || exit 1

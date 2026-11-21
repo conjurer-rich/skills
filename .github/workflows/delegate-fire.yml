@@ -14,6 +14,15 @@ name: Delegate fire
 # the delegator posts as the human, as it does through the human's gh auth:
 # the filter would then skip the human's own labels, Ready clicks and reviews.
 #
+# For a team, where each teammate runs the delegator under their own login
+# with their own scheduled task, set a `roster` in the project's
+# .claude/delegation.md and pass the `triggers` secret: one JSON object
+# mapping each login to {url, token, reserve_token?}. Each event then wakes
+# exactly one teammate's trigger, routed from the event context below. The
+# gate assigns an unassigned issue to its owner before it fires, with the
+# workflow token, so a team caller must grant `issues: write`; this job
+# declares no permissions of its own and takes the caller's.
+#
 # Setup and a caller example:
 # skills/delivery/delegating-github-issues/references/delegate-fire.md
 
@@ -42,10 +51,13 @@ on:
         default: false
     secrets:
       fire-url:
-        description: The scheduled task's API trigger URL
+        description: The scheduled task's API trigger URL (a single-login project)
         required: false
       fire-token:
         description: The trigger's token
+        required: false
+      triggers:
+        description: 'With a roster, one JSON object mapping each roster login to {"url", "token", "reserve_token"?}, its own scheduled task trigger and optional reserve token. Replaces fire-url, fire-token and reserve-token'
         required: false
       reserve-token:
         description: A token of the delegator's login with Issues read and write and Pull requests read. When set, one run fills every free lease slot, reserving each one first; without it a run fires at most once. Only the reservations use it
@@ -66,12 +78,10 @@ jobs:
       (github.event_name == 'pull_request' && github.event.action == 'closed') ||
       github.event.sender.login != (inputs.delegator-login || github.repository_owner)
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      issues: read
-      pull-requests: read
-      checks: read
-      statuses: read
+    # No permissions block: a called workflow can only narrow the caller's
+    # grant, and a single-login caller grants issues: read, which a job asking
+    # for issues: write would fail on. The caller's block is the bound: read
+    # access for one login; issues: write too with a roster, to assign.
     concurrency:
       group: delegate-fire-${{ github.repository }}
       cancel-in-progress: false
@@ -101,10 +111,21 @@ jobs:
           DELEGATE_STATUS_LOGIN: ${{ inputs.delegator-login || github.repository_owner }}
           DELEGATE_FIRE_URL: ${{ secrets.fire-url }}
           DELEGATE_FIRE_TOKEN: ${{ secrets.fire-token }}
+          DELEGATE_FIRE_TRIGGERS: ${{ secrets.triggers }}
           FORCE: ${{ inputs.force }}
           DRY_RUN: ${{ inputs.dry-run }}
+          # Team routing reads the event itself, never inputs from the caller.
+          # The script ignores these without a roster.
+          EVENT: ${{ github.event_name }}
+          ACTION: ${{ github.event.action }}
+          NUMBER: ${{ github.event.issue.number || github.event.pull_request.number }}
+          LABEL: ${{ github.event.label.name }}
+          SENDER: ${{ github.event.sender.login }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
         run: |
-          args=()
+          args=(--event "$EVENT" --action "$ACTION" --number "$NUMBER" --label "$LABEL"
+            --sender "$SENDER" --author "$AUTHOR" --head "$HEAD_REF")
           [ "$RESERVE" = true ] && args+=(--reserve)
           [ "$FORCE" = true ] && args+=(--force)
           [ "$DRY_RUN" = true ] && args+=(--dry-run)
