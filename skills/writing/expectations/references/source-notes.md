@@ -17,3 +17,23 @@ change with the code.
 
 Licence status: ideas only, no text copied. The wording is original to this
 repository.
+
+## Say How Often It Was Seen
+
+The provenance tag, `(seen N×: …)` or `(seen 1×, unverified)`, comes from the
+mined correlation tables in Anthropic's oncall-kit plugin. There, every
+lesson mined from past incidents carries its count and incident ids, and a
+single-sighting row is a hypothesis, not a conclusion:
+
+- Repository: <https://github.com/anthropics/oncall-kit> (fork:
+  <https://github.com/conjurer-rich/oncall-kit>)
+- Revision: [`c03282cd`](https://github.com/anthropics/oncall-kit/blob/c03282cd5381a5a2e12e32bfb3c8957d52ce01f1/skills/oncall-setup/SKILL.md)
+  (Apache-2.0), `skills/oncall-setup/SKILL.md` and
+  `skills/triage/references/test-failures.md`
+
+craft applies the tag to any learning recorded from experience. It also uses
+the count as the evidence bar for promoting a local learning to a global
+skill.
+
+Licence status: ideas only, no text copied. The tag's form is a convention,
+and the wording is original to this repository.
