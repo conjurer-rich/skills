@@ -37,6 +37,16 @@ list.
 
 If the system under test emits structured telemetry (canonical events, traces, in-memory exporter output from test runs), pull it as evidence alongside the logs — see the `observability` skill.
 
+## Is It Still Happening?
+
+Several things name the change that *started* a failure: a bisect, a revert notice, an alert, a red badge, a teammate's message. None of them says the failure continues now. Such a claim outlives the forward fix that ended it. Before you name a PR, commit or deploy as the live cause, check that the symptom appears in the most recent **completed** run of the failing job on the same branch.
+
+- **Present** in the latest completed run: the failure is current. Carry on.
+- **Absent** from a run that finished: the failure has stopped. Find the change that fixed it, and report it as fixed, not as live.
+- **Absent** because the latest run is still in progress, was cancelled, or never reached the failing step: you know nothing yet. Only a check that actually ran can show the failure has stopped. Say what you are waiting for.
+
+Naming an already-fixed change as the live blocker is worse than naming none. Someone will revert it.
+
 ## Hypothesis-First Diagnosis
 
 Before editing, list plausible causes, rank them by evidence, and test one falsifiable hypothesis at a time. Do not invent a fixed minimum merely to fill a list.
@@ -97,6 +107,7 @@ When the user requested a fix, after identifying it:
 | Pushing speculative fixes | Wastes CI cycles | Reproduce and verify locally |
 | Reading only the last error line | Misses root cause | Read full output from the top |
 | Fixing symptoms | Problem will recur | Trace to root cause |
+| Blaming the change a bisect or alert named | It may already be fixed | Confirm the symptom in the latest completed run first |
 
 ## Proving Flakiness
 
