@@ -209,7 +209,10 @@ re-runs all graders with the saved trail, reply and the *current* case vars.
   public API for exactly that reason.
 
 The fix for a skill defect is an edit to `SKILL.md`; re-run the suite to show it
-took, and keep the case.
+took, and keep the case. Edit from the tuning cases only, and run the holdout case
+last to check that the edit generalises. A `harm-` metric failure blocks `improved`
+and `max` whatever the total score. See "Holdouts, harm and re-runs" in
+[`AUTHORING.md`](AUTHORING.md).
 
 ## How this follows promptfoo's guidance
 

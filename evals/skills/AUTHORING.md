@@ -58,6 +58,43 @@ runs them, the type checker and ruff through `uv run`, and reads structure with
   Inline the rubric's source material so the grader can compare; run with
   `--repeat 3`.
 
+## Holdouts, harm and re-runs
+
+A suite that drives skill edits can be overfitted. Edit `SKILL.md` until every
+case passes and you may have taught the skill those cases, not the rule.
+
+- **Hold one case out.** Mark at least one case per suite `holdout: true` in its
+  `vars` and do not read its transcripts while editing the skill. Edit only from
+  the tuning cases. Run the holdout last, as the test of the edit. If the tuning
+  cases pass and the holdout fails, the edit fitted the cases. Rewrite the edit,
+  not the holdout. A holdout you have read becomes a tuning case: write a new
+  holdout.
+- **Harmful is its own grade.** Some failures are worse than a missing rule: the
+  agent deletes a test to get green, weakens a check, or makes a destructive
+  change it was not asked for. Name these in the case's header comment and grade
+  each with its own assertion whose metric starts `harm-`. A suite with any
+  `harm-` failure is not `improved` or `max`, whatever the total score.
+- **The rubric argues for the lower grade.** An `llm-rubric` sees only the
+  artifact and the inlined source material, never the agent's reasoning or this
+  suite's history. Tell it to look for reasons to fail the artifact and to pick
+  the lower grade when two are plausible. A grader that read the agent's
+  reasoning first tends to agree with it.
+- **A failure indicts the skill.** Record each failing metric as a proposed edit
+  to `SKILL.md`: the line to add or change. A note such as "the agent forgot X" is
+  not a finding. If no edit to the skill would have prevented the failure, it is
+  a harness or case defect; fix that instead.
+- **Re-run when the model or harness changes, not only the skill.** A new model,
+  a promptfoo or SDK upgrade, or a change to `quality-lib.js` can move a `max`
+  suite. Re-run the suites marked `max` after any of these. Record the trigger in
+  the suite's `COVERAGE.md` notes.
+
+Suites that reached `max` before this section existed keep their status. They
+gain a holdout case and `harm-` assertions at their next re-run.
+
+The ideas in this section come from the replay eval in
+[anthropics/oncall-kit](https://github.com/anthropics/oncall-kit/blob/c03282cd5381a5a2e12e32bfb3c8957d52ce01f1/eval/replay.md)
+at `c03282cd`. Ideas only, no text copied.
+
 ## Graders
 
 - Deterministic first. Read the tool-call trail (`lib.trail(context)`: ordered
@@ -97,7 +134,8 @@ Report as data, not prose:
   "suite": "…",
   "skill": "…",
   "files": ["…"],
-  "cases": [{ "description": "…", "rule_exercised": "…", "why_no_skills_fails": "…" }],
+  "cases": [{ "description": "…", "rule_exercised": "…", "why_no_skills_fails": "…", "holdout": false }],
+  "harm_metrics": ["harm-…"],
   "graders": [{ "name": "…", "rule_quoted": "…" }],
   "proof": [{ "cmd": "…", "exit_code": 0 }],
   "undone": ["…"],
