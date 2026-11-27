@@ -40,6 +40,14 @@ the next action, completeness contract, or intended audience unclear.
 - **Selective, not compressed** — the way to keep a doc short is to cut
   what doesn't change the reader's next step, never to compress the
   prose into jargon the reader must decode.
+- **Written for a fresh reader** — picture someone who missed the
+  meeting, the incident channel and the agent session. Any noun that
+  would make them ask "wait, what's that?" gets a one-line definition
+  or a plainer word. Say what the system did ("requests queue for
+  thirty seconds, then drain"), not what its graph looked like
+  ("sawtooth", "hockey stick"). Take facts from bot output, logs and
+  agent transcripts, but not their labels: a rule name or status code
+  that means something to the tool means nothing to the reader.
 
 ## Material Claims Need Receipts
 
@@ -145,6 +153,7 @@ Developer docs now have two audiences. Agent-readable means:
 - [ ] Material capability/current-state/quantitative claims carry a receipt or date; promotional claims have evidence
 - [ ] Commands, flags, and executable examples readers rely on are verified against source and run where feasible
 - [ ] Material limits appear where implied scope could otherwise mislead
+- [ ] A reader who missed the context meets no undefined noun, chart-shape label, or tool-internal name
 - [ ] Enumerable facts appear in tables; exact strings given for anything copy-pasteable
 - [ ] Counts/versions bound to the kept-current rule or generated
 - [ ] Doc changes ride the same reviewable change as the behavior they describe
