@@ -1,5 +1,22 @@
 # @conjurer-rich/skills
 
+## 6.5.0
+
+### Minor Changes
+
+- f24aec3: ci-debugging: before naming a change as the live cause of a failure, confirm the symptom appears in the latest completed run. An absence counts only from a run that actually reached the failing step.
+- a7e8199: expectations: tag each learning from experience with how often it was seen, `(seen 1×, unverified: …)` or `(seen 3×: …)`. Raise the count when it recurs, rather than writing a new entry. A single sighting stays local; promotion to a global skill needs occurrences across projects.
+- 3dc4365: review-requests: a new `resolve_fixed_threads` setting (off by default) lets a re-review resolve the threads the skill opened once the new commits fix them. It resolves only when the code confirms the fix and no reply waits for an answer. It resolves on submit with `post: comment`, and under `post: pending` it lists what you would resolve. A re-review now opens with an **Earlier findings** section that marks each earlier finding fixed, still open or answered without a change. Where no route can resolve a thread (the GitHub MCP server, else `gh api graphql`), it reports "would resolve" and does not fail.
+
+  delegating-github-issues: a new `rereview` parameter (off by default). After Review answers a blocking or should-fix thread from a `review-requests` review, it re-requests that reviewer (`delegate-status rereview --request`). With a roster, `delegate-fire` routes the `review_requested` event to the reviewer's optional `review_url` trigger. A re-review that leaves no blocking or should-fix thread open ends the exchange.
+
+- bf98074: technical-writing: add a fresh-reader principle and checklist item — define nouns an outsider would not know, describe what the system did rather than naming chart shapes, and keep tool-internal labels out of prose for humans.
+- 78cdaf6: delegating-github-issues: Watch gains four reporting rules. Messages go out only for named events. "Changed" compares against what the human last saw. A missing signal is reported as unavailable, never green. Any judgement call is flagged in the report line.
+
+### Patch Changes
+
+- deec17f: evals: document holdout cases, `harm-` metrics that block an `improved` or `max` grade, sceptical rubrics, and re-running suites when the model or harness changes.
+
 ## 6.4.0
 
 ### Minor Changes
