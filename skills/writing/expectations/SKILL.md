@@ -14,6 +14,19 @@ Route each discovery to the artifact that owns its truth. Do not turn one projec
 
 When in doubt, make the narrower local update. Reuse should be earned by evidence from more than one project, not inferred from one successful implementation.
 
+## Say How Often It Was Seen
+
+A learning from experience (a gotcha, a pattern, a "when X, it means Y") is a hypothesis until it recurs. Tag each one with how many times it was observed and where. A reader then knows how far to trust it:
+
+- `(seen 1×, unverified: <where>)`: observed once. Treat it as a lead to check, not a rule to follow.
+- `(seen 3×: <where>, <where>, <where>)`: observed repeatedly. Name each occurrence: an issue, PR, incident or commit (`owner/repo#123`, `owner/repo@abc1234`).
+
+When the learning recurs, raise the count and add the occurrence. Do not write a fresh entry. When a recurrence contradicts it, record that next to the count, for example `(seen 2×, contradicted 1×: …)`. Do not drop the entry silently.
+
+The count is also the evidence the previous section asks for. A `seen 1×` learning stays local policy. Promote it to a global skill only once its occurrences span more than one project.
+
+Code and tests need no tag: a passing test is its own evidence.
+
 ## Documentation Framework
 
 **At the end of every significant change, ask: "What do I wish I'd known at the start?"**
@@ -71,6 +84,7 @@ Prefer an owner that moves with the code. Use these rules only where the learnin
 **Context**: When this occurs
 **Issue**: What goes wrong
 **Solution**: How to handle it
+**Seen**: 1×, unverified: owner/repo#123
 
 // CORRECT - Solution
 const example = "correct approach";
