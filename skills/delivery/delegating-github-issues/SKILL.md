@@ -39,7 +39,7 @@ The calling command supplies these; defaults apply when it does not, and keep th
 | `claim_ttl` | 45 minutes | A claim with no heartbeat for this long lapses, and another session may take the item |
 | `progress_label` | `in-progress` | On an item only during a live claim on it, never for a ticket alone |
 | `answer_label`, `blocked_label`, `review_label` | `needs-answer`, `blocked`, `awaiting-review` | Derived, ticketed issues too: human must answer; blocked; PR to review |
-| `assignee_routing`, `roster`, `max_chains_per_login` | off, none, none | Teams: `references/delegate-fire.md` |
+| `assignee_routing`, `roster`, `max_chains_per_login`, `rereview` | off, none, none, off | Teams: `references/delegate-fire.md` |
 
 A project's **Verification scope** section replaces the `pre_pr_gate`'s complete-suite rule (`references/tiers.md`).
 

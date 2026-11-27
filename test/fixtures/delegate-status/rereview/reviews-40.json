@@ -1,0 +1,5 @@
+[
+  {"id": 801, "body": "Draft review prepared by an agent for @bob.\n<!-- review-requests head: h40a inline: 3 -->", "state": "COMMENTED", "user": {"login": "bob"}},
+  {"id": 802, "body": "Looks odd", "state": "COMMENTED", "user": {"login": "carol"}},
+  {"id": 803, "body": "Draft review prepared by an agent for @carol.\n<!-- review-requests head: h40b inline: 0 -->", "state": "PENDING", "user": {"login": "carol"}}
+]

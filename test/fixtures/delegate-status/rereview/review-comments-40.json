@@ -1,0 +1,8 @@
+[
+  {"id": 900, "body": "**blocking · Correctness**: null deref\n\nGuard it.", "pull_request_review_id": 801, "user": {"login": "bob"}},
+  {"id": 901, "body": "Guarded in h40b.\n<!-- delegator -->", "pull_request_review_id": 850, "in_reply_to_id": 900, "user": {"login": "alice"}},
+  {"id": 902, "body": "**should fix · Standards**: name it for the domain", "pull_request_review_id": 801, "user": {"login": "bob"}},
+  {"id": 903, "body": "**consider · Standards**: shorter helper", "pull_request_review_id": 801, "user": {"login": "bob"}},
+  {"id": 904, "body": "**blocking · Spec**: missing criterion", "pull_request_review_id": 801, "user": {"login": "bob"}},
+  {"id": 905, "body": "This is wrong", "pull_request_review_id": 802, "user": {"login": "carol"}}
+]

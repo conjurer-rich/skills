@@ -49,6 +49,7 @@
 #   delegate-status assignees   <n>                                    [options]
 #   delegate-status assign      <n> --to <login>                       [options]
 #   delegate-status unassigned                                         [options]
+#   delegate-status rereview    <pr> [--request]                       [options]
 #
 # Options (defaults are the skill's):
 #   --repo <owner/repo>      required
@@ -92,7 +93,13 @@
 # issue's human assignees; assign adds --to as an assignee and prints them
 # after; unassigned lists the --label issues with no human assignee and no
 # delegated PR, each with the actor of its latest `labeled` event for the
-# label (`labeller`, from the issue timeline). Exit status:
+# label (`labeller`, from the issue timeline). rereview reads the latest
+# submitted review-requests review on a PR (its body carries a
+# `review-requests head:` marker) and prints its `reviewer`, the head it
+# reviewed, the PR's head, and `open`: the unresolved threads that reviewer's
+# marked reviews opened with a `blocking` or `should fix` finding, by first
+# comment id; with --request and an open thread, it re-requests a review from
+# that reviewer (writes) and prints `requested: true`. Exit status:
 # 0 done, 1 a gh or git call failed, 2 usage, 3 refused (the comment is
 # another session's, or a live claim backs the label), 4 another session
 # holds a live claim on the item (claim, heartbeat, lease heartbeat and hand),
@@ -159,6 +166,7 @@ INTERVAL=10
 MAX_INTERVAL=60
 TOOL_CALLS=""
 HANDOFF=0
+REQUEST=0
 FAIL_FAST=0
 TABLE=0
 PRS_ONLY=0
@@ -213,6 +221,7 @@ while [ $# -gt 0 ]; do
     --max-interval) MAX_INTERVAL="${2:-}"; shift 2 ;;
     --tool-calls) TOOL_CALLS="${2:-}"; shift 2 ;;
     --handoff) HANDOFF=1; shift ;;
+    --request) REQUEST=1; shift ;;
     --fail-fast) FAIL_FAST=1; shift ;;
     --table) TABLE=1; shift ;;
     --prs-only) PRS_ONLY=1; shift ;;
@@ -2135,10 +2144,53 @@ cmd_unassigned() {
   jq -nc --argjson i "$out" '{issues: $i}'
 }
 
+# The latest submitted review-requests review on PR <n> and the threads its
+# reviewer's marked reviews opened that still need the fix confirmed: for the
+# delegator's Review (to re-request that review) and for delegate-fire's
+# reviewer route (to wake that reviewer). A pending review is invisible to
+# anyone but its author, so it never counts.
+cmd_rereview() {
+  need_args 2
+  local n="${POSITIONAL[1]}" pr reviews review_comments threads result reviewer
+  pr="$(gh_json api "repos/$REPO/pulls/$n")"
+  reviews="$(list_of "repos/$REPO/pulls/$n/reviews?per_page=100" \
+    | jq -c 'map({id, body, state, user: {login: .user.login}})')"
+  review_comments="$(list_of "repos/$REPO/pulls/$n/comments?per_page=100" \
+    | jq -c 'map({id, body, review: .pull_request_review_id})')"
+  threads="$(threads_of "$n")"
+  result="$(jq -nc --slurpfile p "$(json_file "$pr")" --slurpfile rv "$(json_file "$reviews")" \
+      --slurpfile rc "$(json_file "$review_comments")" --slurpfile t "$(json_file "$threads")" '
+    $p[0] as $p | $rv[0] as $rv | $rc[0] as $rc | $t[0] as $t
+    | [ $rv[] | select(.state != "PENDING" and (.body // "" | contains("<!-- review-requests head: "))) ] as $marked
+    | ($marked | max_by(.id)) as $last
+    | ($last.user.login // null) as $who
+    | [ $marked[] | select(.user.login == $who) | .id ] as $ids
+    | ($rc | map({key: (.id | tostring), value: .}) | from_entries) as $by_id
+    | { item: $p.number, head: $p.head.sha, author: ($p.user.login // null), reviewer: $who,
+        review_id: ($last.id // null),
+        reviewed_head: (if $last == null then null
+                        else ($last.body | capture("<!-- review-requests head: (?<s>[^ ]+)").s) end),
+        open: [ $t[] | select(.resolved | not)
+                | $by_id[(.comment_ids[0] // "" | tostring)] as $first
+                | select($first != null and ($ids | index($first.review)) != null)
+                | select($first.body // "" | test("^\\*\\*(blocking|should fix) ·"))
+                | $first.id ] }')"
+  reviewer="$(printf '%s' "$result" | jq -r '.reviewer // empty')"
+  # GitHub refuses a review request of the PR's own author.
+  if [ "$REQUEST" -eq 1 ] && [ -n "$reviewer" ] && printf '%s' "$result" | jq -e '.open != [] and .reviewer != .author' > /dev/null; then
+    gh_json api -X POST "repos/$REPO/pulls/$n/requested_reviewers" -f "reviewers[]=$reviewer" > /dev/null
+    result="$(printf '%s' "$result" | jq -c '. + {requested: true}')"
+  elif [ "$REQUEST" -eq 1 ]; then
+    result="$(printf '%s' "$result" | jq -c '. + {requested: false}')"
+  fi
+  printf '%s\n' "$result"
+}
+
 case "$COMMAND" in
   assignees) cmd_assignees ;;
   assign) cmd_assign ;;
   unassigned) cmd_unassigned ;;
+  rereview) cmd_rereview ;;
   status) cmd_status ;;
   next-action) cmd_next_action ;;
   budget) cmd_budget ;;

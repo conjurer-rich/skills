@@ -2256,6 +2256,46 @@ check "lease status with routing counts live slots by login" \
 check "lease status without routing carries no by_login" \
   "$(run_bare lease status --max-chains 3)" 'has("by_login") | not'
 
+# ---------------------------------------------------------------- rereview
+
+# PR 40: bob's submitted review-requests review at h40a opened four threads;
+# the PR is now at h40b. Open are the unresolved blocking and should-fix
+# threads bob's marked review opened: not the consider thread, not the
+# resolved one, not carol's, and carol's pending marked review never counts.
+use rereview
+out="$(run rereview 40)"
+check "rereview names the latest submitted marked review's reviewer" "$out" \
+  '.reviewer == "bob" and .review_id == 801 and .author == "alice"'
+check "rereview reads the reviewed head from the marker and the PR's head" "$out" \
+  '.reviewed_head == "h40a" and .head == "h40b"'
+check "rereview lists only unresolved blocking and should-fix threads bob's review opened" "$out" \
+  '.open == [900, 902]'
+check "rereview without --request requests nothing" "$out" 'has("requested") | not'
+check_not_called "requested_reviewers" "rereview without --request writes nothing"
+check_called "api --paginate repos/acme/widgets/pulls/40/ccr/review_threads" "rereview reads threads from the /ccr/ route"
+
+use rereview
+out="$(run rereview 40 --request)"
+check "rereview --request with open threads re-requests the reviewer" "$out" '.requested == true'
+check_called "-X POST repos/acme/widgets/pulls/40/requested_reviewers -f reviewers[]=bob" "the request names bob"
+
+use rereview
+jq 'map(.resolved = true)' "$FAKE_STATE/threads-40.json" > "$FAKE_STATE/t" && mv "$FAKE_STATE/t" "$FAKE_STATE/threads-40.json"
+out="$(run rereview 40 --request)"
+check "rereview --request with nothing open requests nothing" "$out" '.open == [] and .requested == false'
+check_not_called "requested_reviewers" "nothing open, no request is written"
+
+use rereview
+jq '.user.login = "bob"' "$FAKE_STATE/pull-40.json" > "$FAKE_STATE/p" && mv "$FAKE_STATE/p" "$FAKE_STATE/pull-40.json"
+out="$(run rereview 40 --request)"
+check "rereview --request never asks the PR's own author" "$out" '.requested == false and (.open | length) == 2'
+check_not_called "requested_reviewers" "no request of the author is written"
+
+use rereview
+out="$(run rereview 41 --request)"
+check "a PR with no marked review has no reviewer" "$out" '.reviewer == null and .reviewed_head == null and .open == [] and .requested == false'
+check_not_called "requested_reviewers" "no marked review, no request is written"
+
 echo ""
 
 if [ "$FAILURES" -gt 0 ]; then
