@@ -23,6 +23,10 @@ name: Delegate fire
 # workflow token, so a team caller must grant `issues: write`; this job
 # declares no permissions of its own and takes the caller's.
 #
+# With `rereview` on, a team caller that also listens for pull_request
+# review_requested wakes the requested reviewer's review-requests trigger
+# (`review_url` in their triggers entry) for a re-review of a delegated PR.
+#
 # Setup and a caller example:
 # skills/delivery/delegating-github-issues/references/delegate-fire.md
 
@@ -123,9 +127,10 @@ jobs:
           SENDER: ${{ github.event.sender.login }}
           AUTHOR: ${{ github.event.pull_request.user.login }}
           HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          REVIEWER: ${{ github.event.requested_reviewer.login }}
         run: |
           args=(--event "$EVENT" --action "$ACTION" --number "$NUMBER" --label "$LABEL"
-            --sender "$SENDER" --author "$AUTHOR" --head "$HEAD_REF")
+            --sender "$SENDER" --author "$AUTHOR" --head "$HEAD_REF" --reviewer "$REVIEWER")
           [ "$RESERVE" = true ] && args+=(--reserve)
           [ "$FORCE" = true ] && args+=(--force)
           [ "$DRY_RUN" = true ] && args+=(--dry-run)

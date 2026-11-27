@@ -100,6 +100,8 @@ case "$1 $2" in
     if [ -f "$W/assign-$2" ]; then cat "$W/assign-$2"; else echo "{\"item\":$2,\"result\":\"assigned\",\"assignees\":[\"$to\"]}"; fi ;;
   unassigned*)
     if [ -f "$W/unassigned" ]; then cat "$W/unassigned"; else echo '{"issues":[]}'; fi ;;
+  rereview*)
+    if [ -f "$W/rereview-$2" ]; then cat "$W/rereview-$2"; else echo "{\"item\":$2,\"reviewer\":null,\"open\":[]}"; fi ;;
   *) echo "unexpected call: $*" >&2; exit 2 ;;
 esac
 EOF
@@ -719,6 +721,98 @@ expect "the PR's branch reaches the script" grep -q 'HEAD_REF: ${{ github.event.
 expect "the called job takes the caller's permissions, so a read-only single-login caller still works" \
   bash -c '! grep -q "^    permissions:" "$1"' _ "$WORKFLOW"
 expect "fire-url and fire-token are still taken" bash -c 'grep -q "      fire-url:" "$1" && grep -q "      fire-token:" "$1"' _ "$WORKFLOW"
+
+# A review_requested event on a delegated PR wakes the requested reviewer's
+# review-requests trigger for a re-review, with rereview on: only when their
+# latest submitted review-requests review was of an older head and still has
+# an open blocking or should-fix thread, so a round that leaves none open
+# ends the exchange.
+REVIEW_TRIGGERS='{"alice":{"url":"https://api.example.test/fire/alice","token":"sk-alice"},"bob":{"url":"https://api.example.test/fire/bob","token":"sk-bob","review_url":"https://api.example.test/review/bob","review_token":"sk-bob-review"}}'
+rr_team() {
+  team
+  printf '| `rereview` | on |\n' >> "$W/project/.claude/delegation.md"
+  echo '{"item":21,"head":"h2","author":"alice","reviewer":"bob","review_id":801,"reviewed_head":"h1","open":[900,902]}' > "$W/rereview-21"
+}
+requested() { # reviewer [author] [head]
+  TRIGGERS="${TRIGGERS-$REVIEW_TRIGGERS}" tfire --event pull_request --action review_requested --number 21 \
+    --author "${2:-alice}" --head "${3:-delegated/9-thing}" --reviewer "$1"
+}
+reviews_fired() { grep -c 'review/bob\]' "$W/curl.calls" 2> /dev/null || true; }
+
+rr_team
+expect "a re-review request exits 0" requested bob
+expect "the reviewer's review trigger fires once" test "$(reviews_fired)" -eq 1
+expect "no delegator trigger fires for it" test "$(fired_for alice)" -eq 0 -a "$(fired_for bob)" -eq 0
+expect "the fire carries the review token" grep -q '\[Authorization: Bearer sk-bob-review\]' "$W/curl.calls"
+expect "the fire names the PR for review-requests" grep -q '/review-requests acme/widgets#21' "$W/curl.calls"
+expect "the reviewer's line says it fired" grep -q 'delegate-fire: bob: fired a re-review of PR #21 (2 open threads)' "$W/out"
+refuse "a re-review request runs no delegator gate" grep -q '^next-action' "$W/status.calls"
+
+rr_team
+printf '| `rereview_command` | /craft:review-requests |\n' >> "$W/project/.claude/delegation.md"
+requested bob
+expect "rereview_command sets the fire's text" grep -q '/craft:review-requests acme/widgets#21' "$W/curl.calls"
+
+team
+echo '{"item":21,"head":"h2","author":"alice","reviewer":"bob","reviewed_head":"h1","open":[900]}' > "$W/rereview-21"
+expect "with rereview off a request exits 0" requested bob
+expect "with rereview off nothing fires" test ! -e "$W/curl.calls"
+expect "with rereview off it says so" grep -q 'ignored (pull_request.review_requested; rereview is off)' "$W/out"
+
+rr_team
+echo '{"item":21,"head":"h2","author":"alice","reviewer":"bob","reviewed_head":"h1","open":[]}' > "$W/rereview-21"
+expect "nothing open exits 0" requested bob
+expect "nothing open fires nothing: the exchange ends" test ! -e "$W/curl.calls"
+expect "nothing open says why" grep -q 'bob: nothing to re-review on PR #21 (no open blocking or should fix thread)' "$W/out"
+
+rr_team
+echo '{"item":21,"head":"h2","author":"alice","reviewer":"bob","reviewed_head":"h2","open":[900]}' > "$W/rereview-21"
+requested bob
+expect "a head already reviewed fires nothing" test ! -e "$W/curl.calls"
+expect "a head already reviewed says so" grep -q 'bob: PR #21 is already reviewed at h2' "$W/out"
+
+rr_team
+echo '{"item":21,"head":"h2","author":"alice","reviewer":"carol","reviewed_head":"h1","open":[900]}' > "$W/rereview-21"
+requested bob
+expect "a first request of a reviewer fires nothing" test ! -e "$W/curl.calls"
+expect "a first request is not a re-review" grep -q 'bob: PR #21 has no review-requests review of theirs to follow up; not a re-review' "$W/out"
+
+rr_team
+requested alice bob
+expect "a reviewer with no review trigger fires nothing" test ! -e "$W/curl.calls"
+expect "a reviewer with no review trigger is named" grep -q 'alice: no review trigger (PR #21 waits in their review queue)' "$W/out"
+refuse "a reviewer with no review trigger reads nothing" grep -q '^rereview' "$W/status.calls"
+
+rr_team
+requested carol
+expect "a reviewer off the roster fires nothing" test ! -e "$W/curl.calls"
+expect "a reviewer off the roster is named" grep -q 'PR #21: review requested from carol, who is not on the roster' "$W/out"
+
+rr_team
+requested bob bob
+expect "a request of the PR's own author fires nothing" test ! -e "$W/curl.calls"
+
+rr_team
+requested bob alice feature/x
+expect "a request on a PR that is not delegated fires nothing" test ! -e "$W/curl.calls"
+
+rr_team
+TRIGGERS="" expect "a re-review --dry-run needs no triggers" \
+  tfire --dry-run --event pull_request --action review_requested --number 21 --author alice --head delegated/9-thing --reviewer bob
+expect "a re-review --dry-run fires nothing" test ! -e "$W/curl.calls"
+expect "a re-review --dry-run says it would fire" grep -q 'bob: would fire a re-review of PR #21 (2 open threads)' "$W/out"
+
+rr_team
+touch "$W/curl-fails"
+refuse "a refused review fire exits non-zero" requested bob
+expect "a refused review fire says so" grep -q 'bob: failed: the review trigger refused the fire' "$W/out"
+
+setup
+printf '| `rereview` | sometimes |\n' >> "$W/project/.claude/delegation.md"
+refuse "a rereview that is not on or off is refused" fire
+
+expect "the reusable workflow passes the requested reviewer" grep -q 'REVIEWER: ${{ github.event.requested_reviewer.login }}' "$WORKFLOW"
+expect "the reusable workflow hands --reviewer to the script" grep -q -- '--reviewer "$REVIEWER"' "$WORKFLOW"
 
 echo ""
 if [ "$FAILURES" -gt 0 ]; then

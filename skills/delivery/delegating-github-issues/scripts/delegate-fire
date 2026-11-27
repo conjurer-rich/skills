@@ -61,6 +61,17 @@
 #   --event pull_request (ready_for_review, closed) or pull_request_review
 #                  (submitted): the PR's --author, when its --head starts
 #                  with `branch_prefix`; the holder re-check still applies;
+#   --event pull_request --action review_requested, with --reviewer the
+#                  requested login and `rereview` on: that reviewer's
+#                  `review_url` trigger, with the text
+#                  `<rereview_command> <owner/repo>#<n>`, when the PR is
+#                  delegated, the reviewer is on the roster and is not its
+#                  author, their latest submitted review-requests review on
+#                  it was of an older head, and a blocking or should-fix
+#                  thread it opened is still unresolved (`delegate-status
+#                  rereview`). The delegator re-requests that review after
+#                  answering such a thread, so each round wakes the reviewer
+#                  once, and a round that leaves none open ends the exchange;
 #   --event schedule, workflow_dispatch or none: every roster login in
 #                  turn, after assigning each unassigned labelled issue to
 #                  the actor of its latest `labeled` event, when that actor
@@ -81,7 +92,8 @@
 # Usage:
 #   delegate-fire [--repo <owner/repo>] [--reserve] [--force] [--dry-run]
 #                 [--event <name> [--action <a>] [--number <n>] [--label <l>]
-#                  [--sender <login>] [--author <login>] [--head <branch>]]
+#                  [--sender <login>] [--author <login>] [--head <branch>]
+#                  [--reviewer <login>]]
 #
 # Options:
 #   --repo <owner/repo>   default: the origin remote
@@ -95,7 +107,8 @@
 #                         run (github.event_name); --action its action, and
 #                         --number, --label, --sender, --author and --head
 #                         the issue or PR number, the label added, the event's
-#                         sender, and the PR's author and branch. Ignored
+#                         sender, and the PR's author and branch; --reviewer
+#                         the login a review_requested event asks. Ignored
 #                         without a roster
 #
 # Settings (.claude/delegation.md Parameters table), beyond /delegate's own:
@@ -105,13 +118,20 @@
 #   roster                the logins taking part, comma-separated
 #   max_chains_per_login  the most lease slots one login may hold before it
 #                         is fired no pick
+#   rereview              on: route review_requested to the reviewer's
+#                         review_url trigger (with a roster); default off
+#   rereview_command      the fire's text before <owner/repo>#<n>; default
+#                         /review-requests
 #
 # Environment:
 #   DELEGATE_FIRE_URL     the scheduled task's API trigger URL (no roster)
 #   DELEGATE_FIRE_TOKEN   the trigger's bearer token (no roster)
 #   DELEGATE_FIRE_TRIGGERS
 #                         with a roster: {"<login>": {"url": …, "token": …,
-#                         "reserve_token": …}, …}; reserve_token is optional
+#                         "reserve_token": …, "review_url": …,
+#                         "review_token": …}, …}; all but url and token are
+#                         optional. review_url and review_token are the
+#                         login's review-requests task's trigger
 #   GH_TOKEN              read access to the repository's issues and PRs;
 #                         with a roster, issues write too, to assign
 #   DELEGATE_FIRE_RESERVE_TOKEN
@@ -157,6 +177,7 @@ EVENT_LABEL=""
 SENDER=""
 AUTHOR=""
 HEAD_REF=""
+REVIEWER=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -171,6 +192,7 @@ while [ $# -gt 0 ]; do
     --sender) SENDER="${2:-}"; shift 2 ;;
     --author) AUTHOR="${2:-}"; shift 2 ;;
     --head) HEAD_REF="${2:-}"; shift 2 ;;
+    --reviewer) REVIEWER="${2:-}"; shift 2 ;;
     -h|--help) usage ;;
     *) die "unknown argument $1" 2 ;;
   esac
@@ -264,6 +286,15 @@ case "${WEEKDAYS_ONLY:-off}" in
   off|false|no) WEEKDAYS_ONLY=0 ;;
   *) die "weekdays_only in $SETTINGS takes on or off: $WEEKDAYS_ONLY" 2 ;;
 esac
+
+REREVIEW="$(param rereview)"
+case "${REREVIEW:-off}" in
+  on|true|yes) REREVIEW=1 ;;
+  off|false|no) REREVIEW=0 ;;
+  *) die "rereview in $SETTINGS takes on or off: $REREVIEW" 2 ;;
+esac
+REREVIEW_COMMAND="$(param rereview_command)"
+REREVIEW_COMMAND="${REREVIEW_COMMAND:-/review-requests}"
 
 # Report lines: printed, copied to the step summary, and, once the run is
 # decided, fired=true|false to the step outputs.
@@ -667,12 +698,70 @@ route_all() {
   done
 }
 
+# A review_requested event on a delegated PR: wake the requested reviewer's
+# review-requests task for a re-review, only when it is one (see the header).
+route_rereview() {
+  local entry out open reviewed head answer
+  [ -n "$NUMBER" ] || die "--event pull_request takes --number" 2
+  if [ "$REREVIEW" -eq 0 ]; then
+    say "ignored (pull_request.review_requested; rereview is off)"
+    return
+  fi
+  case "$HEAD_REF" in
+    "$PREFIX"*) ;;
+    *) say "ignored (PR #$NUMBER is not a delegated PR)"; return ;;
+  esac
+  if [ -z "$REVIEWER" ] || ! on_roster "$REVIEWER"; then
+    say "PR #$NUMBER: review requested from ${REVIEWER:-nobody known}, who is not on the roster"
+    return
+  fi
+  if [ "$REVIEWER" = "$AUTHOR" ]; then
+    say "ignored (PR #$NUMBER: $REVIEWER is its author)"
+    return
+  fi
+  entry="$(printf '%s' "${TRIGGERS:-null}" | jq -c --arg l "$REVIEWER" '.[$l] // {}')"
+  if [ "$(printf '%s' "$entry" | jq -r '.review_url // ""')" = "" ] && ! { [ -z "$TRIGGERS" ] && [ "$DRY_RUN" -eq 1 ]; }; then
+    say "$REVIEWER: no review trigger (PR #$NUMBER waits in their review queue)"
+    return
+  fi
+  out="$("$STATUS" rereview "$NUMBER" --repo "$REPO")" || die "reading the reviews of PR #$NUMBER failed; see the lines above"
+  if [ "$(printf '%s' "$out" | jq -r '.reviewer // ""')" != "$REVIEWER" ]; then
+    say "$REVIEWER: PR #$NUMBER has no review-requests review of theirs to follow up; not a re-review"
+    return
+  fi
+  open="$(printf '%s' "$out" | jq -r '.open | length')"
+  reviewed="$(printf '%s' "$out" | jq -r '.reviewed_head')"
+  head="$(printf '%s' "$out" | jq -r '.head')"
+  if [ "$open" -eq 0 ]; then
+    say "$REVIEWER: nothing to re-review on PR #$NUMBER (no open blocking or should fix thread)"
+    return
+  fi
+  if [ "$reviewed" = "$head" ]; then
+    say "$REVIEWER: PR #$NUMBER is already reviewed at $head"
+    return
+  fi
+  if [ "$DRY_RUN" -eq 1 ]; then
+    say "$REVIEWER: would fire a re-review of PR #$NUMBER ($open open threads)"
+    return
+  fi
+  G_URL="$(printf '%s' "$entry" | jq -r '.review_url')"
+  G_TOKEN="$(printf '%s' "$entry" | jq -r '.review_token // ""')"
+  if ! answer="$(fire_one "$REREVIEW_COMMAND $REPO#$NUMBER")"; then
+    say "$REVIEWER: failed: the review trigger refused the fire: $answer"
+    ANY_FAILED=1
+    return
+  fi
+  ANY_FIRED=true
+  say "$REVIEWER: fired a re-review of PR #$NUMBER ($open open threads); trigger answered $answer"
+}
+
 case "$EVENT" in
   issues)
     if [ "$ACTION" = labeled ]; then route_label; else say "ignored (issues.$ACTION)"; fi ;;
   pull_request)
     case "$ACTION" in
       ready_for_review|closed) route_pr ;;
+      review_requested) route_rereview ;;
       *) say "ignored (pull_request.$ACTION)" ;;
     esac ;;
   pull_request_review)

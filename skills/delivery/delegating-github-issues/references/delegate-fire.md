@@ -23,7 +23,7 @@ Without a reserve token the script fires at most once per run:
 
 Before a `watch` or `land` fire, the gate re-reads the live claim on each PR it would finish with `delegate-status holder <n>`, the rule `claim` decides by, and leaves out the claimed ones. A Ready click both starts the workflow and wakes the PR's own subscribed session, which claims the PR to land it, so the first read can be stale by the time the gate fires. With every such PR claimed it fires nothing and reports `claimed (PR #N by <session>)`, unless a pick has a free slot, when it fires for the pick instead. A session started for a PR another session holds could only see the claim and stop.
 
-It reads the same parameters `/delegate` does from the project's `.claude/delegation.md` (`label`, `rank_labels`, `branch_prefix`, `progress_label`, `max_worktrees`, `max_open_prs`, `land`, `claim_ttl`, `max_chains` and `assignee_routing`), plus `weekdays_only` and, for a team, `roster` and `max_chains_per_login` (**Team setup** below), and refuses to run without that file.
+It reads the same parameters `/delegate` does from the project's `.claude/delegation.md` (`label`, `rank_labels`, `branch_prefix`, `progress_label`, `max_worktrees`, `max_open_prs`, `land`, `claim_ttl`, `max_chains`, `assignee_routing` and `rereview`), plus `weekdays_only` and, for a team, `roster`, `max_chains_per_login` and `rereview_command` (**Team setup** below), and refuses to run without that file.
 
 ### Filling every free slot
 
@@ -193,6 +193,32 @@ jobs:
 The routing inputs (the event's name and action, the issue or PR number, the label, the sender, the PR's author and branch) come from the event context inside the reusable workflow, never from the caller. Leave `skip-own-events` off: every teammate's label and Ready click is an event of a login on the roster. Run it by hand with `dry-run` on first: the summary shows whom each issue would be assigned to and what each login's gate would do, and nothing is assigned or fired.
 
 Each run writes one line per routing decision (`#12: assigned to bob (labelled by bob)`, `#13: skipped (labelled by carol, who is not on the roster)`, `#9: ambiguous assignees (alice, bob)`) and one per login whose gate ran: `fired` with its issue or PR and session, or why not (`idle`, `full`, `cap`, `claimed`, `no trigger`).
+
+### Re-reviews after fixes
+
+With `rereview` on in `.claude/delegation.md`, a teammate whose `review-requests` review opened threads on a delegated PR gets a re-review once the delegator has answered them, without starting it by hand:
+
+1. **Review** step 6 (`references/review.md`) re-requests that teammate's review after answering one of those threads with a fix, when a `blocking` or `should fix` one is still unresolved. The PR re-enters their `review-requests` queue, which their own `/loop /review-requests` picks up. That alone works with or without a roster or this workflow.
+2. With a roster, the request's `pull_request` `review_requested` event can also wake that teammate's review task at once. Each teammate who wants this creates a second scheduled task, as steps 1 and 2 of **Setup** describe but with the prompt `Re-review the pull request the next message names, with the review-requests skill.`, and adds its trigger to their entry in the triggers secret:
+
+   ```json
+   {
+     "bob": {"url": "…", "token": "…", "review_url": "https://api.anthropic.com/v1/…/fire", "review_token": "…"}
+   }
+   ```
+
+   The fire's text is `<rereview_command> <owner>/<repo>#<n>`, with `rereview_command` defaulting to `/review-requests` (set it to `/craft:review-requests` when craft is installed as a plugin). Add `review_requested` to the caller's `pull_request` types:
+
+   ```yaml
+     pull_request:
+       types: [ready_for_review, closed, review_requested]
+   ```
+
+The gate fires the reviewer's `review_url` only when the PR is delegated, the requested reviewer is on the roster, is not the PR's author and has a `review_url`, their latest submitted `review-requests` review on it was of an older head, and a `blocking` or `should fix` thread that review opened is still unresolved (`delegate-status rereview <n>`). Any other request, a teammate asking for a first review included, is reported and fires nothing; a reviewer without a `review_url` is reported as `no review trigger` and their own loop picks the request up. A teammate with a `review_url` need not also run `/loop /review-requests` for these PRs.
+
+**The exchange ends.** The re-review resolves the threads it confirms fixed only with `resolve_fixed_threads` on and `post: comment` in their `.claude/review-requests.md`; under `post: pending` they resolve them when they submit. A re-review that leaves no `blocking` or `should fix` thread open makes nothing re-request them, and its submitted body ends with the Claude Code footer, which the delegator never answers (**Delegator marker** in `SKILL.md`), so neither side wakes the other again. A re-review that raises a new `blocking` or `should fix` inline finding starts one more round, as a human reviewer's would.
+
+The line for this route reads `bob: fired a re-review of PR #21 (2 open threads)`, or why not (`nothing to re-review`, `already reviewed at <sha>`, `not a re-review`, `no review trigger`).
 
 ## Without the reusable workflow
 
