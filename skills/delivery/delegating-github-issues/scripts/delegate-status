@@ -74,6 +74,14 @@
 #   --picks <n>              next-action only: also list up to n issues a new chain
 #                            could pick, as `picks`, and the PRs a chain-less
 #                            session would finish, as `finish`
+#   --answer-review-requests blocking
+#                            blocking|all: which review-requests findings need an
+#                            answer although their review carries the Claude Code
+#                            footer (a submitted review whose body has the
+#                            `review-requests head:` marker): blocking and should
+#                            fix only, or consider too. Its inline comments opening
+#                            a thread count until a reply, its body's `## Not placed
+#                            on a line` findings until a reply-to comment
 #   --assignee-routing off   off|on|strict. on: an issue is eligible only while its
 #                            human assignees are empty or exactly the delegator's
 #                            login (others read `assigned`, never picked, and listed
@@ -167,6 +175,7 @@ MAX_INTERVAL=60
 TOOL_CALLS=""
 HANDOFF=0
 REQUEST=0
+ANSWER_RR="blocking"
 FAIL_FAST=0
 TABLE=0
 PRS_ONLY=0
@@ -222,6 +231,7 @@ while [ $# -gt 0 ]; do
     --tool-calls) TOOL_CALLS="${2:-}"; shift 2 ;;
     --handoff) HANDOFF=1; shift ;;
     --request) REQUEST=1; shift ;;
+    --answer-review-requests) ANSWER_RR="${2:-}"; shift 2 ;;
     --fail-fast) FAIL_FAST=1; shift ;;
     --table) TABLE=1; shift ;;
     --prs-only) PRS_ONLY=1; shift ;;
@@ -249,6 +259,11 @@ esac
 CHAIN="${CHAIN:-$SESSION}"
 case "$CHAIN" in *[!0-9A-Za-z._-]*) die "--chain takes letters, digits, ., _ and -" 2 ;; esac
 case "$LAND" in on|off) ;; *) die "--land takes on or off" 2 ;; esac
+case "$ANSWER_RR" in
+  blocking) RR_ALL=false ;;
+  all) RR_ALL=true ;;
+  *) die "--answer-review-requests takes blocking or all" 2 ;;
+esac
 case "$ROUTING" in off|on|strict) ;; *) die "--assignee-routing takes off, on or strict" 2 ;; esac
 case "$AS_ASSIGNED" in *[!0-9,]*) die "--as-assigned takes issue numbers, comma-separated" 2 ;; esac
 
@@ -276,6 +291,25 @@ def needs_answer:
     and ($l | endswith("[bot]") | not)
     and ((.type // "") != "Bot")
     and ($b | contains("<!-- preview-") | not);
+# review-requests findings. Its reviews carry the Claude Code footer, which
+# needs_answer skips, but a submitted review whose body has its marker holds
+# findings for the delegator to answer: an inline comment opening a thread
+# whose first line names a finding to answer (blocking or should fix; with
+# $all, consider too), and the `## Not placed on a line` findings in its body.
+def rr_marked:
+  (.state // "") != "PENDING" and (.body // "" | contains("<!-- review-requests head: "));
+def rr_finding_line($all):
+  test("\\*\\*(blocking|should fix" + (if $all then "|consider" else "" end) + ") · ");
+def rr_thread_finding($ids; $all):
+  .reply == null and .review != null and (.review as $r | $ids | index($r)) != null
+  and (.body // "" | split("\n")[0] | rr_finding_line($all));
+def rr_unplaced($all):
+  (.body // "" | split("\n")) as $l
+  | ($l | index("## Not placed on a line")) as $i
+  | if $i == null then false
+    else $l[$i + 1:] as $rest
+      | ($rest | map(test("^(## |<!-- )")) | index(true)) as $e
+      | (if $e == null then $rest else $rest[:$e] end) | any(.[]; rr_finding_line($all)) end;
 def human_reply:
   {body, login: (.user.login // ""), type: (.user.type // "")} | needs_answer;
 def pr_norm:
@@ -1311,7 +1345,7 @@ pr_json() {
   threads="$(threads_of "$number")"
   # Only the fields the classifier reads: a REST object carries a dozen URLs.
   review_comments="$(list_of "repos/$REPO/pulls/$number/comments?per_page=100" \
-    | jq -c 'map({id, body, user: {login: .user.login, type: .user.type}})')"
+    | jq -c 'map({id, body, review: .pull_request_review_id, reply: .in_reply_to_id, user: {login: .user.login, type: .user.type}})')"
   reviews="$(list_of "repos/$REPO/pulls/$number/reviews?per_page=100" \
     | jq -c 'map({id, body, state, commit_id, user: {login: .user.login, type: .user.type}})')"
   timeline="$(list_of "repos/$REPO/issues/$number/timeline?per_page=100" \
@@ -1319,22 +1353,26 @@ pr_json() {
   result="$(jq -nc --slurpfile p "$(json_file "$pr")" --slurpfile c "$(json_file "$comments")" --argjson w "$(winner_of "$comments")" \
       --slurpfile t "$(json_file "$threads")" --slurpfile rc "$(json_file "$review_comments")" \
       --slurpfile rv "$(json_file "$reviews")" --slurpfile tl "$(json_file "$timeline")" \
-      --arg s "$SESSION" --arg pl "$PROGRESS_LABEL" --arg land "$LAND" "$JQ_DEFS"'
+      --arg s "$SESSION" --arg pl "$PROGRESS_LABEL" --arg land "$LAND" --argjson rr_all "$RR_ALL" "$JQ_DEFS"'
       $p[0] as $p | $c[0] as $c | $t[0] as $t | $rc[0] as $rc | $rv[0] as $rv | $tl[0] as $tl
       | ($rc | map({key: (.id | tostring), value: .}) | from_entries) as $by_id
+      | [$rv[] | select(rr_marked) | .id] as $rr_ids
       | [$c[].body // "" | scan("<!-- delegator reply-to: ([0-9]+) -->") | .[0] | tonumber] as $replied
       | [ ( $t[] | select(.resolved | not)
             | . as $thread
             | ($by_id[(.comment_ids | last // "" | tostring)]) as $last
             | select($last != null)
             | {kind: "thread", id: $last.id, thread: $thread.comment_ids[0], path: $thread.path, line: $thread.line,
-               login: ($last.user.login // ""), type: ($last.user.type // ""), body: $last.body} ),
-          ( $c[] | {kind: "comment", id, login: (.user.login // ""), type: (.user.type // ""), body} ),
+               login: ($last.user.login // ""), type: ($last.user.type // ""), body: $last.body,
+               rr: ($last.id == $thread.comment_ids[0] and ($last | rr_thread_finding($rr_ids; $rr_all)))} ),
+          ( $c[] | {kind: "comment", id, login: (.user.login // ""), type: (.user.type // ""), body, rr: false} ),
           ( $rv[] | select((.body // "") != "")
-            | {kind: "review", id, login: (.user.login // ""), type: (.user.type // ""), body} ) ]
-        | map(select(needs_answer)
+            | {kind: "review", id, login: (.user.login // ""), type: (.user.type // ""), body,
+               rr: (rr_marked and rr_unplaced($rr_all))} ) ]
+        | map(select(.rr or needs_answer)
               | select(.kind == "thread" or (.id as $id | $replied | index($id) | not))
-              | del(.type)) as $items
+              | if .rr then .review_requests = true else . end
+              | del(.type, .rr)) as $items
       | { threads: [$items[] | select(.kind == "thread") | {id: .thread, comment: .id}],
           comments: [$items[] | select(.kind == "comment") | .id],
           reviews: [$items[] | select(.kind == "review") | .id] } as $needs
@@ -1925,7 +1963,13 @@ digest_json() {
     [ -n "$n" ] || continue
     pull="$(gh_json api "repos/$REPO/pulls/$n")"
     marks="$( { comments_of "$n"; list_of "repos/$REPO/pulls/$n/comments?per_page=100"; list_of "repos/$REPO/pulls/$n/reviews?per_page=100"; } \
-      | jq -sc "$JQ_DEFS"'map(map({id, body, login: (.user.login // ""), type: (.user.type // "")} | select(needs_answer)) | map(.id) | max // 0)')"
+      | jq -sc --argjson all "$RR_ALL" "$JQ_DEFS"'
+        def plain: {id, body, login: (.user.login // ""), type: (.user.type // "")} | needs_answer;
+        [.[2][] | select(rr_marked) | .id] as $ids
+        | [ (.[0] | map(select(plain))),
+            (.[1] | map(select(plain or ({body, review: .pull_request_review_id, reply: .in_reply_to_id} | rr_thread_finding($ids; $all))))),
+            (.[2] | map(select(plain or (rr_marked and rr_unplaced($all))))) ]
+        | map(map(.id) | max // 0)')"
     prs="$(jq -c --arg n "$n" --argjson p "$pull" --argjson m "$marks" \
       '. + {($n): {head: $p.head.sha, draft: ($p.draft // false), conflicted: ($p.mergeable == false),
                     comment: $m[0], review_comment: $m[1], review: $m[2]}}' <<< "$prs")"

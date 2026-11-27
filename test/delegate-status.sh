@@ -2256,6 +2256,56 @@ check "lease status with routing counts live slots by login" \
 check "lease status without routing carries no by_login" \
   "$(run_bare lease status --max-chains 3)" 'has("by_login") | not'
 
+# ---------------------------------------------------------------- review-requests findings
+
+# PR 42: bob's submitted review-requests review (marker, Claude Code footer)
+# opened a should-fix, a consider and a blocking thread (the delegator has
+# answered the blocking one), and put a blocking finding in the body's
+# `## Not placed on a line`. carol's unmarked agent review and dave's pending
+# marked draft carry the footer too; erin's marked review has only a
+# consider finding off the line.
+use review-requests
+out="$(run pr 42)"
+check "a marked review's unanswered should-fix thread needs an answer despite the footer" "$out" \
+  '.needs_answer.threads == [{"id": 900, "comment": 900}]'
+check "its items mark it as a review-requests finding" "$out" \
+  '[.items[] | select(.kind == "thread")] == [{kind: "thread", id: 900, thread: 900, path: "a.ts", line: 1, login: "bob", body: .items[0].body, review_requests: true}]'
+check "a consider finding needs no answer by default" "$out" '[.items[].id] | index(901) | not'
+check "a finding the delegator answered is no longer an item" "$out" '[.items[].id] | index(902) | not'
+check "an unmarked agent comment with the footer is never an item" "$out" '[.items[].id] | (index(904) or index(812)) | not'
+check "a pending marked draft's findings are never items" "$out" '[.items[].id] | (index(905) or index(813)) | not'
+check "a resolved finding is never an item" "$out" '[.items[].id] | index(906) | not'
+check "a marked body with a blocking finding off the line needs an answer" "$out" '.needs_answer.reviews == [811]'
+check "a marked body whose only finding off the line is consider needs none by default" "$out" '[.items[].id] | index(814) | not'
+check "a PR whose only items are review-requests findings needs review" "$out" '.class == "needs-review"'
+
+use review-requests
+out="$(run pr 42 --answer-review-requests all)"
+check "--answer-review-requests all counts consider threads" "$out" \
+  '.needs_answer.threads == [{"id": 900, "comment": 900}, {"id": 901, "comment": 901}]'
+check "--answer-review-requests all counts a consider finding off the line" "$out" '.needs_answer.reviews == [811, 814]'
+
+use review-requests
+jq '. + [{"id": 950, "body": "> Draft review prepared by an agent for @bob\nAdded the criterion.\n<!-- delegator reply-to: 811 -->", "created_at": "2026-10-02T11:00:00Z", "updated_at": "2026-10-02T11:00:00Z", "user": {"login": "rich"}}]' \
+  "$FAKE_STATE/comments-42.json" > "$FAKE_STATE/c" && mv "$FAKE_STATE/c" "$FAKE_STATE/comments-42.json"
+out="$(run pr 42)"
+check "a reply-to comment answers the marked body" "$out" '.needs_answer.reviews == []'
+
+if PATH="$FIXTURES/bin:$PATH" "$STATUS" pr 42 --repo acme/widgets --answer-review-requests some > /dev/null 2>&1; then
+  fail "--answer-review-requests takes blocking or all"
+else
+  pass "--answer-review-requests takes blocking or all"
+fi
+
+# Watch sees them: the digest counts the finding as news, and next-action
+# sends a pass to watch the PR.
+use review-requests
+out="$(run watch-digest --state "$FAKE_STATE/digest.json" --prs-only --record || true)"
+check "the digest counts the newest review-requests thread and body (resolved or not, not a consider-only body) as news" "$(cat "$FAKE_STATE/digest.json")" \
+  '.digest.prs["42"].review_comment == 906 and .digest.prs["42"].review == 811'
+out="$(run next-action)"
+check "next-action watches a PR whose only items are review-requests findings" "$out" '.action == "watch"'
+
 # ---------------------------------------------------------------- rereview
 
 # PR 40: bob's submitted review-requests review at h40a opened four threads;

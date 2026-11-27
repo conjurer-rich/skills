@@ -118,6 +118,9 @@
 #   roster                the logins taking part, comma-separated
 #   max_chains_per_login  the most lease slots one login may hold before it
 #                         is fired no pick
+#   answer_review_requests
+#                         blocking|all, passed to the gate: which review-requests
+#                         findings need an answer (references/review.md step 3)
 #   rereview              on: route review_requested to the reviewer's
 #                         review_url trigger (with a roster); default off
 #   rereview_command      the fire's text before <owner/repo>#<n>; default
@@ -262,6 +265,7 @@ v="$(param max_worktrees)" && [ -n "$v" ] && GATE_ARGS+=(--max-worktrees "$v")
 v="$(param max_open_prs)" && [ -n "$v" ] && GATE_ARGS+=(--max-open-prs "$v")
 v="$(param land)" && [ -n "$v" ] && GATE_ARGS+=(--land "$v")
 v="$(param claim_ttl)" && [ -n "$v" ] && GATE_ARGS+=(--claim-ttl "$(ttl_seconds "$v")")
+v="$(param answer_review_requests)" && [ -n "$v" ] && GATE_ARGS+=(--answer-review-requests "$v")
 MAX_CHAINS="$(param max_chains)"
 MAX_CHAINS="${MAX_CHAINS:-1}"
 LABEL="${LABEL:-agent-ready}"

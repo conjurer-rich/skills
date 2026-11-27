@@ -350,6 +350,15 @@ is not connected.
 
 ### Re-review after the author's fixes
 
+When the PR's author is the `delegating-github-issues` delegator, it answers
+your `blocking` and `should fix` findings on its own, the inline ones and
+those under `## Not placed on a line`, although the review carries the
+footer that otherwise marks an agent's comment as needing no answer
+(`consider` ones too when its `answer_review_requests` is `all`). Write each
+finding under `## Not placed on a line` as
+`- **<severity> · <axis>**: <title> (<path:line>)`, so it can tell them
+apart.
+
 A re-review needs a pass to run. With the `delegating-github-issues`
 `rereview` parameter on, its **Review** re-requests your review after it
 answers a `blocking` or `should fix` thread one of your marked reviews
