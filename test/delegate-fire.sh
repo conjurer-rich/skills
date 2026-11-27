@@ -170,6 +170,7 @@ expect "max_open_prs reaches the gate" grep -q -- '--max-open-prs 6' <<< "$calls
 expect "land reaches the gate" grep -q -- '--land on' <<< "$calls"
 expect "claim_ttl reaches the gate in seconds" grep -q -- '--claim-ttl 14400' <<< "$calls"
 expect "max_chains reaches the lease" grep -q -- '^lease status .*--max-chains 3' <<< "$calls"
+refuse "answer_review_requests left out passes nothing" grep -q -- '--answer-review-requests' <<< "$calls"
 refuse "no gate call needs a session" grep -q -- '--session' <<< "$calls"
 
 setup
@@ -813,6 +814,13 @@ refuse "a rereview that is not on or off is refused" fire
 
 expect "the reusable workflow passes the requested reviewer" grep -q 'REVIEWER: ${{ github.event.requested_reviewer.login }}' "$WORKFLOW"
 expect "the reusable workflow hands --reviewer to the script" grep -q -- '--reviewer "$REVIEWER"' "$WORKFLOW"
+
+setup
+printf '| `answer_review_requests` | all |\n' >> "$W/project/.claude/delegation.md"
+echo "$pick" > "$W/action"
+echo "$free" > "$W/lease"
+fire --dry-run
+expect "answer_review_requests reaches the gate" grep -q -- '^next-action .*--answer-review-requests all' "$W/status.calls"
 
 echo ""
 if [ "$FAILURES" -gt 0 ]; then

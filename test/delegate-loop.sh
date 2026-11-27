@@ -161,6 +161,12 @@ echo "$pick" > "$W/actions"
 loop --once > /dev/null || true
 expect "assignee_routing comes from the settings" grep -q -- '--assignee-routing on' "$W/status.calls"
 
+setup
+printf '| `answer_review_requests` | all |\n' >> "$W/project/.claude/delegation.md"
+echo "$pick" > "$W/actions"
+loop --once > /dev/null || true
+expect "answer_review_requests comes from the settings" grep -q -- '--answer-review-requests all' "$W/status.calls"
+
 # ---------------------------------------------------------------- other CLIs
 
 setup

@@ -1,0 +1,8 @@
+[
+  {"resolved": false, "path": "a.ts", "line": 1, "comment_ids": [900]},
+  {"resolved": false, "path": "a.ts", "line": 2, "comment_ids": [901]},
+  {"resolved": false, "path": "a.ts", "line": 3, "comment_ids": [902, 903]},
+  {"resolved": false, "path": "a.ts", "line": 4, "comment_ids": [904]},
+  {"resolved": false, "path": "a.ts", "line": 5, "comment_ids": [905]},
+  {"resolved": true, "path": "a.ts", "line": 6, "comment_ids": [906]}
+]

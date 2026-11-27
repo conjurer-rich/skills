@@ -39,7 +39,7 @@ The calling command supplies these; defaults apply when it does not, and keep th
 | `claim_ttl` | 45 minutes | A claim with no heartbeat for this long lapses, and another session may take the item |
 | `progress_label` | `in-progress` | On an item only during a live claim on it, never for a ticket alone |
 | `answer_label`, `blocked_label`, `review_label` | `needs-answer`, `blocked`, `awaiting-review` | Derived, ticketed issues too: human must answer; blocked; PR to review |
-| `assignee_routing`, `roster`, `max_chains_per_login`, `rereview` | off, none, none, off | Teams: `references/delegate-fire.md` |
+| `assignee_routing`, `roster`, `max_chains_per_login`, `rereview`, `answer_review_requests` | off, none, none, off, `blocking` | `references/delegate-fire.md` |
 
 A project's **Verification scope** section replaces the `pre_pr_gate`'s complete-suite rule (`references/tiers.md`).
 
@@ -47,7 +47,7 @@ A project's **Verification scope** section replaces the `pre_pr_gate`'s complete
 
 The delegator posts through the human's `gh` auth, so a comment's author cannot tell the two apart. Every comment and thread reply the delegator posts therefore ends with `<!-- delegator -->`.
 
-A comment **needs an answer** when it does not contain `<!-- delegator`, it does not contain the Claude Code footer (another agent posted it, not the human), its author login does not end in `[bot]` (nor is a GitHub App), it does not contain `<!-- preview-`, and nothing answers it. A later comment with either marker in the same review thread answers an inline comment. A PR comment containing `<!-- delegator reply-to: <comment id> -->` answers a top-level comment or review body; Land's own status comments answer nothing. `delegate-status` computes this.
+A comment **needs an answer** when it does not contain `<!-- delegator`, it does not contain the Claude Code footer, unless a `review-requests` finding (Review step 3), its author does not end in `[bot]` nor is an App, it does not contain `<!-- preview-`, and nothing answers it. A later comment with either marker in its thread answers an inline comment. A PR comment with `<!-- delegator reply-to: <comment id> -->` answers a top-level comment or review body; Land's status comments answer nothing. `delegate-status` computes this.
 
 ## Claims
 
